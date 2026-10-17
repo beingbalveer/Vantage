@@ -1,0 +1,107 @@
+/*
+ * Approved prototype design layer (RELAY-UI · UI-01).
+ *
+ * Consolidated final computed values extracted from `approved-prototype.html`.
+ * Imported after tokens.css/base.css so it refines, rather than duplicates,
+ * the historical prototype overrides. Real content surfaces are white; the
+ * window header and repository dock keep neutral gray chrome.
+ */
+
+:root {
+  /* System typography (no remote fonts). */
+  --font-ui: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", sans-serif;
+  --font-mono: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+
+  /* Neutral chrome and surfaces. */
+  --chrome: #f1f1f1;
+  --sidebar: #f7f7f7;
+  --sidebar-selected: #dce2e8;
+  --chrome-hover: #f0f1f2;
+
+  /* Text hierarchy. */
+  --ink: #242628;
+  --sub: #6d7278;
+
+  /* Git-data accent colors. */
+  --purple: #8953c4;
+  --green: #357242;
+  --red: #bc494c;
+
+  /* Diff surfaces. */
+  --diff-hunk-bg: #ffffff;
+}
+
+html,
+body,
+#app {
+  font-size: 14px;
+  line-height: 1.45;
+  letter-spacing: -0.16px;
+}
+
+/* Hide scrollbars globally without disabling scrolling or keyboard access. */
+* {
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+*::-webkit-scrollbar {
+  display: none;
+  width: 0;
+  height: 0;
+}
+
+/* Application chrome colors matching the prototype. */
+.app-layout {
+  background-color: var(--chrome);
+}
+
+/* Neutral repository text and chrome; color reserved for Git data. */
+.repo-title {
+  color: #5a5d58;
+}
+
+/* Syntax highlighting uses the prototype's restrained palette. Values come
+ * from the --syn-* tokens so dark mode stays usable (RELAY-UI · UI-01/UI-06). */
+.hljs-keyword,
+.hljs-built_in,
+.hljs-type,
+.hljs-literal,
+.hljs-symbol {
+  color: var(--syn-keyword);
+}
+.hljs-string,
+.hljs-regexp,
+.hljs-attr,
+.hljs-attribute,
+.hljs-addition {
+  color: var(--syn-string);
+}
+.hljs-number {
+  color: var(--syn-number);
+}
+.hljs-comment,
+.hljs-quote {
+  color: var(--syn-comment);
+}
+.hljs-title,
+.hljs-title.class_,
+.hljs-function,
+.hljs-section,
+.hljs-name {
+  color: var(--syn-function);
+}
+.hljs-meta,
+.hljs-doctag,
+.hljs-tag {
+  color: var(--syn-meta);
+}
+.hljs-variable,
+.hljs-params,
+.hljs-punctuation {
+  color: inherit;
+}
+
+/* Tabular figures for counts and times. */
+.tabular-nums {
+  font-variant-numeric: tabular-nums;
+}
