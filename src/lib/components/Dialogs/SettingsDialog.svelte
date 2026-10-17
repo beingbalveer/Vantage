@@ -331,9 +331,14 @@
             </div>
           {/if}
         {:else}
-          <h3 class="text-strong">About Vantage</h3>
-          <p class="text-sm">Vantage v0.1.0</p>
-          <p class="text-sm text-muted">A lightweight multi-repo Git desktop client, read-only code viewer, and terminal workspace.</p>
+          <div style="display: flex; align-items: center; gap: 14px; margin-bottom: 12px;">
+            <img src="/favicon.png" alt="Vantage" width="36" height="36" style="border-radius: 8px;" />
+            <div>
+              <h3 class="text-strong" style="margin: 0;">Vantage</h3>
+              <p class="text-xs text-muted" style="margin: 0;">v0.1.0</p>
+            </div>
+          </div>
+          <p class="text-sm text-muted">A fast, local, multi-repo Git desktop client, read-only code viewer, and terminal workspace.</p>
 
           <div style="margin-top: 24px; padding-top: 16px; border-top: 1px solid var(--border); display: flex; flex-direction: column; gap: 12px; align-items: flex-start;">
             <div style="display: flex; gap: 10px; align-items: center;">

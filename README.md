@@ -1,4 +1,6 @@
-# Vantage
+<p align="center">
+  <img src="assets/vantage-logo-horizontal.png" alt="Vantage Logo" width="460" />
+</p>
 
 <p align="center">
   <strong>Fast, local, multi-repo Git desktop client, read-only code viewer, and terminal workspace.</strong>
