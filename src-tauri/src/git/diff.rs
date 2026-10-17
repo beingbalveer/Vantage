@@ -598,28 +598,92 @@ mod tests {
         }
     }
 
+    struct TempTestRepo {
+        path: std::path::PathBuf,
+    }
+
+    impl TempTestRepo {
+        async fn new(runner: &GitRunner) -> Self {
+            let path =
+                std::env::temp_dir().join(format!("vantage_diff_test_{}", uuid::Uuid::new_v4()));
+            std::fs::create_dir_all(&path).unwrap();
+
+            runner.run_write(&path, &["init"], 10).await.unwrap();
+            runner
+                .run_write(&path, &["config", "user.name", "Vantage Test"], 10)
+                .await
+                .unwrap();
+            runner
+                .run_write(&path, &["config", "user.email", "vantage@test.local"], 10)
+                .await
+                .unwrap();
+            runner
+                .run_write(&path, &["config", "commit.gpgsign", "false"], 10)
+                .await
+                .unwrap();
+
+            Self { path }
+        }
+    }
+
+    impl Drop for TempTestRepo {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.path);
+        }
+    }
+
     #[tokio::test]
     async fn test_get_scope_files_for_commits() {
         let runner = GitRunner::new();
-        let repo_path = std::env::current_dir().unwrap();
-        // Test commit d4e8257 (root commit)
-        let scope_root = DiffScope::Commit {
-            sha: "d4e8257".to_string(),
-        };
-        let files = get_scope_files(&runner, &repo_path, &scope_root, false)
+        let repo = TempTestRepo::new(&runner).await;
+
+        // Root commit
+        let f1 = repo.path.join("file1.txt");
+        std::fs::write(&f1, "hello\n").unwrap();
+        runner
+            .run_write(&repo.path, &["add", "file1.txt"], 10)
+            .await
+            .unwrap();
+        runner
+            .run_write(&repo.path, &["commit", "-m", "root commit"], 10)
+            .await
+            .unwrap();
+
+        let root_sha = runner
+            .run_read(&repo.path, &["rev-parse", "HEAD"])
+            .await
+            .unwrap()
+            .stdout_string()
+            .trim()
+            .to_string();
+
+        let scope_root = DiffScope::Commit { sha: root_sha };
+        let files = get_scope_files(&runner, &repo.path, &scope_root, false)
             .await
             .expect("root commit files");
-        assert!(!files.is_empty(), "root commit should have files");
-        assert!(files.iter().any(|f| f.path == "README.md"));
+        assert_eq!(files.len(), 1);
+        assert_eq!(files[0].path, "file1.txt");
 
-        // Test non-root commit HEAD
+        // Second commit
+        let f2 = repo.path.join("file2.txt");
+        std::fs::write(&f2, "world\n").unwrap();
+        runner
+            .run_write(&repo.path, &["add", "file2.txt"], 10)
+            .await
+            .unwrap();
+        runner
+            .run_write(&repo.path, &["commit", "-m", "second commit"], 10)
+            .await
+            .unwrap();
+
         let scope_head = DiffScope::Commit {
             sha: "HEAD".to_string(),
         };
-        let head_files = get_scope_files(&runner, &repo_path, &scope_head, false)
+        let head_files = get_scope_files(&runner, &repo.path, &scope_head, false)
             .await
             .expect("head commit files");
-        assert!(!head_files.is_empty(), "head commit should have files");
+        assert_eq!(head_files.len(), 1);
+        assert_eq!(head_files[0].path, "file2.txt");
     }
 
     #[test]

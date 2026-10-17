@@ -405,7 +405,7 @@ pub async fn discard(
             if let Some(parent) = dest.parent() {
                 fs::create_dir_all(parent).map_err(AppError::io)?;
             }
-            if let Err(_) = fs::rename(&src, &dest) {
+            if fs::rename(&src, &dest).is_err() {
                 // If rename fails (e.g. cross-device), fallback to copy and delete
                 fs::copy(&src, &dest).map_err(AppError::io)?;
                 let _ = fs::remove_file(&src);
@@ -890,7 +890,7 @@ pub async fn prune_old_backups(runner: &GitRunner, repo_path: &Path) {
                 .strip_prefix("refs/vantage/backup/")
                 .or_else(|| b.r#ref.strip_prefix("refs/relay/backup/"))
             {
-                if let Some(ts_part) = ts_str.split(|c: char| c == '_' || c == '-').next() {
+                if let Some(ts_part) = ts_str.split(['_', '-']).next() {
                     if let Ok(ts) = ts_part.parse::<i64>() {
                         let ts_sec = if ts > 1_000_000_000_000 {
                             ts / 1000
