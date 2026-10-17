@@ -18,6 +18,8 @@ pub fn run() {
     };
 
     tauri::Builder::default()
+        .plugin(tauri_plugin_updater::Builder::new().build())
+        .plugin(tauri_plugin_process::init())
         .manage(app_state)
         .on_window_event(|window, event| {
             if let tauri::WindowEvent::Focused(focused) = event {

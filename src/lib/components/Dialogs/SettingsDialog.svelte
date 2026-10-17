@@ -6,8 +6,14 @@
   import type { Settings, BackupInfo } from "../../types";
   import { formatRelativeTime, formatFullTimestamp } from "../../format";
   import { Modal, Button, Checkbox, Badge, Input } from "../common";
+  import { checkForAppUpdates, downloadAndInstallUpdate } from "../../updater";
+  import type { Update } from "@tauri-apps/plugin-updater";
 
   let activeSection = $state<"general" | "git" | "terminal" | "integrations" | "recovery" | "about">("general");
+
+  let isCheckingUpdates = $state(false);
+  let availableUpdate = $state<Update | null>(null);
+  let isInstallingUpdate = $state(false);
 
   let currentSettings = $derived($settings);
 
@@ -328,6 +334,52 @@
           <h3 class="text-strong">About Vantage</h3>
           <p class="text-sm">Vantage v0.1.0</p>
           <p class="text-sm text-muted">A lightweight multi-repo Git desktop client, read-only code viewer, and terminal workspace.</p>
+
+          <div style="margin-top: 24px; padding-top: 16px; border-top: 1px solid var(--border); display: flex; flex-direction: column; gap: 12px; align-items: flex-start;">
+            <div style="display: flex; gap: 10px; align-items: center;">
+              <Button
+                variant="primary"
+                size="sm"
+                loading={isCheckingUpdates}
+                disabled={isCheckingUpdates || isInstallingUpdate}
+                onclick={async () => {
+                  isCheckingUpdates = true;
+                  try {
+                    availableUpdate = await checkForAppUpdates(true);
+                  } finally {
+                    isCheckingUpdates = false;
+                  }
+                }}
+              >
+                {isCheckingUpdates ? "Checking for updates…" : "Check for updates"}
+              </Button>
+
+              {#if availableUpdate}
+                <Button
+                  variant="primary"
+                  size="sm"
+                  loading={isInstallingUpdate}
+                  disabled={isInstallingUpdate}
+                  onclick={async () => {
+                    isInstallingUpdate = true;
+                    try {
+                      await downloadAndInstallUpdate(availableUpdate);
+                    } finally {
+                      isInstallingUpdate = false;
+                    }
+                  }}
+                >
+                  {isInstallingUpdate ? "Installing & Restarting…" : `Install v${availableUpdate.version}`}
+                </Button>
+              {/if}
+            </div>
+
+            {#if availableUpdate}
+              <div class="text-xs text-muted">
+                Version <strong>v{availableUpdate.version}</strong> is ready to download and install.
+              </div>
+            {/if}
+          </div>
         {/if}
       </div>
     </div>

@@ -14,6 +14,7 @@
   import { viewportPaneWidths, savedPaneWidth } from "./lib/layout";
   import { matchShortcut } from "./lib/keys";
   import * as api from "./lib/api";
+  import { checkForAppUpdates } from "./lib/updater";
   import { createHorizontalResizer, createHorizontalResizerKeyboard } from "./lib/resizer";
   import Sidebar from "./lib/components/Sidebar/Sidebar.svelte";
   import Pane from "./lib/components/Pane/Pane.svelte";
@@ -85,6 +86,9 @@
     } catch (e) {
       console.error("Failed to check env:", e);
     }
+
+    // Check for updates silently on startup
+    checkForAppUpdates(false).catch(() => {});
   });
 
   function handleGlobalKeydown(e: KeyboardEvent) {
