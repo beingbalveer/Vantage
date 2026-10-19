@@ -18,7 +18,7 @@
   import { SHORTCUTS, formatKey } from "../../keys";
   import { fuzzyScore } from "../../fuzzy";
   import { formatRelativeTime } from "../../format";
-  import { addRepoDialogOpen, settingsOpen, shortcutsHelpOpen, addToast, sidebarCollapsed, openDialog } from "../../stores/ui";
+  import { addRepoDialogOpen, shortcutsHelpOpen, addToast, sidebarCollapsed, openDialog, openSettingsAt } from "../../stores/ui";
   import type { Layout, CommitSummary } from "../../types";
   import * as api from "../../api";
   import Icon from "../common/Icon.svelte";
@@ -433,7 +433,7 @@
         shortcut: "Mod+,",
         action: () => {
           $paletteOpen = false;
-          $settingsOpen = true;
+          openSettingsAt("general");
         },
       },
       {
@@ -441,7 +441,7 @@
         title: "Recovery (Backups)",
         action: () => {
           $paletteOpen = false;
-          $settingsOpen = true;
+          openSettingsAt("recovery");
         },
       },
       {

@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { settingsOpen, addToast } from "../../stores/ui";
+  import { settingsOpen, addToast, settingsSection, settingsRecoveryRepoId } from "../../stores/ui";
   import { settings, updateSettings } from "../../stores/settings";
   import { repos, activeRepoId, refreshSingleStatus, loadRepos } from "../../stores/repos";
   import * as api from "../../api";
@@ -25,7 +25,17 @@
   let recoveryError = $state<string | null>(null);
 
   $effect(() => {
-    if (!selectedRepoId) {
+    // Reveal the section the caller asked for when the dialog opens.
+    if ($settingsOpen) {
+      activeSection = $settingsSection;
+    }
+  });
+
+  $effect(() => {
+    const preferred = $settingsRecoveryRepoId;
+    if (preferred && $repos.some((r) => r.id === preferred)) {
+      selectedRepoId = preferred;
+    } else if (!selectedRepoId) {
       if ($activeRepoId) {
         selectedRepoId = $activeRepoId;
       } else if ($repos.length > 0) {
@@ -91,7 +101,11 @@
     title="Settings"
     width="720px"
     bodyPadding={false}
-    onclose={() => ($settingsOpen = false)}
+    onclose={() => {
+      $settingsOpen = false;
+      $settingsSection = "general";
+      $settingsRecoveryRepoId = null;
+    }}
   >
     <div class="settings-layout">
       <!-- Left nav -->
