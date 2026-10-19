@@ -1,4 +1,4 @@
-# Relay: Design Specification
+# Vantage: Design Specification
 
 > Companion to `PRODUCT_SPEC.md`. This file defines **how it looks, feels, and behaves** at the pixel and interaction level. Where this file and the product spec disagree on behavior, the product spec wins; where they disagree on visuals, this file wins.
 
@@ -6,7 +6,7 @@
 
 ## 1. Design philosophy
 
-**Reference point: GitHub Desktop's calm.** Flat, quiet, generous whitespace, one clear primary action per area, no toolbars full of icons. Relay adds multi-repo and review ideas **without adding visual noise**.
+**Reference point: GitHub Desktop's calm.** Flat, quiet, generous whitespace, one clear primary action per area, no toolbars full of icons. Vantage adds multi-repo and review ideas **without adding visual noise**.
 
 1. **Quiet by default, informative at a glance.** The sidebar and commit list carry the signal (badges, dots, flags). Everything else recedes.
 2. **One accent color (blue)** means "new / needs your attention / primary action". Amber means "uncommitted / caution". Red is only for deletions and destructive actions. Green is only for additions and "working/active".
@@ -147,7 +147,7 @@ Native window chrome (OS title bar) in v1. Minimum window size **900 x 560**. De
 
 ```
 ┌────────────┬────────────────────────────────────────────┬───────────────────────────────────────────┐
-│ Relay    ⌘B│ ① api-server   ⎇ main ▾      [↓ Pull origin 2]│ ② web-app      ⎇ main ▾    [⟳ Fetch origin] │
+│ Vantage  ⌘B│ ① api-server   ⎇ main ▾      [↓ Pull origin 2]│ ② web-app      ⎇ main ▾    [⟳ Fetch origin] │
 │ ┌────────┐ │ [History][Files]            ▤ Notes(2)  ▭ >_ ✕│ [History][Files]            ▤ Notes  ▭ >_ ✕ │
 │ │ Search │ ├──────────────┬──────────┬──────────────────────┤──────────────┬──────────┬───────────────┤
 │ └────────┘ │ ┌──────────────────────────────────────────┐ │                                           │
@@ -183,7 +183,7 @@ Native window chrome (OS title bar) in v1. Minimum window size **900 x 560**. De
 
 ### 4.1 Structure (top to bottom)
 
-1. **Header (44px):** app name "Relay" (text-strong), collapse button (right).
+1. **Header (44px):** app name "Vantage" (text-strong), collapse button (right).
 2. **Filter input (28px, margin 8px):** placeholder "Filter repositories" (focused by clicking; `Mod+K` opens the palette instead). Hidden when 6 or fewer repos to reduce clutter; appears automatically at 7+.
 3. **Section label "PINNED"** (text-xs, uppercase, text-faint, 8px padding) only if any pinned.
 4. **Repo rows** (scrollable).
@@ -224,7 +224,7 @@ Native window chrome (OS title bar) in v1. Minimum window size **900 x 560**. De
 ### 4.4 Interactions
 
 - **Click:** opens the repo in the **focused pane**. **Mod+Click:** opens in the next pane (creates one if under 3). **Middle click:** same as Mod+Click.
-- **Right-click menu:** Open in pane 1 / 2 / 3 · Mark reviewed · Fetch · Pin / Unpin · Rename… · Copy path · Reveal in file manager · Open in editor · separator · Remove from Relay.
+- **Right-click menu:** Open in pane 1 / 2 / 3 · Mark reviewed · Fetch · Pin / Unpin · Rename… · Copy path · Reveal in file manager · Open in editor · separator · Remove from Vantage.
 - **Hover tooltip (400ms delay):** repo name, full path, `main ↑2 ↓1`, "3 new commits, 3 files changed", "Last activity 2m ago".
 - **Drop a folder from the OS onto the sidebar:** shows a dashed accent overlay "Drop to add repository".
 - **Sorting:** pinned, then by activity (default). A live reorder uses a 160ms FLIP animation but **does not move the row under the cursor while hovering it** (freeze reordering while pointer is over the sidebar to avoid mis-clicks; apply on mouse leave).
@@ -461,14 +461,14 @@ Dialog, two-column list of shortcuts grouped by Navigation, Review, Diff, Panes,
 Main area is a centered empty state (max-width 420):
 - Icon (48px, muted, a stylized branch).
 - Title "Review your agents' work in one place" (text-lg).
-- Text "Add the repositories you're working on. Relay shows what changed since you last looked."
+- Text "Add the repositories you're working on. Vantage shows what changed since you last looked."
 - Buttons: **Add repository** (primary), **Scan a folder for repositories** (default).
 - Hint row: "Tip: drag a folder here".
 The sidebar shows only the footer's Add button.
 
 ### 7.2 Git missing
 
-Full window overlay, centered card: title "Relay needs Git", text "Install Git, then reopen Relay.", button **Download Git** (opens git-scm.com), **Retry**.
+Full window overlay, centered card: title "Vantage needs Git", text "Install Git, then reopen Vantage.", button **Download Git** (opens git-scm.com), **Retry**.
 
 ### 7.3 Repo selected, nothing new, clean
 

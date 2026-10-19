@@ -181,7 +181,7 @@
             </button>
             <div class="menu-dropdown-divider"></div>
             <button class="menu-dropdown-item danger" onclick={handleRemoveRepo}>
-              Remove from Relay…
+              Remove from Vantage…
             </button>
           </div>
         {/if}

@@ -1,11 +1,11 @@
-# Relay: Manual QA Checklist & Verification Notes
+# Vantage: Manual QA Checklist & Verification Notes
 
 This checklist verifies the requirements from Section 15 of `PRODUCT_SPEC.md` across core workflows, error conditions, edge cases, and performance invariants.
 
 ---
 
 ## 1. Core Review Loop Verification (Section 1.3)
-Test with at least 6 real repositories simultaneously registered in Relay.
+Test with at least 6 real repositories simultaneously registered in Vantage.
 
 - [ ] **Sidebar Badges:**
   - Registered repos show accurate dirty file dots and `+N` new commit badges relative to their reviewed marker.
@@ -34,15 +34,15 @@ Test with at least 6 real repositories simultaneously registered in Relay.
 ## 2. Resilience, Error Handling & Chaos Tests
 - [ ] **Network Severed during Remote Sync:**
   - Initiate a `git pull` or `git fetch` and disconnect network/Wi-Fi mid-operation.
-  - Relay displays a non-modal error toast with standard Git network failure message; the UI does not hang or freeze.
+  - Vantage displays a non-modal error toast with standard Git network failure message; the UI does not hang or freeze.
 - [ ] **Repo Folder Deleted While Open:**
-  - Delete or rename a registered repository's directory on disk while Relay is actively viewing it.
+  - Delete or rename a registered repository's directory on disk while Vantage is actively viewing it.
   - The sidebar marks the repo with a missing/warning indicator; switching panes or clicking other repos continues to function normally.
 - [ ] **Rapid Agent Commits (Stress Test):**
   - Run a script committing changes every 2 seconds into a registered repository.
   - The debounced ref watcher (250 ms) and status poller update state smoothly without CPU spikes or UI lockups.
 - [ ] **Concurrent Git Write / Lock Contention:**
-  - If a Git process holds `.git/index.lock`, Relay retries with exponential backoff and gracefully displays "Another Git process is running" if locked beyond timeout.
+  - If a Git process holds `.git/index.lock`, Vantage retries with exponential backoff and gracefully displays "Another Git process is running" if locked beyond timeout.
 - [ ] **Detached HEAD & Empty Repos:**
   - Checkout a raw commit (detached HEAD): branch shows `HEAD detached at <short_sha>`; marker and diffs remain functional; sync button hides safely.
   - Open an empty repository with no commits: shows "No commits yet", pseudo-commit allows creating the initial commit without crashing.

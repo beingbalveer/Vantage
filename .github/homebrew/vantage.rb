@@ -18,11 +18,13 @@ cask "vantage" do
 
   app "Vantage.app"
 
+  # Bundle id comes from src-tauri/tauri.conf.json → "identifier"
+  # (io.github.beingbalveer.vantage). Keep these in sync.
   zap trash: [
-    "~/Library/Application Support/com.beingbalveer.vantage",
+    "~/Library/Application Support/io.github.beingbalveer.vantage",
     "~/Library/Application Support/vantage",
-    "~/Library/Caches/com.beingbalveer.vantage",
-    "~/Library/Preferences/com.beingbalveer.vantage.plist",
-    "~/Library/Saved Application State/com.beingbalveer.vantage.savedState",
+    "~/Library/Caches/io.github.beingbalveer.vantage",
+    "~/Library/Preferences/io.github.beingbalveer.vantage.plist",
+    "~/Library/Saved Application State/io.github.beingbalveer.vantage.savedState",
   ]
 end

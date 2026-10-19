@@ -1,10 +1,10 @@
-# Relay prototype review and improvement backlog
+# Vantage prototype review and improvement backlog
 
 Reviewed: 15 October 2026. Baseline: `7fc5b04`.
 
 ## Product assessment
 
-Relay already has the right ingredients for a Git client used alongside coding agents: a persistent repository sidebar, branch views, history, combined review ranges, diffs, a read-only file browser, terminal sessions, and review-marker storage. The existing Git/backend work is a useful foundation. Evaluate the UI technology against the macOS experience requirement below before committing to a visual redesign; a complete rewrite has not been established as necessary.
+Vantage already has the right ingredients for a Git client used alongside coding agents: a persistent repository sidebar, branch views, history, combined review ranges, diffs, a read-only file browser, terminal sessions, and review-marker storage. The existing Git/backend work is a useful foundation. Evaluate the UI technology against the macOS experience requirement below before committing to a visual redesign; a complete rewrite has not been established as necessary.
 
 The main gap is that several capabilities exist in the specification or backend without a complete user workflow. The highest priority is making displayed context trustworthy: which repository, branch, working directory, commit range, and selected files an action actually affects. After that, improve navigation and complete the review-to-agent loop.
 
@@ -12,7 +12,7 @@ Suggested product promise: **Quickly move between projects and branches, underst
 
 ## Confirmed platform and visual requirements
 
-The user clarified that Relay is **macOS only**. Its interface must feel refined, polished, clean, and native to macOS, with Codex and ChatGPT as visual quality references. This is a core product requirement, not an optional final polish pass. GitHub Desktop remains a reference for understandable Git workflows; the visual direction is a premium Mac application.
+The user clarified that Vantage is **macOS only**. Its interface must feel refined, polished, clean, and native to macOS, with Codex and ChatGPT as visual quality references. This is a core product requirement, not an optional final polish pass. GitHub Desktop remains a reference for understandable Git workflows; the visual direction is a premium Mac application.
 
 - Design the window, title bar, toolbar, sidebar, tabs, lists, menus, sheets, and Settings as one coherent Mac application. Avoid a separate web-style application header beneath otherwise disconnected window chrome.
 - Use system typography, carefully tuned density and spacing, consistent Mac-appropriate symbols, restrained color, subtle separators, and clear selection/focus states. Give code a legible monospace treatment. Replace mixed emoji/text-glyph controls and heavy boxed toolbars.
@@ -199,6 +199,6 @@ Sources: [README.md](../README.md:1), [perf.md](../docs/perf.md:1), [diff.rs:477
 3. **Git completeness:** break R11 into small workflows and ship by frequency of use. Include recovery before exposing more destructive actions.
 4. **Scale and polish:** R12–R15. Apply R16 throughout, with release measurements after the core workflows stabilize.
 
-First milestone: a polished native macOS workspace where two projects and two branches remain easy to identify; an agent can change files while Relay is open; the correct diff refreshes; a review note becomes a usable prompt; switching away and back preserves context; committing cannot include an unchecked file or affect the wrong branch.
+First milestone: a polished native macOS workspace where two projects and two branches remain easy to identify; an agent can change files while Vantage is open; the correct diff refreshes; a review note becomes a usable prompt; switching away and back preserves context; committing cannot include an unchecked file or affect the wrong branch.
 
 Defer a full editor, language-server stack, built-in agent orchestration, complex branch graph, plugin platform, and elaborate dashboards until the first milestone works reliably. These are scope recommendations, not conclusions that those features can never be useful.
