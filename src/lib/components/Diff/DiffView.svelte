@@ -460,8 +460,14 @@
                   class="gutter-num old-num font-mono"
                   role="button"
                   tabindex="0"
+                  aria-label={line.oldNo != null ? `Select old line ${line.oldNo}` : "Old line unavailable"}
                   onclick={(e) => handleLineClick(line.oldNo, "old", e)}
-                  onkeydown={(e) => e.key === "Enter" && handleLineClick(line.oldNo, "old", e as any)}
+                  onkeydown={(e) => {
+                    if (e.key === "Enter" || e.key === " ") {
+                      e.preventDefault();
+                      handleLineClick(line.oldNo, "old", e as any);
+                    }
+                  }}
                 >{line.oldNo ?? ""}</div>
 
                 <!-- New line number -->
@@ -469,8 +475,14 @@
                   class="gutter-num new-num font-mono"
                   role="button"
                   tabindex="0"
+                  aria-label={line.newNo != null ? `Select new line ${line.newNo}` : "New line unavailable"}
                   onclick={(e) => handleLineClick(line.newNo, "new", e)}
-                  onkeydown={(e) => e.key === "Enter" && handleLineClick(line.newNo, "new", e as any)}
+                  onkeydown={(e) => {
+                    if (e.key === "Enter" || e.key === " ") {
+                      e.preventDefault();
+                      handleLineClick(line.newNo, "new", e as any);
+                    }
+                  }}
                 >{line.newNo ?? ""}</div>
 
                 <!-- Sign column -->
@@ -742,7 +754,7 @@
     padding-right: 8px;
     font-size: 10px;
     line-height: 25px;
-    color: #7b8794;
+    color: var(--text-muted);
     background-color: var(--bg);
     border-right: 1px solid #dce2e9;
     user-select: none;
@@ -767,12 +779,12 @@
   }
 
   .diff-line.add .gutter-num {
-    color: #527c5c;
+    color: var(--text-muted);
     border-color: #b9dfc3;
     background-color: var(--diff-gutter-add);
   }
   .diff-line.del .gutter-num {
-    color: #a16a73;
+    color: var(--text-muted);
     border-color: #edc1c8;
     background-color: var(--diff-gutter-del);
   }

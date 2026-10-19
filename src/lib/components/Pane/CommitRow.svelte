@@ -148,7 +148,7 @@
     margin-top: 6px;
     font-size: 12px;
     line-height: 17px;
-    color: #737982;
+    color: var(--text-muted);
   }
   .commit-meta .author {
     overflow: hidden;
@@ -170,8 +170,8 @@
     flex-shrink: 0;
     padding: 3px 6px;
     border-radius: 5px;
-    background: #edf0f3;
-    color: #929aa3;
+    background: var(--bg-muted);
+    color: var(--text-muted);
     font-size: 10px;
   }
   .unpushed-icon {

@@ -14,6 +14,7 @@
   import * as api from "../../api";
   import type { BranchInfo } from "../../types";
   import Icon from "../common/Icon.svelte";
+  import { Modal } from "../common";
 
   let currentPane = $derived($panes[$focusedPaneIndex]);
   let currentTab = $derived(currentPane?.tab || "history");
@@ -451,88 +452,66 @@
   </div>
 </header>
 
-{#if showBranchModal && activeRepo}
-  <div
-    class="modal-backdrop"
-    role="presentation"
-    onclick={() => (showBranchModal = false)}
+{#if activeRepo}
+  <Modal
+    open={showBranchModal}
+    title={`Add branch view — ${activeRepo.name}`}
+    description="Add another view of this repository for a different branch. You can compare and browse multiple branches simultaneously."
+    width={380}
+    onclose={() => (showBranchModal = false)}
   >
-    <div
-      class="branch-dialog"
-      role="dialog"
-      aria-modal="true"
-      tabindex="-1"
-      onclick={(e) => e.stopPropagation()}
-      onkeydown={(e) => e.stopPropagation()}
-    >
-      <div class="dialog-title">
-        <span class="text-strong">Add branch view — {activeRepo.name}</span>
+    <div class="dialog-search">
+      <input
+        type="text"
+        placeholder="Search or enter branch name…"
+        aria-label="Search or enter branch name"
+        bind:value={branchFilter}
+        class="dialog-branch-input"
+        onkeydown={(e) => {
+          if (e.key === "Enter" && branchFilter.trim()) {
+            e.preventDefault();
+            handleAddBranchView(branchFilter.trim());
+          }
+        }}
+      />
+      {#if branchFilter.trim() && !branches.some((b) => b.name === branchFilter.trim())}
         <button
           type="button"
-          class="dialog-close-btn"
-          onclick={() => (showBranchModal = false)}
-          aria-label="Close"
+          class="add-branch-modal-btn primary"
+          onclick={() => handleAddBranchView(branchFilter.trim())}
         >
-          <Icon name="close" size={14} />
+          Add "{branchFilter.trim()}"
         </button>
-      </div>
-      <p class="dialog-desc text-xs text-muted">
-        Add another view of this repository for a different branch. You can compare and browse
-        multiple branches simultaneously.
-      </p>
-
-      <div class="dialog-search">
-        <input
-          type="text"
-          placeholder="Search or enter branch name…"
-          bind:value={branchFilter}
-          class="dialog-branch-input"
-          onkeydown={(e) => {
-            if (e.key === "Enter" && branchFilter.trim()) {
-              e.preventDefault();
-              handleAddBranchView(branchFilter.trim());
-            }
-          }}
-        />
-        {#if branchFilter.trim() && !branches.some((b) => b.name === branchFilter.trim())}
-          <button
-            type="button"
-            class="add-branch-modal-btn primary"
-            onclick={() => handleAddBranchView(branchFilter.trim())}
-          >
-            Add "{branchFilter.trim()}"
-          </button>
-        {/if}
-      </div>
-
-      <div class="branches-container">
-        {#if filteredBranches.length === 0}
-          <div class="empty-branches text-xs text-muted">
-            No matching branches found. Press enter to add "{branchFilter}".
-          </div>
-        {:else}
-          {#each filteredBranches as b (b.name)}
-            <div class="branch-picker-item" class:is-head={b.isHead}>
-              <span class="branch-picker-name font-mono text-xs">
-                <Icon name="git-branch" size={12} class="mr-1 inline-block" />
-                {b.name}
-                {#if b.isHead}
-                  <span class="head-pill text-xs">current</span>
-                {/if}
-              </span>
-              <button
-                type="button"
-                class="pick-btn"
-                onclick={() => handleAddBranchView(b.name)}
-              >
-                Add view
-              </button>
-            </div>
-          {/each}
-        {/if}
-      </div>
+      {/if}
     </div>
-  </div>
+
+    <div class="branches-container">
+      {#if filteredBranches.length === 0}
+        <div class="empty-branches text-xs text-muted">
+          No matching branches found. Press enter to add "{branchFilter}".
+        </div>
+      {:else}
+        {#each filteredBranches as b (b.name)}
+          <div class="branch-picker-item" class:is-head={b.isHead}>
+            <span class="branch-picker-name font-mono text-xs">
+              <Icon name="git-branch" size={12} class="mr-1 inline-block" />
+              {b.name}
+              {#if b.isHead}
+                <span class="head-pill text-xs">current</span>
+              {/if}
+            </span>
+            <button
+              type="button"
+              class="pick-btn"
+              onclick={() => handleAddBranchView(b.name)}
+            >
+              Add view
+            </button>
+          </div>
+        {/each}
+      {/if}
+    </div>
+  </Modal>
 {/if}
 
 <style>
@@ -785,7 +764,7 @@
 
   .branch-menu-label {
     font-size: 11px;
-    color: #8b9096;
+    color: var(--text-muted);
     padding: 8px 10px 7px;
   }
 
@@ -835,7 +814,7 @@
   }
   .menu-shortcut {
     margin-left: auto;
-    color: #8b9096;
+    color: var(--text-muted);
     font-size: 11px;
   }
   .branch-option.add-view {
@@ -845,48 +824,6 @@
   }
 
   /* Add-branch-view modal */
-  .modal-backdrop {
-    position: fixed;
-    inset: 0;
-    background-color: rgba(0, 0, 0, 0.45);
-    z-index: 500;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-  }
-  .branch-dialog {
-    width: 380px;
-    max-height: 480px;
-    background-color: var(--bg);
-    border: 1px solid var(--border);
-    border-radius: var(--r-lg);
-    box-shadow: var(--shadow-pop);
-    padding: 16px;
-    display: flex;
-    flex-direction: column;
-    gap: 12px;
-  }
-  .dialog-title {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-  }
-  .dialog-close-btn {
-    background: transparent;
-    border: none;
-    cursor: pointer;
-    color: var(--text-muted);
-    font-size: 14px;
-    padding: 2px 6px;
-    border-radius: var(--r-sm);
-  }
-  .dialog-close-btn:hover {
-    background-color: var(--bg-muted);
-    color: var(--text);
-  }
-  .dialog-desc {
-    line-height: 1.4;
-  }
   .dialog-search {
     display: flex;
     gap: 8px;

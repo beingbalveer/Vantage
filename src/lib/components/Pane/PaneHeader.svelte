@@ -5,6 +5,7 @@
   import { repos, loadRepos, removeRepo } from "../../stores/repos";
   import { addToast, openDialog } from "../../stores/ui";
   import IconButton from "../common/IconButton.svelte";
+  import { Modal } from "../common";
   import { get } from "svelte/store";
 
   interface Props {
@@ -146,6 +147,9 @@
           type="button"
           class="repo-menu-trigger"
           title="Repository options"
+          aria-label="Repository options"
+          aria-haspopup="menu"
+          aria-expanded={showRepoMenu}
           onclick={() => (showRepoMenu = !showRepoMenu)}
         >
           ⋯
@@ -193,6 +197,9 @@
       <div class="branch-wrap">
         <button
           class="branch-btn"
+          aria-haspopup="menu"
+          aria-expanded={showBranchMenu}
+          aria-label="Switch branch, currently {status?.branch || 'main'}"
           onclick={() => (showBranchMenu = !showBranchMenu)}
         >
           ⎇ {status?.branch || "main"} ▾
@@ -253,15 +260,21 @@
   <div class="right-section">
     <!-- Tabs: History | Files -->
     {#if repo}
-      <div class="segmented-tabs">
+      <div class="segmented-tabs" role="tablist" aria-label="Pane view">
         <button
           class="tab-btn {currentTab === 'history' ? 'active' : ''}"
+          role="tab"
+          aria-selected={currentTab === "history"}
+          aria-current={currentTab === "history" ? "page" : undefined}
           onclick={() => setPaneTab(paneIndex, "history")}
         >
           History
         </button>
         <button
           class="tab-btn {currentTab === 'files' ? 'active' : ''}"
+          role="tab"
+          aria-selected={currentTab === "files"}
+          aria-current={currentTab === "files" ? "page" : undefined}
           onclick={() => setPaneTab(paneIndex, "files")}
         >
           Files
@@ -287,88 +300,63 @@
   </div>
 
   <!-- Add Branch View Modal -->
-  {#if showBranchModal && repo}
-    <div
-      class="modal-backdrop"
-      role="presentation"
-      onclick={(e) => {
-        e.stopPropagation();
-        showBranchModal = false;
-      }}
-      onkeydown={(e) => {
-        if (e.key === 'Escape') showBranchModal = false;
-      }}
+  {#if repo}
+    <Modal
+      open={showBranchModal}
+      title={`Add branch view — ${repo.name}`}
+      description="Add another view of this repository for a different branch. You can compare and browse multiple branches at the same time across split panes."
+      width={380}
+      onclose={() => (showBranchModal = false)}
     >
-      <div
-        class="branch-dialog"
-        role="dialog"
-        aria-modal="true"
-        tabindex="-1"
-        onclick={(e) => e.stopPropagation()}
-        onkeydown={(e) => e.stopPropagation()}
-      >
-        <div class="dialog-title">
-          <span class="text-strong">Add branch view — {repo.name}</span>
+      <div class="dialog-search">
+        <input
+          type="text"
+          placeholder="Search or enter branch name…"
+          aria-label="Search or enter branch name"
+          bind:value={branchFilter}
+          class="dialog-branch-input"
+          onkeydown={(e) => {
+            if (e.key === 'Enter' && branchFilter.trim()) {
+              e.preventDefault();
+              handleAddBranchView(branchFilter.trim());
+            }
+          }}
+        />
+        {#if branchFilter.trim() && !branches.some(b => b.name === branchFilter.trim())}
           <button
-            class="dialog-close-btn"
-            onclick={() => (showBranchModal = false)}
+            class="add-branch-btn primary"
+            onclick={() => handleAddBranchView(branchFilter.trim())}
           >
-            ✕
+            Add "{branchFilter.trim()}"
           </button>
-        </div>
-        <p class="dialog-desc text-xs text-muted">
-          Add another view of this repository for a different branch. You can compare and browse multiple branches at the same time across split panes.
-        </p>
-
-        <div class="dialog-search">
-          <input
-            type="text"
-            placeholder="Search or enter branch name…"
-            bind:value={branchFilter}
-            class="dialog-branch-input"
-            onkeydown={(e) => {
-              if (e.key === 'Enter' && branchFilter.trim()) {
-                e.preventDefault();
-                handleAddBranchView(branchFilter.trim());
-              }
-            }}
-          />
-          {#if branchFilter.trim() && !branches.some(b => b.name === branchFilter.trim())}
-            <button
-              class="add-branch-btn primary"
-              onclick={() => handleAddBranchView(branchFilter.trim())}
-            >
-              Add "{branchFilter.trim()}"
-            </button>
-          {/if}
-        </div>
-
-        <div class="branches-container">
-          {#if filteredBranches.length === 0}
-            <div class="empty-branches text-xs text-muted">
-              No matching branches found. Press enter to add "{branchFilter}".
-            </div>
-          {:else}
-            {#each filteredBranches as b (b.name)}
-              <div class="branch-picker-item {b.isHead ? 'is-head' : ''}">
-                <span class="branch-picker-name font-mono text-xs">
-                  ⎇ {b.name}
-                  {#if b.isHead}
-                    <span class="head-pill text-xs">current</span>
-                  {/if}
-                </span>
-                <button
-                  class="pick-btn"
-                  onclick={() => handleAddBranchView(b.name)}
-                >
-                  Add view
-                </button>
-              </div>
-            {/each}
-          {/if}
-        </div>
+        {/if}
       </div>
-    </div>
+
+      <div class="branches-container">
+        {#if filteredBranches.length === 0}
+          <div class="empty-branches text-xs text-muted">
+            No matching branches found. Press enter to add "{branchFilter}".
+          </div>
+        {:else}
+          {#each filteredBranches as b (b.name)}
+            <div class="branch-picker-item {b.isHead ? 'is-head' : ''}">
+              <span class="branch-picker-name font-mono text-xs">
+                ⎇ {b.name}
+                {#if b.isHead}
+                  <span class="head-pill text-xs">current</span>
+                {/if}
+              </span>
+              <button
+                class="pick-btn"
+                onclick={() => handleAddBranchView(b.name)}
+              >
+                Add view
+              </button>
+            </div>
+          {/each}
+        {/if}
+      </div>
+    </Modal>
   {/if}
 </div>
 
@@ -618,53 +606,6 @@
     background-color: var(--accent);
     color: var(--accent-fg);
     border-color: var(--accent);
-  }
-
-  .modal-backdrop {
-    position: fixed;
-    inset: 0;
-    background-color: rgba(0, 0, 0, 0.45);
-    z-index: 500;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-  }
-
-  .branch-dialog {
-    width: 380px;
-    max-height: 480px;
-    background-color: var(--bg);
-    border: 1px solid var(--border);
-    border-radius: var(--r-lg);
-    box-shadow: var(--shadow-pop);
-    padding: 16px;
-    display: flex;
-    flex-direction: column;
-    gap: 12px;
-  }
-
-  .dialog-title {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-  }
-
-  .dialog-close-btn {
-    background: transparent;
-    border: none;
-    cursor: pointer;
-    color: var(--text-muted);
-    font-size: 14px;
-    padding: 2px 6px;
-    border-radius: var(--r-sm);
-  }
-  .dialog-close-btn:hover {
-    background-color: var(--bg-muted);
-    color: var(--text);
-  }
-
-  .dialog-desc {
-    line-height: 1.4;
   }
 
   .dialog-search {

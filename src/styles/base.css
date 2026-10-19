@@ -73,11 +73,49 @@ html, body, #app {
 
 /* Reduced motion preference */
 @media (prefers-reduced-motion: reduce) {
-  * {
+  *,
+  *::before,
+  *::after {
     animation-duration: 0.01ms !important;
     animation-iteration-count: 1 !important;
     transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
   }
+}
+
+/* Metadata stays copyable even when it lives inside a clickable row. */
+.commit-title,
+.commit-meta,
+.commit-subject,
+.commit-body-text,
+.commit-extra-meta,
+.commit-sha,
+.commit-subj,
+.commit-target-branch,
+.file-path,
+.dir-text,
+.file-name,
+.path-chip,
+.rev-chip,
+.repo-name,
+.branch-name,
+.hover-path,
+.history-footer,
+.backup-ref,
+.blame-sha,
+.blame-author,
+.blame-date,
+.blame-subject,
+.term-title,
+.term-cwd,
+.row-subtitle,
+.row-title,
+.branch-picker-name,
+input,
+textarea,
+select,
+[contenteditable="true"] {
+  user-select: text;
 }
 
 /* Global column drag styles */

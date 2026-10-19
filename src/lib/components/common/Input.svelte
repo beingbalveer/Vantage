@@ -16,6 +16,7 @@
     id?: string;
     min?: number | string;
     max?: number | string;
+    ariaLabel?: string;
     leading?: Snippet;
     trailing?: Snippet;
     onkeydown?: (e: KeyboardEvent) => void;
@@ -40,6 +41,7 @@
     id,
     min,
     max,
+    ariaLabel,
     leading,
     trailing,
     onkeydown,
@@ -77,6 +79,7 @@
     {readonly}
     {min}
     {max}
+    aria-label={ariaLabel}
     class="relay-input-field {inputClass}"
     {onkeydown}
     {oninput}

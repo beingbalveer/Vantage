@@ -47,6 +47,7 @@
       <button
         type="button"
         class="expand-toggle-btn {isExpanded ? 'active' : ''}"
+        aria-expanded={isExpanded}
         title={isExpanded ? "Hide commit details" : "Show commit details"}
         onclick={() => (isExpanded = !isExpanded)}
         aria-label={isExpanded ? "Hide commit details" : "Show commit details"}

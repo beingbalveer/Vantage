@@ -99,6 +99,7 @@
         <button
           type="button"
           class="nav-item {activeSection === 'general' ? 'active' : ''}"
+          aria-current={activeSection === "general" ? "page" : undefined}
           onclick={() => setSection("general")}
         >
           General
@@ -106,6 +107,7 @@
         <button
           type="button"
           class="nav-item {activeSection === 'git' ? 'active' : ''}"
+          aria-current={activeSection === "git" ? "page" : undefined}
           onclick={() => setSection("git")}
         >
           Git
@@ -113,6 +115,7 @@
         <button
           type="button"
           class="nav-item {activeSection === 'terminal' ? 'active' : ''}"
+          aria-current={activeSection === "terminal" ? "page" : undefined}
           onclick={() => setSection("terminal")}
         >
           Terminal
@@ -120,6 +123,7 @@
         <button
           type="button"
           class="nav-item {activeSection === 'integrations' ? 'active' : ''}"
+          aria-current={activeSection === "integrations" ? "page" : undefined}
           onclick={() => setSection("integrations")}
         >
           Integrations
@@ -127,6 +131,7 @@
         <button
           type="button"
           class="nav-item {activeSection === 'recovery' ? 'active' : ''}"
+          aria-current={activeSection === "recovery" ? "page" : undefined}
           onclick={() => setSection("recovery")}
         >
           Recovery
@@ -134,6 +139,7 @@
         <button
           type="button"
           class="nav-item {activeSection === 'about' ? 'active' : ''}"
+          aria-current={activeSection === "about" ? "page" : undefined}
           onclick={() => setSection("about")}
         >
           About
@@ -150,6 +156,7 @@
               <button
                 type="button"
                 class="theme-btn {currentSettings.theme === 'system' ? 'active' : ''}"
+                aria-pressed={currentSettings.theme === "system"}
                 onclick={() => handleSaveField("theme", "system")}
               >
                 System
@@ -157,6 +164,7 @@
               <button
                 type="button"
                 class="theme-btn {currentSettings.theme === 'light' ? 'active' : ''}"
+                aria-pressed={currentSettings.theme === "light"}
                 onclick={() => handleSaveField("theme", "light")}
               >
                 Light
@@ -164,6 +172,7 @@
               <button
                 type="button"
                 class="theme-btn {currentSettings.theme === 'dark' ? 'active' : ''}"
+                aria-pressed={currentSettings.theme === "dark"}
                 onclick={() => handleSaveField("theme", "dark")}
               >
                 Dark
@@ -181,6 +190,7 @@
                 min="1"
                 max="20"
                 size="sm"
+                ariaLabel="Context lines"
                 value={String(currentSettings.contextLines)}
                 onchange={(e: Event) => handleSaveField("contextLines", parseInt((e.target as HTMLInputElement).value) || 3)}
               />
@@ -195,6 +205,7 @@
                 min="0"
                 max="60"
                 size="sm"
+                ariaLabel="Auto-fetch interval in minutes"
                 value={String(currentSettings.autoFetchMinutes)}
                 onchange={(e: Event) => handleSaveField("autoFetchMinutes", parseInt((e.target as HTMLInputElement).value) || 0)}
               />
@@ -214,6 +225,7 @@
             <span class="setting-title text-strong">Custom shell path</span>
             <Input
               type="text"
+              ariaLabel="Custom shell path"
               placeholder="e.g. /bin/zsh or pwsh.exe (leave empty for default)"
               size="sm"
               value={currentSettings.shell || ""}
@@ -227,6 +239,7 @@
             <span class="setting-desc text-sm text-muted">Placeholders: &#123;repo&#125; &#123;file&#125; &#123;line&#125;. Example: code -g &#123;repo&#125;/&#123;file&#125;:&#123;line&#125;</span>
             <Input
               type="text"
+              ariaLabel="External editor command"
               placeholder={'code -g {repo}/{file}:{line}'}
               size="sm"
               value={currentSettings.externalEditorCmd || ""}
@@ -239,6 +252,7 @@
             <span class="setting-desc text-sm text-muted">Receives diff on stdin and writes summary on stdout.</span>
             <Input
               type="text"
+              ariaLabel="Commit message command"
               placeholder="e.g. aigitcommit"
               size="sm"
               value={currentSettings.commitMessageCmd || ""}
@@ -290,7 +304,7 @@
           {/if}
 
           {#if isLoadingBackups}
-            <div class="loading-state text-sm text-muted">
+            <div class="loading-state text-sm text-muted" role="status">
               Loading backup references…
             </div>
           {:else if backups.length === 0}

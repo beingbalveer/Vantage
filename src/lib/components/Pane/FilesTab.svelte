@@ -2,7 +2,7 @@
   import { onMount } from "svelte";
   import * as api from "../../api";
   import CodeViewer from "../Viewer/CodeViewer.svelte";
-  import { createHorizontalResizer } from "../../resizer";
+  import { createHorizontalResizer, createHorizontalResizerKeyboard } from "../../resizer";
   import Icon from "../common/Icon.svelte";
   import { navigationTarget } from "../../stores/navigation";
 
@@ -32,6 +32,14 @@
   );
 
   const startTreeResize = createHorizontalResizer({
+    getWidth: () => treeWidth,
+    setWidth: (w) => (treeWidth = w),
+    minWidth: 160,
+    maxWidth: 600,
+    storageKey: "vantage_files_tree_width",
+  });
+
+  const nudgeTreeResize = createHorizontalResizerKeyboard({
     getWidth: () => treeWidth,
     setWidth: (w) => (treeWidth = w),
     minWidth: 160,
@@ -87,6 +95,7 @@
       <input
         type="text"
         placeholder="Filter files (/)"
+        aria-label="Filter files"
         bind:value={filterText}
         class="tree-filter-input"
       />
@@ -110,12 +119,20 @@
     </div>
   </div>
 
+  <!-- svelte-ignore a11y_no_noninteractive_tabindex -->
+  <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
   <div
     class="split-handle"
     role="separator"
     aria-orientation="vertical"
-    title="Drag to resize file tree (Double-click to reset)"
+    aria-label="Resize file tree"
+    aria-valuemin={160}
+    aria-valuemax={600}
+    aria-valuenow={Math.round(treeWidth)}
+    tabindex="0"
+    title="Drag to resize file tree (Double-click to reset, Arrow keys to nudge)"
     onpointerdown={startTreeResize}
+    onkeydown={nudgeTreeResize}
     ondblclick={() => {
       treeWidth = 260;
       try { localStorage.setItem("vantage_files_tree_width", "260"); } catch {}

@@ -302,11 +302,11 @@
     gap: 7px;
     margin-top: 10px;
     font-size: 11px;
-    color: #737c86;
+    color: var(--text-muted);
     cursor: pointer;
   }
   .upload-icon:hover {
-    color: #454b53;
+    color: var(--text);
   }
 
   .upload-preview {
@@ -341,7 +341,7 @@
     background: none;
   }
   .add-actions .cancel-btn {
-    color: #737b84;
+    color: var(--text-muted);
     background: none;
   }
   .add-actions .cancel-btn:hover:not(:disabled) {

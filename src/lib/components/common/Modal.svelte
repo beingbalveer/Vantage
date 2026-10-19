@@ -1,6 +1,10 @@
+<script module lang="ts">
+  let nextModalId = 0;
+</script>
+
 <script lang="ts">
   import type { Snippet } from "svelte";
-  import { onMount, tick } from "svelte";
+  import { tick, untrack } from "svelte";
   import Icon from "./Icon.svelte";
 
   interface Props {
@@ -35,8 +39,22 @@
     footer,
   }: Props = $props();
 
+  const uid = ++nextModalId;
+  const titleId = `relay-modal-title-${uid}`;
+  const descriptionId = `relay-modal-description-${uid}`;
+
   let cardEl = $state<HTMLElement | null>(null);
-  let previousActiveElement: HTMLElement | null = null;
+  let inerted: Array<{ el: HTMLElement; inert: boolean; ariaHidden: string | null }> = [];
+
+  /** Render the dialog at the document root so the whole app can be inerted. */
+  function portal(node: HTMLElement) {
+    document.body.appendChild(node);
+    return {
+      destroy() {
+        node.remove();
+      },
+    };
+  }
 
   let canCloseOnEsc = $derived(
     closeOnEscape !== undefined
@@ -56,9 +74,6 @@
   function handleClose() {
     open = false;
     onclose?.();
-    if (previousActiveElement && typeof previousActiveElement.focus === "function") {
-      previousActiveElement.focus();
-    }
   }
 
   function handleBackdropClick(e: MouseEvent) {
@@ -72,8 +87,60 @@
     const selector =
       'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
     return Array.from(cardEl.querySelectorAll<HTMLElement>(selector)).filter(
-      (el) => el.offsetParent !== null
+      (el) => el.offsetParent !== null && !el.hasAttribute("inert")
     );
+  }
+
+  function focusFirst() {
+    const focusable = getFocusableElements();
+    if (focusable.length > 0) {
+      const firstInput = focusable.find(
+        (el) =>
+          el.tagName === "INPUT" ||
+          el.tagName === "TEXTAREA" ||
+          el.tagName === "SELECT"
+      );
+      (firstInput || focusable[0]).focus();
+    } else if (cardEl) {
+      cardEl.focus();
+    }
+  }
+
+  /**
+   * Inert every sibling along the modal's ancestor chain so the background
+   * cannot be tabbed to or reached by a screen reader while the dialog is open.
+   * Restored in the effect cleanup, including parent-driven closes.
+   */
+  function makeBackgroundInert() {
+    const backdrop = untrack(() => cardEl)?.closest(
+      ".relay-modal-backdrop"
+    ) as HTMLElement | null;
+    if (!backdrop) return;
+
+    let node: HTMLElement = backdrop;
+    while (node.parentElement && node !== document.body) {
+      const parent = node.parentElement;
+      for (const sibling of Array.from(parent.children)) {
+        if (sibling === node || !(sibling instanceof HTMLElement)) continue;
+        inerted.push({
+          el: sibling,
+          inert: sibling.inert,
+          ariaHidden: sibling.getAttribute("aria-hidden"),
+        });
+        sibling.inert = true;
+        sibling.setAttribute("aria-hidden", "true");
+      }
+      node = parent;
+    }
+  }
+
+  function restoreBackground() {
+    for (const item of inerted) {
+      item.el.inert = item.inert;
+      if (item.ariaHidden === null) item.el.removeAttribute("aria-hidden");
+      else item.el.setAttribute("aria-hidden", item.ariaHidden);
+    }
+    inerted = [];
   }
 
   function handleCardKeydown(e: KeyboardEvent) {
@@ -90,41 +157,56 @@
       const focusable = getFocusableElements();
       if (focusable.length === 0) {
         e.preventDefault();
+        cardEl?.focus();
         return;
       }
       const first = focusable[0];
       const last = focusable[focusable.length - 1];
+      const active = document.activeElement as HTMLElement | null;
+
+      if (!cardEl?.contains(active)) {
+        e.preventDefault();
+        (e.shiftKey ? last : first).focus();
+        return;
+      }
 
       if (e.shiftKey) {
-        if (document.activeElement === first || document.activeElement === cardEl) {
+        if (active === first || active === cardEl) {
           e.preventDefault();
           last.focus();
         }
-      } else {
-        if (document.activeElement === last) {
-          e.preventDefault();
-          first.focus();
-        }
+      } else if (active === last) {
+        e.preventDefault();
+        first.focus();
       }
     }
   }
 
   $effect(() => {
-    if (open) {
-      previousActiveElement = document.activeElement as HTMLElement;
-      tick().then(() => {
-        const focusable = getFocusableElements();
-        if (focusable.length > 0) {
-          // Focus the first interactive element (or input if available)
-          const firstInput = focusable.find(
-            (el) => el.tagName === "INPUT" || el.tagName === "TEXTAREA"
-          );
-          (firstInput || focusable[0]).focus();
-        } else if (cardEl) {
-          cardEl.focus();
-        }
-      });
-    }
+    if (!open) return;
+
+    const opener =
+      document.activeElement instanceof HTMLElement &&
+      document.activeElement !== document.body
+        ? document.activeElement
+        : null;
+    let active = true;
+
+    tick().then(() => {
+      if (!active) return;
+      // Move focus before marking the background inert: aria-hidden on an
+      // ancestor of the focused element is ignored (and warns) otherwise.
+      focusFirst();
+      makeBackgroundInert();
+    });
+
+    return () => {
+      active = false;
+      restoreBackground();
+      if (opener?.isConnected && typeof opener.focus === "function") {
+        opener.focus();
+      }
+    };
   });
 
   let cardStyle = $derived(
@@ -136,7 +218,11 @@
   <div
     class="relay-modal-backdrop"
     role="presentation"
-    onclick={handleBackdropClick}
+    use:portal
+    onclick={(e) => {
+      e.stopPropagation();
+      handleBackdropClick(e);
+    }}
   >
     <div
       bind:this={cardEl}
@@ -144,6 +230,9 @@
       style={cardStyle}
       role="dialog"
       aria-modal="true"
+      aria-labelledby={title ? titleId : undefined}
+      aria-describedby={description ? descriptionId : undefined}
+      aria-label={title ? undefined : "Dialog"}
       tabindex="-1"
       onclick={(e) => e.stopPropagation()}
       onkeydown={handleCardKeydown}
@@ -152,10 +241,10 @@
         <div class="relay-modal-header">
           <div class="relay-modal-header-text">
             {#if title}
-              <h2 class="relay-modal-title">{title}</h2>
+              <h2 id={titleId} class="relay-modal-title">{title}</h2>
             {/if}
             {#if description}
-              <p class="relay-modal-desc">{description}</p>
+              <p id={descriptionId} class="relay-modal-desc">{description}</p>
             {/if}
           </div>
 
@@ -212,6 +301,11 @@
     outline: none;
     overflow: hidden;
     animation: scaleIn 120ms cubic-bezier(0.16, 1, 0.3, 1);
+  }
+
+  .relay-modal-card:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
   }
 
   .relay-modal-header {
