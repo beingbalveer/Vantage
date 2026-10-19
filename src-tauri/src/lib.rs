@@ -85,6 +85,7 @@ pub fn run() {
             blob_lines,
             blob_text,
             tree_list,
+            file_diff_meta,
             blame_line,
             grep_defs,
             commit,

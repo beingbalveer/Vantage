@@ -122,6 +122,13 @@
   let currentDiffFile = $state<DiffFile | null>(null);
   let checkedPaths = $state<string[]>([]);
 
+  /** File-list record for the selection (authoritative binary/status/rename). */
+  let selectedFileChange = $derived(
+    selectedFilePath
+      ? (scopeFilesList.find((f) => f.path === selectedFilePath) ?? null)
+      : null
+  );
+
   // Generation IDs to avoid stale async overwrites (R11)
   let historyGen = 0;
   let scopeGen = 0;
@@ -480,6 +487,8 @@
                 ignoreWhitespace={$settings.ignoreWhitespace}
                 repoId={repo.id}
                 rev={selectedCommitSha || repo.branch || "HEAD"}
+                scope={currentScope}
+                fileChange={selectedFileChange}
                 onviewfile={(path) => {
                   navigateTo({
                     repoId: repo.id,
