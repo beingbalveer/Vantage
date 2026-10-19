@@ -261,6 +261,28 @@ fn escape_pathspec_literal(query: &str) -> String {
     out
 }
 
+/// Regex-escape a literal query for POSIX **extended** regex (`--extended-regexp`).
+///
+/// `git log --grep`/`--author` accept a regex, not a literal, and the
+/// `--fixed-strings` flag that used to make them literal only exists in git
+/// 2.38+ (and is absent on Ubuntu 22.04's git 2.34 and older Xcode CLT git).
+/// Escaping the metacharacters ourselves gives literal-substring semantics on
+/// every git version with no version floor: `.`/`*`/`[`/`\` etc. are matched
+/// character-for-character.
+fn escape_ere_literal(query: &str) -> String {
+    let mut out = String::with_capacity(query.len());
+    for c in query.chars() {
+        if matches!(
+            c,
+            '.' | '^' | '$' | '*' | '+' | '?' | '|' | '(' | ')' | '{' | '}' | '[' | ']' | '\\'
+        ) {
+            out.push('\\');
+        }
+        out.push(c);
+    }
+    out
+}
+
 /// Merge per-source `(sha, commit timestamp)` pairs into a newest-first,
 /// de-duplicated SHA list, truncated to `cap`.
 fn order_search_shas(acc: HashMap<String, i64>, cap: usize) -> Vec<String> {
@@ -319,24 +341,27 @@ async fn search_commit_shas(
 ) -> Result<Vec<String>, AppError> {
     let n = cap.to_string();
     let mut acc: HashMap<String, i64> = HashMap::new();
+    // Literal matching without `--fixed-strings` (git < 2.38): escape the query
+    // and opt into POSIX extended regex, which exists on every supported git.
+    let escaped = escape_ere_literal(query);
 
-    let grep_arg = format!("--grep={}", query);
+    let grep_arg = format!("--grep={}", escaped);
     collect_search_source(
         runner,
         repo_path,
         target_ref,
-        &["-i", "--fixed-strings", "-n", &n, &grep_arg],
+        &["-i", "--extended-regexp", "-n", &n, &grep_arg],
         None,
         &mut acc,
     )
     .await?;
 
-    let author_arg = format!("--author={}", query);
+    let author_arg = format!("--author={}", escaped);
     collect_search_source(
         runner,
         repo_path,
         target_ref,
-        &["-i", "--fixed-strings", "-n", &n, &author_arg],
+        &["-i", "--extended-regexp", "-n", &n, &author_arg],
         None,
         &mut acc,
     )
@@ -459,6 +484,24 @@ mod tests {
         assert_eq!(escape_pathspec_literal("a*b"), "a\\*b");
         assert_eq!(escape_pathspec_literal("a?b"), "a\\?b");
         assert_eq!(escape_pathspec_literal("a[0]\\b"), "a\\[0\\]\\\\b");
+    }
+
+    #[test]
+    fn test_escape_ere_literal_escapes_metacharacters() {
+        // Ordinary text is left untouched.
+        assert_eq!(escape_ere_literal("plain"), "plain");
+        assert_eq!(escape_ere_literal("balveer@users.noreply.github.com"), "balveer@users\\.noreply\\.github\\.com");
+        // Every POSIX ERE metacharacter is neutralized so it matches literally.
+        assert_eq!(escape_ere_literal("v0.1.0"), "v0\\.1\\.0");
+        assert_eq!(escape_ere_literal("a*b"), "a\\*b");
+        assert_eq!(escape_ere_literal("a?b"), "a\\?b");
+        assert_eq!(escape_ere_literal("a+b"), "a\\+b");
+        assert_eq!(escape_ere_literal("a[b]"), "a\\[b\\]");
+        assert_eq!(escape_ere_literal("(a|b)"), "\\(a\\|b\\)");
+        assert_eq!(escape_ere_literal("a{b}"), "a\\{b\\}");
+        assert_eq!(escape_ere_literal("a^b$"), "a\\^b\\$");
+        assert_eq!(escape_ere_literal("a\\b"), "a\\\\b");
+        assert_eq!(escape_ere_literal("fix: [wip] (v2.0)"), "fix: \\[wip\\] \\(v2\\.0\\)");
     }
 
     #[test]
