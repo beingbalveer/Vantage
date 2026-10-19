@@ -5,6 +5,7 @@
   import { settings } from "../../stores/settings";
   import { panes, focusedPaneIndex, focusPane } from "../../stores/panes";
   import { addToast } from "../../stores/ui";
+  import { tagsByRepo, loadTags, groupTagsByTarget } from "../../stores/tags";
   import { navigationTarget, navigateTo } from "../../stores/navigation";
   import UncommittedRow from "./UncommittedRow.svelte";
   import CommitRow from "./CommitRow.svelte";
@@ -82,6 +83,17 @@
       ? commits.find((c) => c.sha === selectedCommitSha) || null
       : null
   );
+
+  // Tags for the current repo, indexed by the commit they point at.
+  let repoTags = $derived(repo ? $tagsByRepo[repo.id] || [] : []);
+  let tagsByTarget = $derived(groupTagsByTarget(repoTags));
+
+  $effect(() => {
+    const currentId = repo?.id || "";
+    if (currentId) {
+      untrack(() => loadTags(currentId));
+    }
+  });
 
   // Prototype parity: the commits column ends with a quiet branch summary
   // (approved-prototype.html · .history-footer). The history is paged at 200,
@@ -386,6 +398,8 @@
                   {commit}
                   isSelected={selectedCommitSha === commit.sha}
                   isLocal={unpushedShas.has(commit.sha)}
+                  repoId={repo.id}
+                  tags={tagsByTarget.get(commit.sha) || []}
                   onselect={() => selectCommit(commit.sha)}
                 />
               {/each}
@@ -417,7 +431,11 @@
         <!-- Detail Layout: Files and Diff columns -->
         <div class="detail-layout">
           {#if selectedCommit && !isUncommittedSelected && showCommitDetails}
-            <CommitHeader commit={selectedCommit} />
+            <CommitHeader
+              commit={selectedCommit}
+              repoId={repo.id}
+              tags={tagsByTarget.get(selectedCommit.sha) || []}
+            />
           {/if}
 
           <div class="detail-split">

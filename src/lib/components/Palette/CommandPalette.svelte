@@ -18,7 +18,7 @@
   import { SHORTCUTS, formatKey } from "../../keys";
   import { fuzzyScore } from "../../fuzzy";
   import { formatRelativeTime } from "../../format";
-  import { addRepoDialogOpen, settingsOpen, shortcutsHelpOpen, addToast, sidebarCollapsed, openDialog } from "../../stores/ui";
+  import { addRepoDialogOpen, settingsOpen, shortcutsHelpOpen, addToast, sidebarCollapsed, openDialog, openTagCreateDialog } from "../../stores/ui";
   import type { Layout, CommitSummary } from "../../types";
   import * as api from "../../api";
   import Icon from "../common/Icon.svelte";
@@ -146,6 +146,40 @@
             await refreshSingleStatus(focusedRepoId);
           } catch (e: any) {
             addToast({ message: e.message || "Failed to mark as reviewed", kind: "error" });
+          }
+        },
+      },
+      {
+        id: "cmd_create_tag",
+        title: "Create tag…",
+        action: () => {
+          $paletteOpen = false;
+          if (!focusedRepoId) {
+            addToast({ message: "No focused repository to tag", kind: "info" });
+            return;
+          }
+          const branch = focusedRepo?.branch;
+          openTagCreateDialog({
+            repoId: focusedRepoId,
+            target: "HEAD",
+            targetLabel: branch ? `HEAD (${branch})` : "HEAD",
+          });
+        },
+      },
+      {
+        id: "cmd_push_tags",
+        title: "Push tags to origin",
+        action: async () => {
+          $paletteOpen = false;
+          if (!focusedRepoId) {
+            addToast({ message: "No focused repository to push tags to", kind: "info" });
+            return;
+          }
+          try {
+            await api.tagPushAll(focusedRepoId);
+            addToast({ message: "Pushed tags to origin", kind: "success" });
+          } catch (e: any) {
+            addToast({ message: e.message || "Failed to push tags", kind: "error" });
           }
         },
       },

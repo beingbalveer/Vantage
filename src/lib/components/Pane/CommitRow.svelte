@@ -1,19 +1,32 @@
 <script lang="ts">
-  import type { CommitSummary } from "../../types";
+  import type { CommitSummary, TagInfo } from "../../types";
   import { formatRelativeTime } from "../../format";
   import Icon from "../common/Icon.svelte";
+  import TagChip from "./TagChip.svelte";
 
   interface Props {
     commit: CommitSummary;
     isSelected: boolean;
     isLocal?: boolean;
+    repoId?: string;
+    tags?: TagInfo[];
     onselect?: () => void;
     onclick?: () => void;
   }
 
-  let { commit, isSelected, isLocal = false, onselect, onclick }: Props = $props();
+  let {
+    commit,
+    isSelected,
+    isLocal = false,
+    repoId = "",
+    tags = [],
+    onselect,
+    onclick,
+  }: Props = $props();
 
   let isMerge = $derived(commit.parents && commit.parents.length > 1);
+  let visibleTags = $derived(tags.slice(0, 2));
+  let hiddenTagCount = $derived(Math.max(0, tags.length - visibleTags.length));
 
   function handleTrigger(e?: Event) {
     if (e) e.stopPropagation();
@@ -46,6 +59,18 @@
     </span>
   </span>
   <div class="commit-trailing">
+    {#if visibleTags.length > 0}
+      <span class="tag-chips">
+        {#each visibleTags as tag (tag.name)}
+          <TagChip {tag} {repoId} compact />
+        {/each}
+        {#if hiddenTagCount > 0}
+          <span class="more-tags" title="{hiddenTagCount} more tag{hiddenTagCount === 1 ? '' : 's'}">
+            +{hiddenTagCount}
+          </span>
+        {/if}
+      </span>
+    {/if}
     {#if isMerge}
       <span class="merge-badge">merge</span>
     {/if}
@@ -165,6 +190,16 @@
     gap: 6px;
     margin-left: auto;
     flex-shrink: 0;
+  }
+  .tag-chips {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+  }
+  .more-tags {
+    font-size: 10px;
+    color: var(--text-faint, #8c959f);
+    white-space: nowrap;
   }
   .merge-badge {
     flex-shrink: 0;

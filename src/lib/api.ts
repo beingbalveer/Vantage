@@ -17,6 +17,7 @@ import type {
   RepoStatus,
   RepoStackInfo,
   Settings,
+  TagInfo,
   TriageFlag,
 } from "./types";
 
@@ -201,6 +202,29 @@ export async function backupRestore(id: string, ref: string): Promise<void> {
 
 export async function branchList(id: string): Promise<BranchInfo[]> {
   return invoke("branch_list", { id });
+}
+
+// Tags
+export async function tagList(id: string): Promise<TagInfo[]> {
+  return invoke("tag_list", { id });
+}
+
+export async function tagCreate(
+  id: string,
+  name: string,
+  target: string,
+  annotated: boolean,
+  message?: string
+): Promise<void> {
+  return invoke("tag_create", { id, name, target, annotated, message });
+}
+
+export async function tagPush(id: string, name: string): Promise<void> {
+  return invoke("tag_push", { id, name });
+}
+
+export async function tagPushAll(id: string): Promise<void> {
+  return invoke("tag_push_all", { id });
 }
 
 export async function checkout(id: string, branch: string): Promise<void> {

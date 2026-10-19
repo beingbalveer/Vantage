@@ -9,8 +9,9 @@ use crate::git::ops::{
     revert_range as git_revert_range,
 };
 use crate::git::refs::{
-    checkout_branch, get_remote_url, list_branches, sync_fetch as git_sync_fetch,
-    sync_pull as git_sync_pull, sync_push as git_sync_push,
+    checkout_branch, create_tag as git_create_tag, get_remote_url, list_branches,
+    list_tags as git_list_tags, push_all_tags as git_push_all_tags, push_tag as git_push_tag,
+    sync_fetch as git_sync_fetch, sync_pull as git_sync_pull, sync_push as git_sync_push, TagInfo,
 };
 use crate::git::runner::GitRunner;
 use crate::git::status::query_repo_status;
@@ -914,6 +915,88 @@ pub async fn check_pushed(
     };
 
     git_check_pushed(&state.runner, &repo_path, &sha).await
+}
+
+// ---------------- Tag Commands ----------------
+
+#[tauri::command]
+pub async fn tag_list(state: State<'_, AppState>, id: String) -> Result<Vec<TagInfo>, AppError> {
+    let repo_path = {
+        let data = state.data.lock().await;
+        let entry = data
+            .repos
+            .iter()
+            .find(|r| r.id == id)
+            .ok_or_else(|| AppError::not_found("Repository not found"))?;
+        PathBuf::from(&entry.path)
+    };
+
+    git_list_tags(&state.runner, &repo_path).await
+}
+
+#[tauri::command]
+pub async fn tag_create(
+    state: State<'_, AppState>,
+    id: String,
+    name: String,
+    target: String,
+    annotated: bool,
+    message: Option<String>,
+) -> Result<(), AppError> {
+    let repo_path = {
+        let data = state.data.lock().await;
+        let entry = data
+            .repos
+            .iter()
+            .find(|r| r.id == id)
+            .ok_or_else(|| AppError::not_found("Repository not found"))?;
+        PathBuf::from(&entry.path)
+    };
+
+    // Tags are independent of the checked-out branch, so no branch guard here.
+    git_create_tag(
+        &state.runner,
+        &repo_path,
+        &name,
+        Some(&target),
+        annotated,
+        message.as_deref(),
+    )
+    .await
+}
+
+#[tauri::command]
+pub async fn tag_push(
+    state: State<'_, AppState>,
+    id: String,
+    name: String,
+) -> Result<(), AppError> {
+    let repo_path = {
+        let data = state.data.lock().await;
+        let entry = data
+            .repos
+            .iter()
+            .find(|r| r.id == id)
+            .ok_or_else(|| AppError::not_found("Repository not found"))?;
+        PathBuf::from(&entry.path)
+    };
+
+    git_push_tag(&state.runner, &repo_path, &name).await
+}
+
+#[tauri::command]
+pub async fn tag_push_all(state: State<'_, AppState>, id: String) -> Result<(), AppError> {
+    let repo_path = {
+        let data = state.data.lock().await;
+        let entry = data
+            .repos
+            .iter()
+            .find(|r| r.id == id)
+            .ok_or_else(|| AppError::not_found("Repository not found"))?;
+        PathBuf::from(&entry.path)
+    };
+
+    git_push_all_tags(&state.runner, &repo_path).await
 }
 
 // ---------------- Terminal Commands ----------------

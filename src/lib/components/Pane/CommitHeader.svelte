@@ -1,17 +1,31 @@
 <script lang="ts">
-  import type { CommitSummary } from "../../types";
+  import type { CommitSummary, TagInfo } from "../../types";
   import { formatRelativeTime, formatFullTimestamp } from "../../format";
-  import { addToast } from "../../stores/ui";
+  import { addToast, openTagCreateDialog } from "../../stores/ui";
+  import Icon from "../common/Icon.svelte";
+  import TagChip from "./TagChip.svelte";
 
   interface Props {
     commit: CommitSummary;
+    repoId?: string;
+    tags?: TagInfo[];
   }
 
-  let { commit }: Props = $props();
+  let { commit, repoId = "", tags = [] }: Props = $props();
 
   let isExpanded = $state(false);
   let copied = $state(false);
   let copyTimer: ReturnType<typeof setTimeout> | null = null;
+
+  function handleCreateTag(e: MouseEvent) {
+    e.stopPropagation();
+    if (!repoId) return;
+    openTagCreateDialog({
+      repoId,
+      target: commit.sha,
+      targetLabel: commit.short || commit.sha.slice(0, 7),
+    });
+  }
 
   async function handleCopySha(e: MouseEvent) {
     e.stopPropagation();
@@ -44,6 +58,18 @@
         {/if}
       </div>
 
+      {#if repoId}
+        <button
+          type="button"
+          class="create-tag-btn"
+          title="Create tag at this commit…"
+          onclick={handleCreateTag}
+        >
+          <Icon name="tag" size={12} strokeWidth={2} />
+          <span>Tag</span>
+        </button>
+      {/if}
+
       <button
         type="button"
         class="expand-toggle-btn {isExpanded ? 'active' : ''}"
@@ -60,6 +86,14 @@
       </button>
     </div>
   </div>
+
+  {#if tags.length > 0}
+    <div class="tag-strip">
+      {#each tags as tag (tag.name)}
+        <TagChip {tag} {repoId} />
+      {/each}
+    </div>
+  {/if}
 
   <!-- Expandable Details: Full commit message body & metadata -->
   {#if isExpanded}
@@ -128,6 +162,35 @@
     align-items: center;
     gap: 10px;
     flex-shrink: 0;
+  }
+
+  .create-tag-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    height: 20px;
+    padding: 0 7px;
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--r-md);
+    background-color: transparent;
+    color: var(--text-muted);
+    font-size: 11px;
+    font-weight: 500;
+    cursor: pointer;
+    flex-shrink: 0;
+  }
+  .create-tag-btn:hover {
+    background-color: var(--accent-bg);
+    color: var(--accent);
+    border-color: var(--accent);
+  }
+
+  .tag-strip {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 6px;
+    padding-top: 2px;
   }
 
   .stats {

@@ -28,6 +28,8 @@
   import DiscardDialog from "./lib/components/Dialogs/DiscardDialog.svelte";
   import RepoIconDialog from "./lib/components/Dialogs/RepoIconDialog.svelte";
   import RemoveRepoDialog from "./lib/components/Dialogs/RemoveRepoDialog.svelte";
+  import TagCreateDialog from "./lib/components/Dialogs/TagCreateDialog.svelte";
+  import TagDetailsDialog from "./lib/components/Dialogs/TagDetailsDialog.svelte";
   import ToastContainer from "./lib/components/common/ToastContainer.svelte";
 
   let gitVersion = $state("");
@@ -172,6 +174,8 @@
   <DiscardDialog />
   <RepoIconDialog />
   <RemoveRepoDialog />
+  <TagCreateDialog />
+  <TagDetailsDialog />
   <ToastContainer />
 </div>
 
