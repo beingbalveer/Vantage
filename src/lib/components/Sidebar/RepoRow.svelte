@@ -14,6 +14,7 @@
   import { get } from "svelte/store";
   import Icon from "../common/Icon.svelte";
   import RepoIcon from "./RepoIcon.svelte";
+  import { formatCount, pluralize } from "../../format";
 
   interface Props {
     repo: RepoEntry;
@@ -93,6 +94,81 @@
   let isOpenInFocused = $derived(paneIndicators.some((p) => p.isFocused));
 
   let displayBranch = $derived(repo.branch || status?.branch || "");
+
+  // ---- Attention signals (ALPH-145) ----
+  let hasError = $derived(Boolean(status?.error));
+  let newCommits = $derived(status?.newCommitCount ?? 0);
+  let dirtyCount = $derived(status?.dirtyCount ?? 0);
+  let aheadCount = $derived(status?.ahead ?? 0);
+  let behindCount = $derived(status?.behind ?? 0);
+  let markerProblem = $derived(
+    status?.markerState === "missing" || status?.markerState === "diverged"
+  );
+
+  let newCommitLabel = $derived(formatCount(newCommits, { prefix: "+" }));
+  let aheadLabel = $derived(formatCount(aheadCount));
+
+  let dirtyLabel = $derived(
+    `${dirtyCount} ${pluralize(dirtyCount, "file")} changed`
+  );
+  let newCommitTitle = $derived(
+    `${newCommits} new ${pluralize(newCommits, "commit")} to review`
+  );
+  let aheadTitle = $derived(
+    `${aheadCount} unpushed ${pluralize(aheadCount, "commit")}`
+  );
+  let markerTitle = $derived(
+    status?.markerState === "missing"
+      ? "Reviewed marker is missing — the marked commit is no longer in history"
+      : "History was rewritten since you last reviewed"
+  );
+
+  // Screen-reader summary for the row (DESIGN §11).
+  let rowAriaLabel = $derived.by(() => {
+    const parts = [`${repo.name}, branch ${displayBranch || "HEAD"}`];
+    if (hasError) {
+      parts.push(`error: ${status?.error}`);
+    } else {
+      if (newCommits > 0) {
+        parts.push(`${newCommits} new ${pluralize(newCommits, "commit")}`);
+      }
+      if (dirtyCount > 0) parts.push("uncommitted changes");
+      if (aheadCount > 0) {
+        parts.push(`${aheadCount} unpushed ${pluralize(aheadCount, "commit")}`);
+      }
+      if (markerProblem) parts.push(markerTitle);
+    }
+    return parts.join(", ");
+  });
+
+  // Native hover tooltip: identity + sync + attention (DESIGN §4.4).
+  let rowTitle = $derived.by(() => {
+    const sync = `${displayBranch || "HEAD"}${aheadCount ? ` ↑${aheadCount}` : ""}${
+      behindCount ? ` ↓${behindCount}` : ""
+    }`;
+    const lines = [`${repo.name} · ${sync}`, repo.path];
+    if (hasError) {
+      lines.push(status?.error || "Repository error");
+    } else {
+      const attention: string[] = [];
+      if (newCommits > 0) attention.push(newCommitTitle);
+      if (dirtyCount > 0) attention.push(dirtyLabel);
+      if (aheadCount > 0) attention.push(aheadTitle);
+      if (markerProblem) attention.push(markerTitle);
+      if (attention.length > 0) lines.push(attention.join(" · "));
+    }
+    return lines.join("\n");
+  });
+
+  // Compact signal for the collapsed (icon-only) row.
+  let collapsedSignal = $derived.by(() => {
+    if (hasError) return { kind: "error" as const, text: "", label: status?.error || "Repository error" };
+    if (newCommits > 0) return { kind: "new" as const, text: newCommitLabel, label: newCommitTitle };
+    if (dirtyCount > 0) return { kind: "dirty" as const, text: "", label: dirtyLabel };
+    if (markerProblem) return { kind: "marker" as const, text: "", label: markerTitle };
+    if (aheadCount > 0) return { kind: "ahead" as const, text: "", label: aheadTitle };
+    return null;
+  });
 
   function handleContextMenu(e: MouseEvent) {
     e.preventDefault();
@@ -205,6 +281,7 @@
 
 <div
   class="repo-row {isOpenInFocused ? 'active' : ''} {$sidebarCollapsed ? 'collapsed' : ''}"
+  class:error={hasError}
   onclick={handleClick}
   onpointerenter={startHover}
   onpointerleave={stopHover}
@@ -219,15 +296,85 @@
   }}
   role="button"
   tabindex="0"
-  aria-label="{repo.name} · {displayBranch || 'HEAD'}"
+  aria-label={rowAriaLabel}
+  title={rowTitle}
 >
   <div class="repo-icon-box">
     <RepoIcon id={repo.id} repoName={repo.name} repoPath={repo.path} size={22} />
   </div>
 
+  {#if $sidebarCollapsed && collapsedSignal}
+    <span
+      class="collapsed-badge {collapsedSignal.kind}"
+      role="img"
+      aria-label={collapsedSignal.label}
+      title={collapsedSignal.label}
+    >
+      {#if collapsedSignal.kind === "error" || collapsedSignal.kind === "marker"}
+        <Icon name="alert" size={10} />
+      {:else if collapsedSignal.text}
+        {collapsedSignal.text}
+      {/if}
+    </span>
+  {/if}
+
   {#if !$sidebarCollapsed}
     <div class="info">
-      <span class="repo-name">{repo.name}</span>
+      <div class="row-top">
+        <span class="repo-name">{repo.name}</span>
+        {#if hasError}
+          <span
+            class="badge error"
+            role="img"
+            aria-label={status?.error || "Repository error"}
+            title={status?.error || "Repository error"}
+          >
+            <Icon name="alert" size={13} />
+          </span>
+        {:else if newCommits > 0 || dirtyCount > 0 || aheadCount > 0 || markerProblem}
+          <span class="badges">
+            {#if markerProblem}
+              <span
+                class="badge marker"
+                role="img"
+                aria-label={markerTitle}
+                title={markerTitle}
+              >
+                <Icon name="alert" size={13} />
+              </span>
+            {/if}
+            {#if newCommits > 0}
+              <span
+                class="badge new-commits"
+                role="img"
+                aria-label={newCommitTitle}
+                title={newCommitTitle}
+              >
+                {newCommitLabel}
+              </span>
+            {/if}
+            {#if aheadCount > 0}
+              <span
+                class="badge ahead"
+                role="img"
+                aria-label={aheadTitle}
+                title={aheadTitle}
+              >
+                <Icon name="arrow-up" size={11} />
+                <span class="badge-count">{aheadLabel}</span>
+              </span>
+            {/if}
+            {#if dirtyCount > 0}
+              <span
+                class="dirty-dot"
+                role="img"
+                aria-label={dirtyLabel}
+                title={dirtyLabel}
+              ></span>
+            {/if}
+          </span>
+        {/if}
+      </div>
       <span class="branch-name">{displayBranch || "HEAD"}</span>
     </div>
 
@@ -261,6 +408,37 @@
         <Icon name="git-branch" size={16} />
         {displayBranch || "HEAD"}
       </div>
+      {#if hasError}
+        <div class="hover-line error-line">
+          <Icon name="alert" size={16} />
+          {status?.error}
+        </div>
+      {:else}
+        {#if newCommits > 0}
+          <div class="hover-line">
+            <Icon name="commit" size={16} />
+            {newCommitTitle}
+          </div>
+        {/if}
+        {#if dirtyCount > 0}
+          <div class="hover-line">
+            <Icon name="changes" size={16} />
+            {dirtyLabel}
+          </div>
+        {/if}
+        {#if aheadCount > 0}
+          <div class="hover-line">
+            <Icon name="arrow-up" size={16} />
+            {aheadTitle}
+          </div>
+        {/if}
+        {#if markerProblem}
+          <div class="hover-line marker-line">
+            <Icon name="alert" size={16} />
+            {markerTitle}
+          </div>
+        {/if}
+      {/if}
       <div class="hover-path">{repo.path}</div>
     </div>
   {/if}
@@ -473,10 +651,130 @@
     gap: 2px;
   }
 
+  .row-top {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    min-width: 0;
+  }
+
+  .badges {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    flex-shrink: 0;
+  }
+
+  .badge {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 1px;
+    height: 18px;
+    padding: 0 6px;
+    border-radius: 9px;
+    font-size: 11px;
+    font-weight: 600;
+    line-height: 1;
+    font-variant-numeric: tabular-nums;
+    flex-shrink: 0;
+  }
+
+  .badge.new-commits {
+    background-color: var(--accent);
+    color: var(--accent-fg);
+    padding: 0 6px;
+  }
+
+  .badge.ahead {
+    height: 18px;
+    padding: 0 6px;
+    background-color: var(--bg-muted);
+    color: var(--text-muted);
+  }
+
+  .badge.ahead :global(svg) {
+    display: block;
+  }
+
+  .badge-count {
+    font-variant-numeric: tabular-nums;
+  }
+
+  .badge.marker,
+  .badge.error {
+    height: 16px;
+    padding: 0;
+    width: 16px;
+    background-color: transparent;
+    color: var(--warning);
+  }
+
+  .dirty-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background-color: var(--warning);
+    flex-shrink: 0;
+  }
+
+  /* Compact signal for the collapsed (icon-only) row */
+  .collapsed-badge {
+    position: absolute;
+    top: 2px;
+    right: 4px;
+    min-width: 14px;
+    height: 14px;
+    padding: 0 4px;
+    border-radius: 7px;
+    box-sizing: border-box;
+    background-color: var(--accent);
+    color: var(--accent-fg);
+    font-size: 9px;
+    font-weight: 700;
+    line-height: 1;
+    font-variant-numeric: tabular-nums;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    pointer-events: none;
+  }
+  .collapsed-badge.dirty,
+  .collapsed-badge.ahead {
+    padding: 0;
+    min-width: 10px;
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    top: 4px;
+    right: 6px;
+  }
+  .collapsed-badge.dirty {
+    background-color: var(--warning);
+  }
+  .collapsed-badge.ahead {
+    background-color: var(--text-muted);
+  }
+  .collapsed-badge.error,
+  .collapsed-badge.marker {
+    background-color: var(--warning-bg);
+    color: var(--warning);
+    padding: 0;
+    width: 14px;
+    height: 14px;
+  }
+
+  .repo-row.error .repo-name,
+  .repo-row.error .branch-name {
+    color: var(--text-faint);
+  }
+
   .repo-name {
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+    flex: 1 1 auto;
+    min-width: 0;
     color: #1a1c1f;
     font-size: 14px;
     font-weight: 500;
@@ -590,6 +888,14 @@
   }
   .hover-line.branch :global(svg) {
     color: #9b6bd1;
+  }
+  .hover-line.error-line,
+  .hover-line.marker-line {
+    color: var(--warning);
+  }
+  .hover-line.error-line :global(svg),
+  .hover-line.marker-line :global(svg) {
+    color: var(--warning);
   }
   .hover-path {
     font-size: 11px;
