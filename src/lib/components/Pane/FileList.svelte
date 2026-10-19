@@ -1,6 +1,7 @@
 <script lang="ts">
   import type { FileChange } from "../../types";
   import { splitPath } from "../../format";
+  import { addToast } from "../../stores/ui";
   import Icon from "../common/Icon.svelte";
 
   interface Props {
@@ -12,6 +13,7 @@
     focusDiff?: boolean;
     hasCommitDetails?: boolean;
     showCommitDetails?: boolean;
+    expandedFile?: string | null;
     onbrowseall?: () => void;
     oncommitrequest?: () => void;
     ontogglecommitdetails?: () => void;
@@ -19,6 +21,8 @@
     onselectfile?: (path: string) => void;
     ontogglepath?: (path: string) => void;
     ontoggleall?: (select: boolean) => void;
+    onexpandwholefile?: (path: string) => void;
+    oncollapsecontext?: (path: string) => void;
   }
 
   let {
@@ -30,6 +34,7 @@
     focusDiff = false,
     hasCommitDetails = false,
     showCommitDetails = false,
+    expandedFile = null,
     ontogglefocusdiff,
     onselectfile,
     ontogglepath,
@@ -37,6 +42,8 @@
     onbrowseall,
     oncommitrequest,
     ontogglecommitdetails,
+    onexpandwholefile,
+    oncollapsecontext,
   }: Props = $props();
 
   let allChecked = $derived(
@@ -138,6 +145,54 @@
   }
 
   let showOptions = $state(false);
+
+  // Right-click / Shift+F10 context menu for a single file row.
+  let ctxMenu = $state<{ path: string; top: number; left: number } | null>(null);
+  let ctxMenuEl = $state<HTMLDivElement | null>(null);
+
+  // Move focus into the menu so Escape and arrow/Tab navigation work.
+  $effect(() => {
+    if (ctxMenu && ctxMenuEl) ctxMenuEl.focus();
+  });
+
+  function openContextMenu(path: string, x: number, y: number) {
+    showOptions = false;
+    ctxMenu = {
+      path,
+      top: Math.max(8, Math.min(y, window.innerHeight - 120)),
+      left: Math.max(8, Math.min(x, window.innerWidth - 220)),
+    };
+  }
+
+  function closeContextMenu() {
+    ctxMenu = null;
+  }
+
+  function handleRowContextMenu(e: MouseEvent, path: string) {
+    e.preventDefault();
+    e.stopPropagation();
+    openContextMenu(path, e.clientX, e.clientY);
+  }
+
+  function handleRowKeydown(e: KeyboardEvent, path: string) {
+    if (e.key === "Enter" || e.key === " ") {
+      e.preventDefault();
+      onselectfile?.(path);
+    } else if (e.key === "ContextMenu" || (e.shiftKey && e.key === "F10")) {
+      e.preventDefault();
+      const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
+      openContextMenu(path, rect.left + 24, rect.bottom);
+    }
+  }
+
+  async function copyFilePath(path: string) {
+    try {
+      await navigator.clipboard.writeText(path);
+      addToast({ message: "File path copied to clipboard", kind: "success" });
+    } catch (e: any) {
+      addToast({ message: e?.message || "Could not copy file path", kind: "error" });
+    }
+  }
 </script>
 
 <div class="file-list-container">
@@ -229,12 +284,8 @@
       <div
         class="file-row {isSelected ? 'selected' : ''}"
         onclick={() => onselectfile?.(file.path)}
-        onkeydown={(e) => {
-          if (e.key === "Enter" || e.key === " ") {
-            e.preventDefault();
-            onselectfile?.(file.path);
-          }
-        }}
+        oncontextmenu={(e) => handleRowContextMenu(e, file.path)}
+        onkeydown={(e) => handleRowKeydown(e, file.path)}
         role="button"
         tabindex="0"
         title="{file.path} ({file.status}{file.additions > 0 ? ', +' + file.additions : ''}{file.deletions > 0 ? ', −' + file.deletions : ''}){triage ? ' · ' + triage.label + ': ' + triage.detail : ''}"
@@ -265,6 +316,74 @@
       </div>
     {/each}
   </div>
+
+  {#if ctxMenu}
+    {@const menuPath = ctxMenu.path}
+    <div
+      class="ctx-backdrop"
+      role="presentation"
+      onclick={closeContextMenu}
+      oncontextmenu={(e) => {
+        e.preventDefault();
+        closeContextMenu();
+      }}
+      onkeydown={(e) => {
+        if (e.key === "Escape") closeContextMenu();
+      }}
+    ></div>
+
+    <div
+      class="ctx-menu"
+      role="menu"
+      tabindex="-1"
+      bind:this={ctxMenuEl}
+      style="top: {ctxMenu.top}px; left: {ctxMenu.left}px;"
+      onclick={(e) => e.stopPropagation()}
+      onkeydown={(e) => {
+        if (e.key === "Escape") {
+          e.stopPropagation();
+          closeContextMenu();
+        }
+      }}
+    >
+      {#if expandedFile === menuPath}
+        <button
+          class="ctx-item"
+          role="menuitem"
+          onclick={() => {
+            oncollapsecontext?.(menuPath);
+            closeContextMenu();
+          }}
+        >
+          Collapse to default context
+        </button>
+      {:else}
+        <button
+          class="ctx-item"
+          role="menuitem"
+          onclick={() => {
+            onexpandwholefile?.(menuPath);
+            closeContextMenu();
+          }}
+        >
+          Expand whole file
+        </button>
+      {/if}
+
+      <div class="ctx-divider"></div>
+
+      <button
+        class="ctx-item"
+        role="menuitem"
+        onclick={() => {
+          copyFilePath(menuPath);
+          closeContextMenu();
+        }}
+      >
+        Copy file path
+      </button>
+    </div>
+  {/if}
 </div>
 
 <style>
@@ -462,5 +581,49 @@
     .path-wrap {
       font-size: 11.5px;
     }
+  }
+
+  /* Per-file context menu (right-click / Shift+F10). The backdrop is invisible
+     and only dismisses on outside click or Escape. */
+  .ctx-backdrop {
+    position: fixed;
+    inset: 0;
+    z-index: 99;
+    background: transparent;
+  }
+
+  .ctx-menu {
+    position: fixed;
+    z-index: 100;
+    min-width: 200px;
+    padding: 4px;
+    background: var(--bg);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--r-md);
+    box-shadow: var(--shadow-pop);
+    outline: none;
+  }
+
+  .ctx-item {
+    display: block;
+    width: 100%;
+    padding: 7px 8px;
+    text-align: left;
+    font-size: 12px;
+    background: none;
+    border: 0;
+    color: var(--text);
+    border-radius: var(--r-sm);
+    cursor: pointer;
+  }
+  .ctx-item:hover,
+  .ctx-item:focus-visible {
+    background: var(--bg-muted);
+  }
+
+  .ctx-divider {
+    height: 1px;
+    margin: 4px 2px;
+    background: var(--border-subtle);
   }
 </style>

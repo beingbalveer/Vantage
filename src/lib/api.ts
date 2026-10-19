@@ -112,9 +112,10 @@ export async function scopeFileDiff(
   path: string,
   ctxLines: number,
   ignoreWs: boolean,
-  force: boolean
+  force: boolean,
+  fullContext = false
 ): Promise<DiffFile> {
-  return invoke("scope_file_diff", { id, scope, path, ctxLines, ignoreWs, force });
+  return invoke("scope_file_diff", { id, scope, path, ctxLines, ignoreWs, force, fullContext });
 }
 
 export async function blobLines(
