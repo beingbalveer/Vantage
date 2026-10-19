@@ -18,6 +18,7 @@ import type {
   RepoStackInfo,
   Settings,
   TriageFlag,
+  RecentContributor,
 } from "./types";
 
 // Repos
@@ -162,9 +163,17 @@ export async function commit(
   id: string,
   paths: string[],
   summary: string,
-  body?: string
+  body?: string,
+  coAuthors?: string[]
 ): Promise<CommitSummary> {
-  return invoke("commit", { id, paths, summary, body });
+  return invoke("commit", { id, paths, summary, body, coAuthors });
+}
+
+export async function recentContributors(
+  id: string,
+  limit?: number
+): Promise<RecentContributor[]> {
+  return invoke("recent_contributors", { id, limit });
 }
 
 export async function discard(id: string, paths: string[]): Promise<BackupInfo> {

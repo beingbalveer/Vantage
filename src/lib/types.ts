@@ -216,6 +216,11 @@ export interface CommitMsgResult {
   body: string | null;
 }
 
+export interface RecentContributor {
+  name: string;
+  email: string;
+}
+
 export interface AppError {
   code: string;
   message: string;

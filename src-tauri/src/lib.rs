@@ -88,6 +88,7 @@ pub fn run() {
             blame_line,
             grep_defs,
             commit,
+            recent_contributors,
             discard,
             revert,
             revert_range,

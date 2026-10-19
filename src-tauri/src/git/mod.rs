@@ -1,4 +1,5 @@
 pub mod blob;
+pub mod coauthors;
 pub mod diff;
 pub mod grep;
 pub mod log;

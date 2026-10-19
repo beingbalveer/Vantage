@@ -3,6 +3,13 @@
   import * as api from "../../api";
   import { addToast } from "../../stores/ui";
   import Icon from "../common/Icon.svelte";
+  import {
+    addCoAuthor,
+    coAuthorEmail,
+    formatCoAuthor,
+    parseCoAuthor,
+    type CoAuthor,
+  } from "../../coauthors";
 
   interface Props {
     repoId: string;
@@ -18,6 +25,12 @@
   let showDescription = $state(false);
   let isCommitting = $state(false);
   let isDrafting = $state(false);
+
+  let coAuthors = $state<CoAuthor[]>([]);
+  let showCoAuthorPicker = $state(false);
+  let coAuthorInput = $state("");
+  let suggestions = $state<CoAuthor[]>([]);
+  let loadingSuggestions = $state(false);
 
   let hasAiCmd = $derived(!!$settings.commitMessageCmd);
   let summaryLen = $derived(summary.length);
@@ -42,6 +55,52 @@
     }
   }
 
+  async function toggleCoAuthorPicker() {
+    showCoAuthorPicker = !showCoAuthorPicker;
+    if (showCoAuthorPicker && suggestions.length === 0) {
+      loadingSuggestions = true;
+      try {
+        suggestions = await api.recentContributors(repoId, 50);
+      } catch {
+        // Best-effort: the picker still allows typing a co-author by hand.
+        suggestions = [];
+      } finally {
+        loadingSuggestions = false;
+      }
+    }
+  }
+
+  function tryAddCoAuthor(raw: string): boolean {
+    const parsed = parseCoAuthor(raw);
+    if (!parsed.ok) {
+      addToast({ message: parsed.error, kind: "error" });
+      return false;
+    }
+    const key = coAuthorEmail(parsed.coAuthor);
+    if (coAuthors.some((c) => coAuthorEmail(c) === key)) {
+      addToast({ message: `${parsed.coAuthor.name} is already a co-author`, kind: "info" });
+      return false;
+    }
+    coAuthors = addCoAuthor(coAuthors, parsed.coAuthor);
+    return true;
+  }
+
+  function addTypedCoAuthor() {
+    if (tryAddCoAuthor(coAuthorInput)) {
+      coAuthorInput = "";
+    }
+  }
+
+  function addSuggestedCoAuthor(contributor: CoAuthor) {
+    if (tryAddCoAuthor(formatCoAuthor(contributor))) {
+      showCoAuthorPicker = false;
+    }
+  }
+
+  function removeCoAuthorAt(index: number) {
+    coAuthors = coAuthors.filter((_, i) => i !== index);
+  }
+
   async function handleCommit() {
     if (!canCommit) return;
     isCommitting = true;
@@ -50,12 +109,16 @@
         repoId,
         selectedPaths,
         summary.trim(),
-        showDescription && description.trim() ? description.trim() : undefined
+        showDescription && description.trim() ? description.trim() : undefined,
+        coAuthors.length > 0 ? coAuthors.map(formatCoAuthor) : undefined
       );
       addToast({ message: `Committed ${c.short}`, kind: "success" });
       summary = "";
       description = "";
       showDescription = false;
+      coAuthors = [];
+      coAuthorInput = "";
+      showCoAuthorPicker = false;
       oncommit?.();
     } catch (e: any) {
       addToast({ message: e.message || "Commit failed", kind: "error" });
@@ -118,6 +181,90 @@
       class="desc-input"
     ></textarea>
   {/if}
+
+  <!-- Co-author picker (ALPH-155) -->
+  <div class="coauthor-section">
+    <button
+      type="button"
+      class="coauthor-toggle"
+      aria-expanded={showCoAuthorPicker}
+      onclick={toggleCoAuthorPicker}
+    >
+      <Icon name="plus" size={11} />
+      <span>Co-authors{coAuthors.length > 0 ? ` (${coAuthors.length})` : ""}</span>
+    </button>
+
+    {#if coAuthors.length > 0}
+      <ul class="coauthor-chips" aria-label="Selected co-authors">
+        {#each coAuthors as co, i (coAuthorEmail(co))}
+          <li class="coauthor-chip">
+            <span class="coauthor-chip-name" title={formatCoAuthor(co)}>{co.name}</span>
+            <button
+              type="button"
+              class="coauthor-chip-remove"
+              aria-label={`Remove co-author ${co.name}`}
+              onclick={() => removeCoAuthorAt(i)}
+            >
+              <Icon name="close" size={10} />
+            </button>
+          </li>
+        {/each}
+      </ul>
+    {/if}
+
+    {#if showCoAuthorPicker}
+      <div class="coauthor-picker">
+        <div class="coauthor-input-wrap">
+          <input
+            type="text"
+            class="coauthor-input"
+            placeholder="Name <email>"
+            aria-label="Add co-author"
+            bind:value={coAuthorInput}
+            onkeydown={(e) => {
+              if (e.key === "Enter") {
+                e.preventDefault();
+                addTypedCoAuthor();
+              }
+            }}
+          />
+          <button
+            type="button"
+            class="coauthor-add-btn"
+            disabled={!coAuthorInput.trim()}
+            onclick={addTypedCoAuthor}
+          >
+            Add
+          </button>
+        </div>
+
+        {#if loadingSuggestions}
+          <div class="coauthor-empty text-xs">Loading recent contributors…</div>
+        {:else if suggestions.length > 0}
+          <ul class="coauthor-suggestions" aria-label="Recent contributors">
+            {#each suggestions as s (coAuthorEmail(s))}
+              {@const alreadyAdded = coAuthors.some(
+                (c) => coAuthorEmail(c) === coAuthorEmail(s)
+              )}
+              <li>
+                <button
+                  type="button"
+                  class="coauthor-suggestion"
+                  disabled={alreadyAdded}
+                  onclick={() => addSuggestedCoAuthor(s)}
+                >
+                  <span class="coauthor-suggestion-name">{s.name}</span>
+                  <span class="coauthor-suggestion-email text-xs">{s.email}</span>
+                </button>
+              </li>
+            {/each}
+          </ul>
+        {:else}
+          <div class="coauthor-empty text-xs">No recent contributors. Type one above.</div>
+        {/if}
+      </div>
+    {/if}
+  </div>
 
   <!-- Branch display above commit button (R28) -->
   <div class="commit-target-branch text-xs font-mono text-muted">
@@ -222,6 +369,171 @@
   }
   .desc-input:focus {
     box-shadow: 0 0 0 1.5px var(--accent);
+  }
+
+  .coauthor-section {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+
+  .coauthor-toggle {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    align-self: flex-start;
+    background: none;
+    border: none;
+    color: var(--text-muted);
+    font-size: 12px;
+    cursor: pointer;
+    padding: 2px 0;
+  }
+  .coauthor-toggle:hover {
+    color: var(--text);
+  }
+
+  .coauthor-chips {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+  }
+
+  .coauthor-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    max-width: 100%;
+    padding: 2px 4px 2px 8px;
+    background-color: var(--bg-muted);
+    border: 1px solid var(--border);
+    border-radius: var(--r-sm, 4px);
+    font-size: 12px;
+    color: var(--text);
+  }
+
+  .coauthor-chip-name {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .coauthor-chip-remove {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 16px;
+    height: 16px;
+    padding: 0;
+    background: none;
+    border: none;
+    color: var(--text-faint);
+    cursor: pointer;
+    border-radius: var(--r-sm, 4px);
+  }
+  .coauthor-chip-remove:hover {
+    color: var(--danger);
+    background-color: var(--bg);
+  }
+
+  .coauthor-picker {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    padding: 8px;
+    background-color: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: var(--r-md);
+  }
+
+  .coauthor-input-wrap {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+
+  .coauthor-input {
+    flex: 1;
+    min-width: 0;
+    height: 26px;
+    padding: 0 8px;
+    border: 1px solid var(--border);
+    border-radius: var(--r-md);
+    background-color: var(--bg);
+    color: var(--text);
+    font-size: 12px;
+    outline: none;
+  }
+  .coauthor-input:focus {
+    border-color: var(--accent);
+    box-shadow: 0 0 0 1.5px var(--accent);
+  }
+
+  .coauthor-add-btn {
+    height: 26px;
+    padding: 0 10px;
+    border: none;
+    border-radius: var(--r-md);
+    background-color: var(--accent);
+    color: var(--accent-fg);
+    font-size: 12px;
+    font-weight: 600;
+    cursor: pointer;
+  }
+  .coauthor-add-btn:disabled {
+    opacity: 0.45;
+    cursor: not-allowed;
+  }
+
+  .coauthor-suggestions {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    max-height: 160px;
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+  }
+
+  .coauthor-suggestion {
+    display: flex;
+    align-items: baseline;
+    gap: 8px;
+    width: 100%;
+    padding: 4px 6px;
+    background: none;
+    border: none;
+    border-radius: var(--r-sm, 4px);
+    color: var(--text);
+    font-size: 12px;
+    text-align: left;
+    cursor: pointer;
+  }
+  .coauthor-suggestion:hover:not(:disabled) {
+    background-color: var(--bg-muted);
+  }
+  .coauthor-suggestion:disabled {
+    opacity: 0.5;
+    cursor: default;
+  }
+
+  .coauthor-suggestion-name {
+    flex-shrink: 0;
+  }
+
+  .coauthor-suggestion-email {
+    color: var(--text-faint);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .coauthor-empty {
+    color: var(--text-faint);
+    padding: 2px 0;
   }
 
   .commit-btn {

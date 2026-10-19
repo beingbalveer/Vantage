@@ -81,6 +81,7 @@ pub async fn commit(
     paths: &[String],
     summary: &str,
     body: Option<&str>,
+    co_authors: &[String],
 ) -> Result<CommitSummary, AppError> {
     if summary.trim().is_empty() {
         return Err(AppError::other("Commit summary cannot be empty"));
@@ -89,6 +90,20 @@ pub async fn commit(
     if paths.is_empty() {
         return Err(AppError::other("No files selected for commit"));
     }
+
+    // Validate the co-author selection and compute the trailer paragraph BEFORE
+    // touching the index, so an invalid entry never stages anything.
+    //
+    // The block is derived from the exact message that will be committed (summary
+    // plus body). If the user already typed a `Co-authored-by:` trailer by hand,
+    // `co_author_trailer_block` returns only the entries that are still missing,
+    // which also makes this idempotent when a commit is amended.
+    let existing_message = match body {
+        Some(b) if !b.trim().is_empty() => format!("{}\n\n{}", summary, b),
+        _ => summary.to_string(),
+    };
+    let trailer_block =
+        crate::git::coauthors::co_author_trailer_block(&existing_message, co_authors)?;
 
     // Acquire per-repo mutex across the entire staging & commit operation
     let repo_lock = runner.get_repo_lock(repo_path).await;
@@ -169,6 +184,14 @@ pub async fn commit(
                 commit_args.push("-m");
                 commit_args.push(&body_str);
             }
+        }
+        // Co-author trailers land as their own paragraph: blank line before them,
+        // one entry per line.
+        let trailer_str;
+        if let Some(t) = &trailer_block {
+            trailer_str = t.clone();
+            commit_args.push("-m");
+            commit_args.push(&trailer_str);
         }
         commit_args.push("--only");
         commit_args.push("--");
@@ -260,6 +283,12 @@ pub async fn commit(
                 commit_tree_args.push("-m");
                 commit_tree_args.push(&body_str);
             }
+        }
+        let trailer_str;
+        if let Some(t) = &trailer_block {
+            trailer_str = t.clone();
+            commit_tree_args.push("-m");
+            commit_tree_args.push(&trailer_str);
         }
 
         let commit_tree_out = runner.run_write(repo_path, &commit_tree_args, 30).await?;
@@ -972,6 +1001,7 @@ mod tests {
             &["chosen.txt".to_string()],
             "root commit with chosen file only",
             None,
+            &[],
         )
         .await
         .expect("selective root commit must succeed");
@@ -1225,6 +1255,7 @@ mod tests {
             &["chosen_file.txt".to_string()],
             "commit selected file only",
             None,
+            &[],
         )
         .await
         .expect("selective commit should succeed");
@@ -1238,6 +1269,122 @@ mod tests {
         let status_str = status_out.stdout_string();
         assert!(status_str.contains("A  other_staged.txt"));
         assert!(!status_str.contains("chosen_file.txt"));
+    }
+
+    #[tokio::test]
+    async fn test_commit_appends_co_author_trailer_once() {
+        let runner = GitRunner::new();
+        let repo = TempTestRepo::new(&runner).await;
+
+        fs::write(repo.path.join("a.txt"), "a").unwrap();
+
+        let co = vec!["Jane Doe <jane@example.com>".to_string()];
+        commit(
+            &runner,
+            &repo.path,
+            &["a.txt".to_string()],
+            "add a",
+            None,
+            &co,
+        )
+        .await
+        .expect("commit with co-author must succeed");
+
+        let msg = runner
+            .run_read(&repo.path, &["log", "-1", "--format=%B"])
+            .await
+            .unwrap()
+            .stdout_string();
+
+        assert_eq!(
+            msg.matches("Co-authored-by: Jane Doe <jane@example.com>")
+                .count(),
+            1,
+            "trailer must appear exactly once: {:?}",
+            msg
+        );
+        // Trailer block is preceded by a blank line.
+        assert!(
+            msg.contains("\n\nCo-authored-by: Jane Doe <jane@example.com>"),
+            "trailer must sit in its own paragraph: {:?}",
+            msg
+        );
+    }
+
+    #[tokio::test]
+    async fn test_commit_does_not_duplicate_manually_typed_trailer() {
+        let runner = GitRunner::new();
+        let repo = TempTestRepo::new(&runner).await;
+
+        fs::write(repo.path.join("b.txt"), "b").unwrap();
+
+        let co = vec!["Jane Doe <jane@example.com>".to_string()];
+        let body = "Body line.\n\nCo-authored-by: Jane Doe <jane@example.com>";
+        commit(
+            &runner,
+            &repo.path,
+            &["b.txt".to_string()],
+            "add b",
+            Some(body),
+            &co,
+        )
+        .await
+        .expect("commit must succeed");
+
+        let msg = runner
+            .run_read(&repo.path, &["log", "-1", "--format=%B"])
+            .await
+            .unwrap()
+            .stdout_string();
+
+        assert_eq!(
+            msg.matches("Co-authored-by: Jane Doe <jane@example.com>")
+                .count(),
+            1,
+            "manually typed trailer must not be duplicated: {:?}",
+            msg
+        );
+        assert!(msg.contains("Body line."));
+    }
+
+    #[tokio::test]
+    async fn test_commit_rejects_invalid_co_author_without_committing() {
+        let runner = GitRunner::new();
+        let repo = TempTestRepo::new(&runner).await;
+
+        fs::write(repo.path.join("c.txt"), "c").unwrap();
+
+        let co = vec!["Jane <jane@example.com>\nSigned-off-by: Evil <e@e.com>".to_string()];
+        let err = commit(
+            &runner,
+            &repo.path,
+            &["c.txt".to_string()],
+            "should not commit",
+            None,
+            &co,
+        )
+        .await
+        .expect_err("invalid co-author must be rejected");
+
+        assert!(err.message.contains("newlines"), "got: {}", err.message);
+
+        // Nothing was committed and nothing was staged.
+        let head = runner
+            .run_read(&repo.path, &["rev-parse", "--verify", "HEAD"])
+            .await
+            .unwrap();
+        assert!(!head.success(), "no commit should have been created");
+
+        let status = runner
+            .run_read(&repo.path, &["status", "--porcelain"])
+            .await
+            .unwrap()
+            .stdout_string();
+        assert!(
+            status.contains("?? c.txt"),
+            "file must remain untracked: {:?}",
+            status
+        );
     }
 
     #[tokio::test]

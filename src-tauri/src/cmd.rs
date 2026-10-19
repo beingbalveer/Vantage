@@ -1,5 +1,8 @@
 use crate::error::AppError;
 use crate::git::blob::{get_blob_lines, get_blob_text, get_tree_list, BlobTextResult};
+use crate::git::coauthors::{
+    recent_contributors as git_recent_contributors, Contributor,
+};
 use crate::git::diff::{get_scope_file_diff, get_scope_files};
 use crate::git::grep::{blame_line as git_blame_line, grep_definitions};
 use crate::git::log::get_log_page;
@@ -659,6 +662,7 @@ pub async fn commit(
     paths: Vec<String>,
     summary: String,
     body: Option<String>,
+    co_authors: Option<Vec<String>>,
 ) -> Result<CommitSummary, AppError> {
     let (repo_path, branch) = {
         let data = state.data.lock().await;
@@ -671,7 +675,34 @@ pub async fn commit(
     };
 
     verify_branch_checked_out(&state.runner, &repo_path, branch.as_deref()).await?;
-    git_commit(&state.runner, &repo_path, &paths, &summary, body.as_deref()).await
+    git_commit(
+        &state.runner,
+        &repo_path,
+        &paths,
+        &summary,
+        body.as_deref(),
+        co_authors.as_deref().unwrap_or(&[]),
+    )
+    .await
+}
+
+#[tauri::command]
+pub async fn recent_contributors(
+    state: State<'_, AppState>,
+    id: String,
+    limit: Option<u32>,
+) -> Result<Vec<Contributor>, AppError> {
+    let repo_path = {
+        let data = state.data.lock().await;
+        let entry = data
+            .repos
+            .iter()
+            .find(|r| r.id == id)
+            .ok_or_else(|| AppError::not_found("Repository not found"))?;
+        PathBuf::from(&entry.path)
+    };
+
+    git_recent_contributors(&state.runner, &repo_path, limit.unwrap_or(200)).await
 }
 
 #[tauri::command]
