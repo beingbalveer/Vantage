@@ -2,7 +2,15 @@
   import { onMount } from "svelte";
   import { loadRepos, repos, statuses, initRepoListeners } from "./lib/stores/repos";
   import { loadSettings } from "./lib/stores/settings";
-  import { panes } from "./lib/stores/panes";
+  import {
+    panes,
+    paneCount,
+    focusedPaneIndex,
+    cyclePaneCount,
+    closePane,
+    focusPane,
+    setPaneCount,
+  } from "./lib/stores/panes";
   import {
     paletteOpen,
     addRepoDialogOpen,
@@ -14,6 +22,7 @@
   import { viewportPaneWidths, savedPaneWidth } from "./lib/layout";
   import { matchShortcut } from "./lib/keys";
   import * as api from "./lib/api";
+  import type { Layout, RepoEntry, RepoStatus } from "./lib/types";
   import { checkForAppUpdates } from "./lib/updater";
   import { createHorizontalResizer, createHorizontalResizerKeyboard } from "./lib/resizer";
   import Sidebar from "./lib/components/Sidebar/Sidebar.svelte";
@@ -35,9 +44,20 @@
 
   let repoList = $derived($repos);
   let statusMap = $derived($statuses);
-  let currentPane = $derived($panes[0]);
-  let activeRepo = $derived(repoList.find((r) => r.id === currentPane?.repoId) || repoList[0] || null);
-  let activeStatus = $derived(activeRepo ? statusMap[activeRepo.id] || null : null);
+
+  // The workspace renders exactly the panes the stores say are visible, so the
+  // focused index can never point past the last rendered pane.
+  let visiblePanes = $derived($panes.slice(0, $paneCount));
+
+  function repoForPane(repoId: string | null): RepoEntry | null {
+    if (!repoId) return null;
+    return repoList.find((r) => r.id === repoId) || null;
+  }
+
+  function statusForRepo(repoId: string | null): RepoStatus | null {
+    if (!repoId) return null;
+    return statusMap[repoId] || null;
+  }
 
   // Slidable Sidebar Width
   let sidebarWidth = $state(savedPaneWidth("vantage_sidebar_width", viewportPaneWidths().sidebar));
@@ -58,11 +78,131 @@
     storageKey: "vantage_sidebar_width",
   });
 
+  // ---- Pane column widths ----
+  // Panes share the workspace; each divider resizes only its two neighbours.
+  // Explicit pixel widths are captured after a drag, otherwise panes split the
+  // available width equally. Flex-shrink keeps the layout inside the viewport at
+  // narrow widths, so panes simply get smaller instead of overflowing.
+  const MIN_PANE_WIDTH = 220;
+
+  let hostWidth = $state(0);
+  let paneWidths = $state<number[]>([0, 0, 0]);
+
+  function resolvedPaneWidths(): number[] {
+    const count = Math.max(1, $paneCount);
+    const total = hostWidth > 0 ? hostWidth : 1200;
+    const equal = Math.round(total / count);
+    const out: number[] = [];
+    for (let i = 0; i < count; i++) {
+      const w = paneWidths[i];
+      out.push(typeof w === "number" && w > 0 ? w : equal);
+    }
+    return out;
+  }
+
+  function resizePanePair(index: number, nextLeft: number) {
+    const widths = resolvedPaneWidths();
+    const left = widths[index];
+    const right = widths[index + 1];
+    if (left === undefined || right === undefined) return;
+    const pair = left + right;
+    if (pair < MIN_PANE_WIDTH * 2) return;
+    const clamped = Math.max(MIN_PANE_WIDTH, Math.min(pair - MIN_PANE_WIDTH, nextLeft));
+    const updated = widths.slice();
+    updated[index] = Math.round(clamped);
+    updated[index + 1] = Math.round(pair - clamped);
+    paneWidths = updated;
+  }
+
+  function createPaneSplitter(index: number) {
+    return createHorizontalResizer({
+      getWidth: () => resolvedPaneWidths()[index] ?? MIN_PANE_WIDTH,
+      setWidth: (w) => resizePanePair(index, w),
+      minWidth: MIN_PANE_WIDTH,
+      maxWidth: 100000,
+    });
+  }
+
+  function createPaneSplitterKeyboard(index: number) {
+    return createHorizontalResizerKeyboard({
+      getWidth: () => resolvedPaneWidths()[index] ?? MIN_PANE_WIDTH,
+      setWidth: (w) => resizePanePair(index, w),
+      minWidth: MIN_PANE_WIDTH,
+      maxWidth: 100000,
+    });
+  }
+
+  // Reused across renders (at most two dividers for three panes).
+  const paneSplitters = [createPaneSplitter(0), createPaneSplitter(1)];
+  const paneSplittersKeyboard = [createPaneSplitterKeyboard(0), createPaneSplitterKeyboard(1)];
+
+  // ---- Layout persistence ----
+  // Reuse the existing backend Layout (layout_get/layout_set): pane count and
+  // per-pane repo/tab are persisted so the workspace survives a restart.
+  let layoutReady = $state(false);
+  let layoutSaveTimer: ReturnType<typeof setTimeout> | undefined;
+
+  function persistLayout() {
+    if (!layoutReady) return;
+    const layout: Layout = {
+      paneCount: $paneCount,
+      panes: $panes.slice(0, $paneCount).map((p) => ({
+        repoId: p.repoId,
+        tab: p.tab,
+        widths: null,
+      })),
+      sidebarWidth,
+      sidebarCollapsed: $sidebarCollapsed,
+      terminalHeight: 240,
+      terminalOpen: $panes.slice(0, $paneCount).some((p) => p.terminalOpen),
+      windowBounds: null,
+    };
+    api.layoutSet(layout).catch(() => {});
+  }
+
+  $effect(() => {
+    const signature =
+      `${$paneCount}|` +
+      $panes
+        .slice(0, $paneCount)
+        .map((p) => `${p.id}:${p.repoId}:${p.tab}:${p.terminalOpen}`)
+        .join(",");
+    void signature;
+    if (!layoutReady) return;
+    clearTimeout(layoutSaveTimer);
+    layoutSaveTimer = setTimeout(persistLayout, 500);
+  });
+
   onMount(async () => {
     await loadSettings();
     await loadRepos();
     initRepoListeners();
 
+    // Restore the last session's panes (count + repo/tab) when one was saved.
+    try {
+      const layout = await api.layoutGet();
+      const count = Math.max(1, Math.min(3, layout.paneCount || 1));
+      const savedPanes = Array.isArray(layout.panes) ? layout.panes : [];
+      const knownRepos = $repos;
+      if (count > 1 || savedPanes.some((p) => p?.repoId)) {
+        setPaneCount(count);
+        panes.update((list) =>
+          list.map((p, i) => {
+            const saved = savedPanes[i];
+            if (i >= count || !saved) return { ...p };
+            const repoId =
+              saved.repoId && knownRepos.some((r) => r.id === saved.repoId)
+                ? saved.repoId
+                : p.repoId;
+            return { ...p, repoId, tab: saved.tab === "files" ? "files" : "history" };
+          })
+        );
+      }
+    } catch (e) {
+      console.warn("Failed to restore pane layout:", e);
+    }
+
+    // Fallback: give the first pane a repo when nothing was restored.
     const currentRepos = $repos;
     if (currentRepos.length > 0) {
       panes.update((list) => {
@@ -72,6 +212,8 @@
         return list;
       });
     }
+
+    layoutReady = true;
 
     try {
       const env = await api.envCheck();
@@ -115,6 +257,41 @@
       return;
     }
 
+    // Panes: cycle 1→2→3→1, focus 1/2/3, close the focused pane.
+    if (matchShortcut(e, "Mod+\\")) {
+      e.preventDefault();
+      cyclePaneCount();
+      return;
+    }
+
+    if (matchShortcut(e, "Mod+1")) {
+      e.preventDefault();
+      focusPane(0);
+      return;
+    }
+
+    if (matchShortcut(e, "Mod+2")) {
+      e.preventDefault();
+      focusPane(1);
+      return;
+    }
+
+    if (matchShortcut(e, "Mod+3")) {
+      e.preventDefault();
+      focusPane(2);
+      return;
+    }
+
+    if (matchShortcut(e, "Mod+W")) {
+      e.preventDefault();
+      if ($paneCount > 1) {
+        closePane($focusedPaneIndex);
+      } else {
+        addToast({ message: "Cannot close the only open pane", kind: "info" });
+      }
+      return;
+    }
+
     if (matchShortcut(e, "Mod+,")) {
       e.preventDefault();
       $settingsOpen = true;
@@ -134,7 +311,7 @@
   <!-- Top Header (single 50px header) -->
   <TopHeader />
 
-  <!-- Workspace: Resizable Sidebar + Single Full-width Main Pane -->
+  <!-- Workspace: Resizable Sidebar + 1-3 side-by-side panes -->
   <div class="workspace">
     <Sidebar width={sidebarWidth} />
 
@@ -157,8 +334,30 @@
       ></div>
     {/if}
 
-    <main class="panes-host">
-      <Pane paneIndex={0} repo={activeRepo} status={activeStatus} />
+    <main class="panes-host" bind:clientWidth={hostWidth}>
+      {#each visiblePanes as pane, i (pane.id)}
+        {#if i > 0}
+          <!-- svelte-ignore a11y_no_noninteractive_tabindex -->
+          <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
+          <div
+            class="pane-split-handle"
+            role="separator"
+            aria-orientation="vertical"
+            aria-label="Resize pane {i} and pane {i + 1}"
+            tabindex="0"
+            title="Drag to resize panes (Arrow keys to nudge)"
+            onpointerdown={paneSplitters[i - 1]}
+            onkeydown={paneSplittersKeyboard[i - 1]}
+          ></div>
+        {/if}
+        <div class="pane-slot" style="flex: 1 1 {resolvedPaneWidths()[i]}px;">
+          <Pane
+            paneIndex={i}
+            repo={repoForPane(pane.repoId)}
+            status={statusForRepo(pane.repoId)}
+          />
+        </div>
+      {/each}
     </main>
   </div>
 
@@ -222,5 +421,32 @@
     display: flex;
     overflow: hidden;
     min-width: 0;
+  }
+
+  .pane-slot {
+    display: flex;
+    min-width: 0;
+    height: 100%;
+    overflow: hidden;
+  }
+
+  /* Vertical divider between adjacent panes. */
+  .pane-split-handle {
+    flex: 0 0 4px;
+    width: 4px;
+    height: 100%;
+    position: relative;
+    cursor: col-resize;
+    z-index: 6;
+    flex-shrink: 0;
+    user-select: none;
+    background-color: var(--border-subtle);
+    transition: background-color 100ms ease;
+  }
+  .pane-split-handle:hover,
+  .pane-split-handle:active,
+  .pane-split-handle:focus-visible {
+    background-color: var(--accent);
+    outline: none;
   }
 </style>

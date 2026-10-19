@@ -3,7 +3,7 @@
   import type { RepoEntry, RepoStatus, CommitSummary, FileChange, DiffFile, DiffScope } from "../../types";
   import * as api from "../../api";
   import { settings } from "../../stores/settings";
-  import { panes, focusedPaneIndex, focusPane } from "../../stores/panes";
+  import { panes, paneCount, focusedPaneIndex, focusPane } from "../../stores/panes";
   import { addToast } from "../../stores/ui";
   import { navigationTarget, navigateTo } from "../../stores/navigation";
   import UncommittedRow from "./UncommittedRow.svelte";
@@ -28,6 +28,8 @@
 
   let currentPane = $derived($panes[paneIndex]);
   let isFocused = $derived($focusedPaneIndex === paneIndex);
+  // The accent rail is only meaningful when more than one pane is on screen.
+  let showFocusRail = $derived(isFocused && $paneCount > 1);
 
   // Column Resizing & Focus Diff
   let focusDiff = $state(false);
@@ -348,7 +350,8 @@
 </script>
 
 <div
-  class="pane-container {isFocused ? 'focused' : ''}"
+  class="pane-container"
+  class:focused={showFocusRail}
   onpointerdown={() => focusPane(paneIndex)}
   onfocusin={() => focusPane(paneIndex)}
   role="region"
@@ -524,6 +527,19 @@
     background-color: var(--bg);
     position: relative;
     overflow: hidden;
+  }
+
+  /* Accent rail marks the focused pane while 2-3 panes are visible. */
+  .pane-container.focused::before {
+    content: "";
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    left: 0;
+    width: 3px;
+    background-color: var(--accent);
+    z-index: 10;
+    pointer-events: none;
   }
 
   .pane-content {

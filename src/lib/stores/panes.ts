@@ -37,10 +37,12 @@ export const panes = writable<PaneState[]>([
 ]);
 
 export function focusPane(index: number) {
-  const count = get(paneCount);
-  if (index >= 0 && index < count) {
-    focusedPaneIndex.set(index);
+  if (index < 0 || index > 2) return;
+  // Never leave focus on a pane that is not rendered: reveal it first, then focus.
+  if (index >= get(paneCount)) {
+    setPaneCount(index + 1);
   }
+  focusedPaneIndex.set(index);
 }
 
 export function cyclePaneCount() {

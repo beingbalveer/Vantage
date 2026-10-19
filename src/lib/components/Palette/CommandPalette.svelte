@@ -11,6 +11,7 @@
     closePane,
     panes,
     focusedPaneIndex,
+    focusPane,
     setPaneTab,
     toggleTerminalInPane,
   } from "../../stores/panes";
@@ -394,7 +395,7 @@
         shortcut: "Mod+1",
         action: () => {
           $paletteOpen = false;
-          focusedPaneIndex.set(0);
+          focusPane(0);
         },
       },
       {
@@ -403,8 +404,7 @@
         shortcut: "Mod+2",
         action: () => {
           $paletteOpen = false;
-          if (get(paneCount) < 2) setPaneCount(2);
-          focusedPaneIndex.set(1);
+          focusPane(1);
         },
       },
       {
@@ -413,8 +413,7 @@
         shortcut: "Mod+3",
         action: () => {
           $paletteOpen = false;
-          if (get(paneCount) < 3) setPaneCount(3);
-          focusedPaneIndex.set(2);
+          focusPane(2);
         },
       },
       {
