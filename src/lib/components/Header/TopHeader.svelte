@@ -9,7 +9,7 @@
     setPaneTab,
     openRepoInFocusedPane,
   } from "../../stores/panes";
-  import { paletteOpen, settingsOpen, shortcutsHelpOpen, sidebarCollapsed, addToast } from "../../stores/ui";
+  import { paletteOpen, settingsOpen, shortcutsHelpOpen, sidebarCollapsed, addToast, openDialog, branchesVersion } from "../../stores/ui";
   import { setOperationRunning, setOperationSuccess, setOperationError } from "../../stores/operation";
   import * as api from "../../api";
   import type { BranchInfo } from "../../types";
@@ -29,6 +29,11 @@
   let showBranchModal = $state(false);
   let branchFilter = $state("");
   let showMore = $state(false);
+
+  // The branch menu has two panels: the branch list, and a per-branch actions
+  // panel opened from the row's kebab affordance.
+  let branchMenuMode = $state<"list" | "actions">("list");
+  let actionBranch = $state("");
 
   // Busy state per remote operation so each button reports its own progress.
   let busyOp = $state<null | "fetch" | "pull" | "push">(null);
@@ -61,20 +66,28 @@
   }
   $effect(() => {
     const id = activeRepo?.id;
+    // Re-fetch whenever a branch create/rename/delete bumps the version.
+    const _branchRev = $branchesVersion;
     branches = [];
     showBranchMenu = false;
+    branchMenuMode = "list";
+    actionBranch = "";
     if (id) void refreshBranches(id);
     return () => { branchGeneration++; };
   });
 
   function closeBranchMenu() {
     showBranchMenu = false;
+    branchMenuMode = "list";
+    actionBranch = "";
     if (branchMenuEl) branchMenuEl.scrollTop = 0;
   }
 
   function openBranchMenu(focusTarget: "selected" | "first" = "selected") {
     showBranchMenu = true;
     showMore = false;
+    branchMenuMode = "list";
+    actionBranch = "";
     queueMicrotask(() => {
       if (!branchMenuEl) return;
       const options = Array.from(
@@ -83,6 +96,53 @@
       if (options.length === 0) return;
       const selected = branchMenuEl.querySelector<HTMLElement>(".branch-option.selected");
       (focusTarget === "selected" && selected ? selected : options[0]).focus();
+    });
+  }
+
+  function openBranchActions(branch: string) {
+    actionBranch = branch;
+    branchMenuMode = "actions";
+    queueMicrotask(() => {
+      const panel = branchMenuEl?.querySelector<HTMLElement>(".branch-actions-panel");
+      panel?.querySelector<HTMLElement>(".branch-option")?.focus();
+    });
+  }
+
+  function backToBranchList() {
+    branchMenuMode = "list";
+    queueMicrotask(() => {
+      const row = branchMenuEl?.querySelector<HTMLElement>(`[data-branch-more="${CSS.escape(actionBranch)}"]`);
+      row?.focus();
+    });
+  }
+
+  function handleNewBranchFrom(startPoint: string) {
+    if (!activeRepo) return;
+    closeBranchMenu();
+    openDialog({
+      type: "branch_create",
+      repoId: activeRepo.id,
+      data: { startPoint: startPoint || "HEAD" },
+    });
+  }
+
+  function handleRenameBranch(branch: string) {
+    if (!activeRepo) return;
+    closeBranchMenu();
+    openDialog({
+      type: "branch_rename",
+      repoId: activeRepo.id,
+      data: { from: branch },
+    });
+  }
+
+  function handleDeleteBranch(branch: string) {
+    if (!activeRepo) return;
+    closeBranchMenu();
+    openDialog({
+      type: "branch_delete",
+      repoId: activeRepo.id,
+      data: { name: branch },
     });
   }
 
@@ -284,37 +344,96 @@
             tabindex="-1"
             onkeydown={handleMenuKeydown}
           >
-            <div class="branch-menu-label">Switch branch</div>
-            {#each filteredBranches as b (b.name)}
+            {#if branchMenuMode === "actions"}
+              <div class="branch-actions-panel">
+                <button
+                  class="branch-actions-back"
+                  onclick={backToBranchList}
+                  title="Back to branches"
+                >
+                  <span class="back-chevron">←</span>
+                  <span class="branch-actions-title font-mono">{actionBranch}</span>
+                </button>
+                <button
+                  class="branch-option"
+                  role="menuitem"
+                  onclick={() => handleNewBranchFrom(actionBranch)}
+                >
+                  <Icon name="plus" size={15} />
+                  <span>New branch from {actionBranch}…</span>
+                </button>
+                <button
+                  class="branch-option"
+                  role="menuitem"
+                  onclick={() => handleRenameBranch(actionBranch)}
+                >
+                  <Icon name="message" size={15} />
+                  <span>Rename branch…</span>
+                </button>
+                <button
+                  class="branch-option danger"
+                  role="menuitem"
+                  onclick={() => handleDeleteBranch(actionBranch)}
+                >
+                  <Icon name="trash" size={15} />
+                  <span>Delete branch…</span>
+                </button>
+              </div>
+            {:else}
+              <div class="branch-menu-label">Switch branch</div>
+              {#each filteredBranches as b (b.name)}
+                <div class="branch-row" class:selected={currentBranch === b.name}>
+                  <button
+                    class="branch-option"
+                    class:selected={currentBranch === b.name}
+                    role="menuitemradio"
+                    aria-checked={currentBranch === b.name}
+                    tabindex={currentBranch === b.name ? 0 : -1}
+                    onclick={() => selectBranch(b.name)}
+                  >
+                    <Icon name="git-branch" size={15} />
+                    <span>{b.name}</span>
+                    <span class="branch-check">{currentBranch === b.name ? "✓" : ""}</span>
+                  </button>
+                  <button
+                    class="branch-more"
+                    data-branch-more={b.name}
+                    title="Actions for {b.name}"
+                    aria-label="Branch actions for {b.name}"
+                    onclick={(e) => {
+                      e.stopPropagation();
+                      openBranchActions(b.name);
+                    }}
+                  >
+                    <Icon name="more-horizontal" size={14} />
+                  </button>
+                </div>
+              {/each}
+              {#if !filteredBranches.length}
+                <div class="branch-menu-label">No branches available</div>
+              {/if}
+              {#if isInactiveView}
+                <button class="branch-option" role="menuitem" disabled={isCheckingOut || isSyncing} onclick={checkoutCurrentBranch}>
+                  <Icon name="check" size={15}/><span>{isCheckingOut ? "Checking out…" : "Check out this branch"}</span>
+                </button>
+              {/if}
+              <button
+                class="branch-option add-view"
+                role="menuitem"
+                onclick={() => handleNewBranchFrom("HEAD")}
+              >
+                <Icon name="plus" size={15} />
+                <span>New branch from {currentBranch}…</span>
+              </button>
               <button
                 class="branch-option"
-                class:selected={currentBranch === b.name}
-                role="menuitemradio"
-                aria-checked={currentBranch === b.name}
-                tabindex={currentBranch === b.name ? 0 : -1}
-                onclick={() => selectBranch(b.name)}
+                role="menuitem"
+                onclick={handleOpenBranchPicker}
               >
                 <Icon name="git-branch" size={15} />
-                <span>{b.name}</span>
-                <span class="branch-check">{currentBranch === b.name ? "✓" : ""}</span>
-              </button>
-            {/each}
-            {#if !filteredBranches.length}
-              <div class="branch-menu-label">No branches available</div>
-            {/if}
-            {#if isInactiveView}
-              <button class="branch-option" role="menuitem" disabled={isCheckingOut || isSyncing} onclick={checkoutCurrentBranch}>
-                <Icon name="check" size={15}/><span>{isCheckingOut ? "Checking out…" : "Check out this branch"}</span>
+                <span>Add branch view…</span>
               </button>
             {/if}
-            <button
-              class="branch-option add-view"
-              role="menuitem"
-              onclick={handleOpenBranchPicker}
-            >
-              <Icon name="plus" size={15} />
-              <span>Add branch view…</span>
-            </button>
           </div>
         {/if}
       </div>
@@ -842,6 +961,96 @@
     border-top: 1px solid var(--border-subtle);
     margin-top: 4px;
     padding-top: 10px;
+  }
+  .branch-option.danger {
+    color: var(--danger);
+  }
+  .branch-option.danger:hover,
+  .branch-option.danger:focus-visible {
+    background: var(--danger-bg, rgba(218, 54, 51, 0.1));
+  }
+  .branch-option.danger :global(svg) {
+    color: var(--danger);
+  }
+
+  .branch-row {
+    display: flex;
+    align-items: center;
+    gap: 2px;
+    border-radius: 6px;
+  }
+  .branch-row:hover,
+  .branch-row:focus-within {
+    background: #e9ebed;
+  }
+  .branch-row.selected {
+    background: #f0f1f2;
+  }
+  .branch-row .branch-option {
+    flex: 1;
+    min-width: 0;
+  }
+
+  .branch-more {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 26px;
+    height: 26px;
+    margin-right: 4px;
+    padding: 0;
+    border: 0;
+    background: none;
+    border-radius: 6px;
+    color: #90949b;
+    cursor: pointer;
+    opacity: 0;
+    flex-shrink: 0;
+  }
+  .branch-row:hover .branch-more,
+  .branch-row:focus-within .branch-more,
+  .branch-more:focus-visible {
+    opacity: 1;
+  }
+  .branch-more:hover,
+  .branch-more:focus-visible {
+    background: #d7dade;
+    color: #30363d;
+    outline: none;
+  }
+
+  .branch-actions-panel {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+  .branch-actions-back {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    width: 100%;
+    padding: 8px 10px 7px;
+    border: 0;
+    background: none;
+    border-radius: 6px;
+    cursor: pointer;
+    text-align: left;
+  }
+  .branch-actions-back:hover,
+  .branch-actions-back:focus-visible {
+    background: #e9ebed;
+    outline: none;
+  }
+  .branch-actions-back .back-chevron {
+    color: #8b9096;
+    font-size: 13px;
+  }
+  .branch-actions-title {
+    font-size: 12px;
+    color: #454b53;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
 
   /* Add-branch-view modal */

@@ -9,8 +9,9 @@ use crate::git::ops::{
     revert_range as git_revert_range,
 };
 use crate::git::refs::{
-    checkout_branch, get_remote_url, list_branches, sync_fetch as git_sync_fetch,
-    sync_pull as git_sync_pull, sync_push as git_sync_push,
+    checkout_branch, create_branch, delete_branch, get_remote_url, is_branch_merged, list_branches,
+    rename_branch, sync_fetch as git_sync_fetch, sync_pull as git_sync_pull,
+    sync_push as git_sync_push,
 };
 use crate::git::runner::GitRunner;
 use crate::git::status::query_repo_status;
@@ -828,6 +829,93 @@ pub async fn checkout(
     };
 
     checkout_branch(&state.runner, &repo_path, &branch).await
+}
+
+#[tauri::command]
+pub async fn branch_create(
+    state: State<'_, AppState>,
+    id: String,
+    name: String,
+    start_point: Option<String>,
+    checkout: bool,
+) -> Result<(), AppError> {
+    let repo_path = {
+        let data = state.data.lock().await;
+        let entry = data
+            .repos
+            .iter()
+            .find(|r| r.id == id)
+            .ok_or_else(|| AppError::not_found("Repository not found"))?;
+        PathBuf::from(&entry.path)
+    };
+
+    create_branch(
+        &state.runner,
+        &repo_path,
+        &name,
+        start_point.as_deref(),
+        checkout,
+    )
+    .await
+}
+
+#[tauri::command]
+pub async fn branch_rename(
+    state: State<'_, AppState>,
+    id: String,
+    from: Option<String>,
+    to: String,
+) -> Result<(), AppError> {
+    let repo_path = {
+        let data = state.data.lock().await;
+        let entry = data
+            .repos
+            .iter()
+            .find(|r| r.id == id)
+            .ok_or_else(|| AppError::not_found("Repository not found"))?;
+        PathBuf::from(&entry.path)
+    };
+
+    rename_branch(&state.runner, &repo_path, from.as_deref(), &to).await
+}
+
+#[tauri::command]
+pub async fn branch_delete(
+    state: State<'_, AppState>,
+    id: String,
+    name: String,
+    force: bool,
+) -> Result<(), AppError> {
+    let repo_path = {
+        let data = state.data.lock().await;
+        let entry = data
+            .repos
+            .iter()
+            .find(|r| r.id == id)
+            .ok_or_else(|| AppError::not_found("Repository not found"))?;
+        PathBuf::from(&entry.path)
+    };
+
+    delete_branch(&state.runner, &repo_path, &name, force).await
+}
+
+#[tauri::command]
+pub async fn branch_is_merged(
+    state: State<'_, AppState>,
+    id: String,
+    name: String,
+) -> Result<bool, AppError> {
+    let repo_path = {
+        let data = state.data.lock().await;
+        let entry = data
+            .repos
+            .iter()
+            .find(|r| r.id == id)
+            .ok_or_else(|| AppError::not_found("Repository not found"))?;
+        PathBuf::from(&entry.path)
+    };
+
+    is_branch_merged(&state.runner, &repo_path, &name).await
 }
 
 #[tauri::command]

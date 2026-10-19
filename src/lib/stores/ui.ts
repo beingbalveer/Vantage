@@ -97,12 +97,30 @@ export const scanFolderDialogOpen = writable<boolean>(false);
 
 // Active modal dialogs
 export interface ActiveDialog {
-  type: "revert" | "reset" | "discard" | "error_details" | "rename" | "change_icon" | "remove_repo";
+  type:
+    | "revert"
+    | "reset"
+    | "discard"
+    | "error_details"
+    | "rename"
+    | "change_icon"
+    | "remove_repo"
+    | "branch_create"
+    | "branch_rename"
+    | "branch_delete";
   repoId: string;
   data?: any;
 }
 
 export const activeDialog = writable<ActiveDialog | null>(null);
+
+// Bumped after any local branch create/rename/delete so branch lists (header
+// switcher, pane header) refetch without prop-drilling.
+export const branchesVersion = writable(0);
+
+export function bumpBranches() {
+  branchesVersion.update((n) => n + 1);
+}
 
 export function openDialog(dialog: ActiveDialog) {
   activeDialog.set(dialog);

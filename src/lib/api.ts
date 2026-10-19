@@ -207,6 +207,27 @@ export async function checkout(id: string, branch: string): Promise<void> {
   return invoke("checkout", { id, branch });
 }
 
+export async function branchCreate(
+  id: string,
+  name: string,
+  startPoint?: string | null,
+  checkout = false
+): Promise<void> {
+  return invoke("branch_create", { id, name, startPoint: startPoint || undefined, checkout });
+}
+
+export async function branchRename(id: string, from: string | null, to: string): Promise<void> {
+  return invoke("branch_rename", { id, from: from || undefined, to });
+}
+
+export async function branchDelete(id: string, name: string, force = false): Promise<void> {
+  return invoke("branch_delete", { id, name, force });
+}
+
+export async function branchIsMerged(id: string, name: string): Promise<boolean> {
+  return invoke("branch_is_merged", { id, name });
+}
+
 export async function syncFetch(id: string): Promise<void> {
   return invoke("sync_fetch", { id });
 }

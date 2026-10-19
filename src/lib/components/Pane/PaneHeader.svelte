@@ -3,7 +3,7 @@
   import * as api from "../../api";
   import { paneCount, panes, toggleTerminalInPane, setPaneTab, closePane as removePane } from "../../stores/panes";
   import { repos, loadRepos, removeRepo } from "../../stores/repos";
-  import { addToast, openDialog } from "../../stores/ui";
+  import { addToast, openDialog, branchesVersion } from "../../stores/ui";
   import IconButton from "../common/IconButton.svelte";
   import { get } from "svelte/store";
 
@@ -56,12 +56,21 @@
   }
 
   $effect(() => {
+    // Re-fetch whenever a branch create/rename/delete bumps the version.
+    const _branchRev = $branchesVersion;
     if (repo?.id) {
       api.branchList(repo.id).then((b) => {
         branches = b;
       }).catch(() => {});
     }
   });
+
+  function handleNewBranch() {
+    if (!repo) return;
+    showBranchMenu = false;
+    const startPoint = status?.branch || repo.branch || "HEAD";
+    openDialog({ type: "branch_create", repoId: repo.id, data: { startPoint } });
+  }
 
   async function handleAddBranchView(targetBranch: string) {
     if (!repo) return;
@@ -223,6 +232,14 @@
                 </div>
               {/each}
             </div>
+            <div class="branch-dropdown-divider"></div>
+            <button
+              class="branch-item"
+              onclick={handleNewBranch}
+              title="Create a new branch from the current one"
+            >
+              + New branch from {status?.branch || repo.branch || "HEAD"}…
+            </button>
           </div>
         {/if}
       </div>
@@ -446,6 +463,15 @@
     font-size: 12px;
     color: var(--text);
     cursor: pointer;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .branch-dropdown-divider {
+    height: 1px;
+    background-color: var(--border-subtle);
+    margin: 4px 0;
   }
   .branch-item:hover {
     background-color: var(--bg-muted);

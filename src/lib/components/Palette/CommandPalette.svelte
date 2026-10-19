@@ -454,6 +454,38 @@
         },
       },
       {
+        id: "cmd_new_branch",
+        title: "New branch…",
+        action: () => {
+          $paletteOpen = false;
+          if (!focusedRepoId) {
+            addToast({ message: "No repository selected to create a branch in", kind: "info" });
+            return;
+          }
+          openDialog({
+            type: "branch_create",
+            repoId: focusedRepoId,
+            data: { startPoint: "HEAD" },
+          });
+        },
+      },
+      {
+        id: "cmd_rename_branch",
+        title: "Rename current branch…",
+        action: () => {
+          $paletteOpen = false;
+          if (!focusedRepo) {
+            addToast({ message: "No repository selected", kind: "info" });
+            return;
+          }
+          openDialog({
+            type: "branch_rename",
+            repoId: focusedRepo.id,
+            data: { from: focusedRepo.branch || undefined },
+          });
+        },
+      },
+      {
         id: "cmd_remove_repo",
         title: "Remove current repository from Relay…",
         action: () => {
