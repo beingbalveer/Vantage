@@ -1,9 +1,11 @@
 <script lang="ts">
-  import { onMount } from "svelte";
   import * as api from "../../api";
+  import { normalizeError, createDelayedToggle, type NormalizedError } from "../../asyncState";
   import CodeViewer from "../Viewer/CodeViewer.svelte";
   import { createHorizontalResizer } from "../../resizer";
   import Icon from "../common/Icon.svelte";
+  import Skeleton from "../common/Skeleton.svelte";
+  import Banner from "../common/Banner.svelte";
   import { navigationTarget } from "../../stores/navigation";
 
   interface Props {
@@ -19,6 +21,52 @@
   let filterText = $state("");
   let selectedFile = $state<string | null>(null);
   let activeTargetLine = $state<number | null>(null);
+
+  // Tree load state (ALPH-150): a failed tree request must be visible and
+  // retryable rather than silently swallowed.
+  let treeLoading = $state(false);
+  let treeError = $state<NormalizedError | null>(null);
+  let treeGen = 0;
+  let treeRequests = $state(0);
+  let treeInFlight = $derived(treeRequests > 0);
+  const treePending = createDelayedToggle(150, (v) => (treeLoading = v));
+
+  async function loadTree() {
+    if (!repoId) return;
+    const gen = ++treeGen;
+    treeRequests += 1;
+    treePending.begin();
+    treeError = null;
+    try {
+      const files = await api.treeList(repoId, rev || "HEAD");
+      if (gen !== treeGen) return;
+      fileList = files;
+      if (files.length > 0 && (!selectedFile || !files.includes(selectedFile))) {
+        selectedFile = files[0];
+      }
+    } catch (e) {
+      if (gen !== treeGen) return;
+      console.error("Failed to load file tree:", e);
+      treeError = normalizeError(e);
+    } finally {
+      treeRequests = Math.max(0, treeRequests - 1);
+      treePending.end();
+    }
+  }
+
+  $effect(() => {
+    // Track identity so a repo/rev switch clears the previous tree.
+    if (!repoId) return;
+    fileList = [];
+    selectedFile = null;
+    treeError = null;
+    loadTree();
+    return () => {
+      // Only invalidate the in-flight request; the pending toggle is left to
+      // its own begin/end balance so overlapping loads stay tracked.
+      treeGen++;
+    };
+  });
 
   $effect(() => {
     if (targetFile) selectedFile = targetFile;
@@ -37,18 +85,6 @@
     minWidth: 160,
     maxWidth: 600,
     storageKey: "vantage_files_tree_width",
-  });
-
-  $effect(() => {
-    const targetRev = rev || "HEAD";
-    if (repoId) {
-      api.treeList(repoId, targetRev).then((files) => {
-        fileList = files;
-        if (files.length > 0 && (!selectedFile || !files.includes(selectedFile))) {
-          selectedFile = files[0];
-        }
-      }).catch(() => {});
-    }
   });
 
   $effect(() => {
@@ -92,7 +128,17 @@
       />
     </div>
 
-    <div class="file-tree-scroll">
+    <div class="file-tree-scroll" class:pending={treeLoading && fileList.length > 0} aria-busy={treeLoading || treeInFlight}>
+      {#if treeLoading && fileList.length === 0}
+        <Skeleton rows={8} height={26} shape="file" label="Loading files" />
+      {:else if treeError}
+        <Banner kind="error" message={treeError.message} error={treeError} retryLabel="Retry" onretry={loadTree} />
+      {:else if filteredFiles.length === 0 && !treeInFlight}
+        <div class="empty-tree text-sm text-muted">
+          {filterText.trim() ? `No files match "${filterText}".` : "No files yet."}
+        </div>
+      {/if}
+
       {#each filteredFiles as f (f)}
         <button
           type="button"
@@ -183,6 +229,14 @@
     flex: 1;
     overflow-y: auto;
     padding: 4px 0;
+    transition: opacity 120ms ease;
+  }
+  .file-tree-scroll.pending {
+    opacity: 0.6;
+  }
+
+  .empty-tree {
+    padding: 16px 12px;
   }
 
   .file-row {
