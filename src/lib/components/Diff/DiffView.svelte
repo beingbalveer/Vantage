@@ -1,5 +1,14 @@
 <script lang="ts">
-  import type { DiffFile, DiffMode, Hunk, DiffLine, NoteSide } from "../../types";
+  import type {
+    DiffFile,
+    DiffMode,
+    Hunk,
+    DiffLine,
+    NoteSide,
+    LineSelection,
+    WorkingPart,
+    WorkingPartCounts,
+  } from "../../types";
   import { getLanguageFromPath, highlightCodeLines } from "../../highlight";
   import * as api from "../../api";
   import { repos, activeRepoId } from "../../stores/repos";
@@ -7,6 +16,7 @@
   import { addToast } from "../../stores/ui";
   import { settings, updateSettings } from "../../stores/settings";
   import Icon from "../common/Icon.svelte";
+  import { Modal, Button } from "../common";
 
   interface Props {
     diffFile: DiffFile | null;
@@ -14,6 +24,11 @@
     ignoreWhitespace?: boolean;
     repoId?: string;
     rev?: string;
+    scopeType?: "working" | "commit" | "range";
+    workingPart?: WorkingPart;
+    workingCounts?: WorkingPartCounts | null;
+    onchangepart?: (part: WorkingPart) => void;
+    onrefresh?: () => void;
     onexpandcontext?: (oldStart: number, count: number) => void;
     onviewfile?: (path: string) => void;
     onloadforce?: () => void;
@@ -25,6 +40,11 @@
     ignoreWhitespace = false,
     repoId,
     rev = "HEAD",
+    scopeType = "commit",
+    workingPart = "unstaged",
+    workingCounts = null,
+    onchangepart,
+    onrefresh,
     onexpandcontext,
     onviewfile,
     onloadforce,
@@ -81,6 +101,132 @@
     const num = selectedRange.side === "old" ? line.oldNo : line.newNo;
     if (num == null) return false;
     return num >= selectedRange.start && num <= selectedRange.end;
+  }
+
+  let stagingEnabled = $derived(scopeType === "working");
+  let emptyMessage = $derived(
+    scopeType === "working"
+      ? workingPart === "staged"
+        ? "No staged changes in this file"
+        : "No unstaged changes in this file"
+      : "No changes in this file"
+  );
+
+  let isApplying = $state(false);
+  let discardTarget = $state<{ path: string; lines: LineSelection[] } | null>(null);
+
+  /** Changed (add/del) lines covered by the current gutter selection. */
+  function getSelectedChangeLines(): LineSelection[] {
+    if (!selectedRange) return [];
+    const out: LineSelection[] = [];
+    for (const hunk of localHunks) {
+      for (const line of hunk.lines) {
+        if (line.kind !== "add" && line.kind !== "del") continue;
+        const num = selectedRange.side === "old" ? line.oldNo : line.newNo;
+        if (num == null || num < selectedRange.start || num > selectedRange.end) continue;
+        out.push({
+          kind: line.kind,
+          oldNo: line.oldNo,
+          newNo: line.newNo,
+          text: line.text,
+        });
+      }
+    }
+    return out;
+  }
+
+  function getHunkChangeLines(hunk: Hunk): LineSelection[] {
+    return hunk.lines
+      .filter((l) => l.kind === "add" || l.kind === "del")
+      .map((l) => ({
+        kind: l.kind,
+        oldNo: l.oldNo,
+        newNo: l.newNo,
+        text: l.text,
+      }));
+  }
+
+  let selectedChangeLines = $derived(getSelectedChangeLines());
+  let canApplySelection = $derived(
+    stagingEnabled && selectedChangeLines.length > 0 && !isApplying
+  );
+
+  function lineCountLabel(count: number): string {
+    return `${count} line${count === 1 ? "" : "s"}`;
+  }
+
+  async function runPartial(
+    action: "stage" | "unstage",
+    lines: LineSelection[]
+  ): Promise<void> {
+    if (!diffFile || !effectiveRepoId || lines.length === 0 || isApplying) return;
+    isApplying = true;
+    try {
+      if (action === "stage") {
+        await api.stageLines(effectiveRepoId, diffFile.change.path, lines, ignoreWhitespace);
+        addToast({
+          message: `Staged ${lineCountLabel(lines.length)} in ${diffFile.change.path}`,
+          kind: "success",
+        });
+      } else {
+        await api.unstageLines(effectiveRepoId, diffFile.change.path, lines, ignoreWhitespace);
+        addToast({
+          message: `Unstaged ${lineCountLabel(lines.length)} in ${diffFile.change.path}`,
+          kind: "success",
+        });
+      }
+      selectedRange = null;
+      onrefresh?.();
+    } catch (e: any) {
+      addToast({
+        message: e?.message || e?.toString?.() || "Could not apply the selected lines",
+        kind: "error",
+      });
+    } finally {
+      isApplying = false;
+    }
+  }
+
+  function stageSelection() {
+    runPartial("stage", selectedChangeLines);
+  }
+
+  function unstageSelection() {
+    runPartial("unstage", selectedChangeLines);
+  }
+
+  function stageHunk(hunk: Hunk) {
+    runPartial(workingPart === "staged" ? "unstage" : "stage", getHunkChangeLines(hunk));
+  }
+
+  function requestDiscardSelection() {
+    if (!diffFile || selectedChangeLines.length === 0) return;
+    discardTarget = { path: diffFile.change.path, lines: [...selectedChangeLines] };
+  }
+
+  async function confirmDiscard() {
+    if (!discardTarget || !effectiveRepoId || isApplying) return;
+    const target = discardTarget;
+    isApplying = true;
+    try {
+      await api.discardLines(effectiveRepoId, target.path, target.lines, ignoreWhitespace);
+      addToast({
+        message: `Discarded ${lineCountLabel(target.lines.length)} in ${target.path}`,
+        kind: "info",
+      });
+      discardTarget = null;
+      selectedRange = null;
+      onrefresh?.();
+    } catch (e: any) {
+      // Keep the selection and the confirmation open so the user can retry
+      // after refreshing; the backend changed nothing.
+      addToast({
+        message: e?.message || e?.toString?.() || "Could not discard the selected lines",
+        kind: "error",
+      });
+    } finally {
+      isApplying = false;
+    }
   }
 
   function getSelectedSnippet(): string {
@@ -402,13 +548,34 @@
         {/if}
       </div>
 
+      {#if stagingEnabled}
+        <div class="part-switch" role="group" aria-label="Working diff view">
+          <button
+            type="button"
+            class:active={workingPart === "unstaged"}
+            aria-pressed={workingPart === "unstaged"}
+            onclick={() => onchangepart?.("unstaged")}
+          >
+            Unstaged{workingCounts ? ` ${workingCounts.unstaged}` : ""}
+          </button>
+          <button
+            type="button"
+            class:active={workingPart === "staged"}
+            aria-pressed={workingPart === "staged"}
+            onclick={() => onchangepart?.("staged")}
+          >
+            Staged{workingCounts ? ` ${workingCounts.staged}` : ""}
+          </button>
+        </div>
+      {/if}
+
     </div>
 
     <!-- Hunks Body -->
     <div class="diff-body">
         {#if localHunks.length === 0}
           <div class="empty-diff">
-            <span class="text-muted">No changes in this file</span>
+            <span class="text-muted">{emptyMessage}</span>
           </div>
         {:else}
           {#each localHunks as hunk, hIdx (hIdx)}
@@ -448,7 +615,20 @@
 
             <!-- Hunk Header -->
             <div class="hunk-header font-mono text-xs">
-              {hunkLabel(hunk)}
+              <span class="hunk-label">{hunkLabel(hunk)}</span>
+              {#if stagingEnabled}
+                <button
+                  type="button"
+                  class="hunk-btn"
+                  disabled={isApplying || getHunkChangeLines(hunk).length === 0}
+                  title={workingPart === "staged"
+                    ? "Unstage every changed line in this hunk"
+                    : "Stage every changed line in this hunk"}
+                  onclick={() => stageHunk(hunk)}
+                >
+                  {workingPart === "staged" ? "Unstage hunk" : "Stage hunk"}
+                </button>
+              {/if}
             </div>
 
             <!-- Hunk Lines: Unified -->
@@ -460,8 +640,16 @@
                   class="gutter-num old-num font-mono"
                   role="button"
                   tabindex="0"
+                  aria-label={line.oldNo != null ? `Select old line ${line.oldNo}` : undefined}
+                  aria-pressed={line.oldNo != null && isSelected ? true : undefined}
+                  title={line.oldNo != null ? "Select old line (Shift-click to extend)" : undefined}
                   onclick={(e) => handleLineClick(line.oldNo, "old", e)}
-                  onkeydown={(e) => e.key === "Enter" && handleLineClick(line.oldNo, "old", e as any)}
+                  onkeydown={(e) => {
+                    if (e.key === "Enter" || e.key === " ") {
+                      e.preventDefault();
+                      handleLineClick(line.oldNo, "old", e as any);
+                    }
+                  }}
                 >{line.oldNo ?? ""}</div>
 
                 <!-- New line number -->
@@ -469,15 +657,23 @@
                   class="gutter-num new-num font-mono"
                   role="button"
                   tabindex="0"
+                  aria-label={line.newNo != null ? `Select new line ${line.newNo}` : undefined}
+                  aria-pressed={line.newNo != null && isSelected ? true : undefined}
+                  title={line.newNo != null ? "Select new line (Shift-click to extend)" : undefined}
                   onclick={(e) => handleLineClick(line.newNo, "new", e)}
-                  onkeydown={(e) => e.key === "Enter" && handleLineClick(line.newNo, "new", e as any)}
+                  onkeydown={(e) => {
+                    if (e.key === "Enter" || e.key === " ") {
+                      e.preventDefault();
+                      handleLineClick(line.newNo, "new", e as any);
+                    }
+                  }}
                 >{line.newNo ?? ""}</div>
 
                 <!-- Sign column -->
-                <div class="sign font-mono">
-                  {#if line.kind === "add"}+{/if}
-                  {#if line.kind === "del"}−{/if}
-                  {#if line.kind === "context"}&nbsp;{/if}
+                <div class="sign font-mono" aria-hidden="true">
+                  {#if isSelected && (line.kind === "add" || line.kind === "del")}
+                    <span class="selected-dot"></span>
+                  {:else if line.kind === "add"}+{:else if line.kind === "del"}−{:else}&nbsp;{/if}
                 </div>
 
                 <!-- Code text -->
@@ -522,6 +718,37 @@
           Copy snippet
         </button>
 
+        {#if stagingEnabled && workingPart === "unstaged"}
+          <span class="selection-count text-xs">
+            {lineCountLabel(selectedChangeLines.length)} selected
+          </span>
+          <button
+            class="fab-btn primary"
+            disabled={!canApplySelection}
+            onclick={stageSelection}
+          >
+            {isApplying ? "Applying…" : "Stage selection"}
+          </button>
+          <button
+            class="fab-btn danger"
+            disabled={!canApplySelection}
+            onclick={requestDiscardSelection}
+          >
+            Discard selection
+          </button>
+        {:else if stagingEnabled && workingPart === "staged"}
+          <span class="selection-count text-xs">
+            {lineCountLabel(selectedChangeLines.length)} selected
+          </span>
+          <button
+            class="fab-btn primary"
+            disabled={!canApplySelection}
+            onclick={unstageSelection}
+          >
+            {isApplying ? "Applying…" : "Unstage selection"}
+          </button>
+        {/if}
+
         <button
           class="fab-btn close-btn"
           onclick={() => {
@@ -535,6 +762,36 @@
     {/if}
   {/if}
 </div>
+
+<Modal
+  open={Boolean(discardTarget)}
+  title="Discard selected lines?"
+  width={460}
+  closeOnEscape={!isApplying}
+  closeOnOutsideClick={!isApplying}
+  onclose={() => {
+    if (!isApplying) discardTarget = null;
+  }}
+>
+  {#if discardTarget}
+    <p class="text-base text-strong">
+      Discard {lineCountLabel(discardTarget.lines.length)} in
+      <span class="discard-path font-mono">{discardTarget.path}</span>?
+    </p>
+    <p class="text-sm text-muted">
+      Only the selected lines will be reverted. A backup is saved so you can undo
+      this from Recovery for 30 days.
+    </p>
+  {/if}
+  {#snippet footer()}
+    <Button variant="default" onclick={() => (discardTarget = null)} disabled={isApplying}>
+      Cancel
+    </Button>
+    <Button variant="danger" onclick={confirmDiscard} loading={isApplying}>
+      {isApplying ? "Discarding…" : "Discard lines"}
+    </Button>
+  {/snippet}
+</Modal>
 
 <style>
   .diff-view-container {
@@ -621,6 +878,40 @@
     color: var(--danger);
   }
 
+  .part-switch {
+    display: inline-flex;
+    align-items: center;
+    gap: 2px;
+    padding: 2px;
+    border: 1px solid var(--border);
+    border-radius: var(--r-md);
+    background-color: var(--bg-subtle);
+    flex-shrink: 0;
+  }
+  .part-switch button {
+    height: 22px;
+    padding: 0 8px;
+    border: none;
+    border-radius: var(--r-sm);
+    background: transparent;
+    color: var(--text-muted);
+    font-size: 11px;
+    font-weight: 500;
+    cursor: pointer;
+  }
+  .part-switch button:hover {
+    color: var(--text);
+  }
+  .part-switch button.active {
+    background-color: var(--bg);
+    color: var(--text);
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.12);
+  }
+  .part-switch button:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: -1px;
+  }
+
 
   .header-actions {
     display: flex;
@@ -698,6 +989,7 @@
     height: 30px;
     line-height: 30px;
     padding-left: 105px;
+    padding-right: 12px;
     background-color: var(--bg);
     color: #64758a;
     font-size: 11px;
@@ -706,6 +998,42 @@
     left: 0;
     min-width: 100%;
     width: max-content;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    box-sizing: border-box;
+  }
+  .hunk-label {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .hunk-btn {
+    flex-shrink: 0;
+    height: 20px;
+    padding: 0 8px;
+    border: 1px solid var(--border);
+    border-radius: var(--r-sm);
+    background-color: var(--bg-subtle);
+    color: var(--text);
+    font-family: var(--font-ui);
+    font-size: 10.5px;
+    font-weight: 500;
+    cursor: pointer;
+    line-height: 1;
+  }
+  .hunk-btn:hover:not(:disabled) {
+    background-color: var(--bg-muted);
+  }
+  .hunk-btn:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 1px;
+  }
+  .hunk-btn:disabled {
+    opacity: 0.45;
+    cursor: not-allowed;
   }
 
   .diff-body {
@@ -734,6 +1062,15 @@
   }
   .diff-line.selected {
     background-color: var(--accent-bg) !important;
+    box-shadow: inset 3px 0 0 var(--accent);
+  }
+  .selected-dot {
+    display: inline-block;
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    background-color: var(--accent);
+    vertical-align: middle;
   }
 
   .gutter-num {
@@ -863,10 +1200,31 @@
     color: var(--accent-fg);
     border-color: var(--accent);
   }
+  .fab-btn.danger {
+    color: var(--danger);
+    border-color: var(--danger);
+    background-color: transparent;
+  }
+  .fab-btn.danger:hover:not(:disabled) {
+    background-color: var(--danger-subtle, rgba(218, 54, 51, 0.1));
+  }
+  .fab-btn:disabled {
+    opacity: 0.45;
+    cursor: not-allowed;
+  }
+  .selection-count {
+    color: var(--text-muted);
+    white-space: nowrap;
+    padding: 0 2px;
+  }
   .fab-btn.ghost {
     background: none;
     border: none;
     color: var(--text-muted);
+  }
+  .discard-path {
+    color: var(--text);
+    word-break: break-all;
   }
   .fab-btn.close-btn {
     border: none;

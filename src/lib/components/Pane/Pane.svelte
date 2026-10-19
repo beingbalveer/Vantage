@@ -1,8 +1,18 @@
 <script lang="ts">
   import { onMount, onDestroy, untrack } from "svelte";
-  import type { RepoEntry, RepoStatus, CommitSummary, FileChange, DiffFile, DiffScope } from "../../types";
+  import type {
+    RepoEntry,
+    RepoStatus,
+    CommitSummary,
+    FileChange,
+    DiffFile,
+    DiffScope,
+    WorkingPart,
+    WorkingPartCounts,
+  } from "../../types";
   import * as api from "../../api";
   import { settings } from "../../stores/settings";
+  import { refreshSingleStatus } from "../../stores/repos";
   import { panes, focusedPaneIndex, focusPane } from "../../stores/panes";
   import { addToast } from "../../stores/ui";
   import { navigationTarget, navigateTo } from "../../stores/navigation";
@@ -121,6 +131,8 @@
   let selectedFilePath = $state<string | null>(null);
   let currentDiffFile = $state<DiffFile | null>(null);
   let checkedPaths = $state<string[]>([]);
+  let workingPart = $state<WorkingPart>("unstaged");
+  let workingCounts = $state<WorkingPartCounts | null>(null);
 
   // Generation IDs to avoid stale async overwrites (R11)
   let historyGen = 0;
@@ -145,6 +157,7 @@
           selectedFilePath = null;
           isUncommittedSelected = false;
           isRangeSelected = false;
+          workingCounts = null;
         }
       });
     }
@@ -253,6 +266,7 @@
     isRangeSelected = false;
     selectedCommitSha = null;
     currentScope = { type: "working" };
+    workingPart = "unstaged";
     commitMode = false;
     showCommitDetails = false;
     loadScopeFiles(currentScope);
@@ -279,11 +293,24 @@
     loadScopeFiles(currentScope);
   }
 
+  async function loadWorkingCounts() {
+    if (!repo) return;
+    try {
+      workingCounts = await api.workingPartCounts(repo.id);
+    } catch (e) {
+      console.warn("Failed to load staged/unstaged counts:", e);
+    }
+  }
+
   async function loadScopeFiles(scope: DiffScope, preserveFile = false) {
     if (!repo) return;
     const gen = ++scopeGen;
     try {
+      const isWorking = scope.type === "working";
       const files = await api.scopeFiles(repo.id, scope, $settings.ignoreWhitespace);
+      if (isWorking) {
+        loadWorkingCounts();
+      }
       if (gen !== scopeGen) return;
 
       scopeFilesList = files;
@@ -313,14 +340,24 @@
     const activeScope = scope || currentScope;
 
     try {
-      const diff = await api.scopeFileDiff(
-        repo.id,
-        activeScope,
-        path,
-        $settings.contextLines,
-        $settings.ignoreWhitespace,
-        false
-      );
+      const diff =
+        isUncommittedSelected && activeScope.type === "working"
+          ? await api.workingFileDiff(
+              repo.id,
+              path,
+              workingPart,
+              $settings.contextLines,
+              $settings.ignoreWhitespace,
+              false
+            )
+          : await api.scopeFileDiff(
+              repo.id,
+              activeScope,
+              path,
+              $settings.contextLines,
+              $settings.ignoreWhitespace,
+              false
+            );
       if (gen !== diffGen) return;
       currentDiffFile = diff;
     } catch (e: any) {
@@ -328,6 +365,19 @@
       console.error("Failed to load file diff:", e);
       addToast({ message: e.message || "Failed to load diff", kind: "error" });
     }
+  }
+
+  function changeWorkingPart(part: WorkingPart) {
+    if (part === workingPart) return;
+    workingPart = part;
+    if (selectedFilePath) selectFile(selectedFilePath);
+  }
+
+  async function handlePartialRefresh() {
+    if (!repo) return;
+    await loadScopeFiles(currentScope, true);
+    await refreshSingleStatus(repo.id);
+    await loadWorkingCounts();
   }
 
   function toggleCheckedPath(path: string) {
@@ -480,6 +530,11 @@
                 ignoreWhitespace={$settings.ignoreWhitespace}
                 repoId={repo.id}
                 rev={selectedCommitSha || repo.branch || "HEAD"}
+                scopeType={currentScope.type}
+                {workingPart}
+                {workingCounts}
+                onchangepart={changeWorkingPart}
+                onrefresh={handlePartialRefresh}
                 onviewfile={(path) => {
                   navigateTo({
                     repoId: repo.id,

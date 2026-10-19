@@ -13,11 +13,14 @@ import type {
   EnvInfo,
   FileChange,
   Layout,
+  LineSelection,
   RepoEntry,
   RepoStatus,
   RepoStackInfo,
   Settings,
   TriageFlag,
+  WorkingPart,
+  WorkingPartCounts,
 } from "./types";
 
 // Repos
@@ -115,6 +118,55 @@ export async function scopeFileDiff(
   force: boolean
 ): Promise<DiffFile> {
   return invoke("scope_file_diff", { id, scope, path, ctxLines, ignoreWs, force });
+}
+
+export async function workingFileDiff(
+  id: string,
+  path: string,
+  part: WorkingPart,
+  ctxLines: number,
+  ignoreWs: boolean,
+  force: boolean
+): Promise<DiffFile> {
+  return invoke("working_file_diff", {
+    id,
+    path,
+    part,
+    ctxLines,
+    ignoreWs,
+    force,
+  });
+}
+
+export async function workingPartCounts(id: string): Promise<WorkingPartCounts> {
+  return invoke("working_part_counts", { id });
+}
+
+export async function stageLines(
+  id: string,
+  path: string,
+  selection: LineSelection[],
+  ignoreWs: boolean
+): Promise<void> {
+  return invoke("stage_lines", { id, path, selection, ignoreWs });
+}
+
+export async function unstageLines(
+  id: string,
+  path: string,
+  selection: LineSelection[],
+  ignoreWs: boolean
+): Promise<void> {
+  return invoke("unstage_lines", { id, path, selection, ignoreWs });
+}
+
+export async function discardLines(
+  id: string,
+  path: string,
+  selection: LineSelection[],
+  ignoreWs: boolean
+): Promise<BackupInfo | null> {
+  return invoke("discard_lines", { id, path, selection, ignoreWs });
 }
 
 export async function blobLines(
