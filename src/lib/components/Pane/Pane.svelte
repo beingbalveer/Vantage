@@ -4,10 +4,12 @@
   import * as api from "../../api";
   import { settings } from "../../stores/settings";
   import { panes, focusedPaneIndex, focusPane } from "../../stores/panes";
+  import { captureReviewEnd } from "../../stores/review";
   import { addToast } from "../../stores/ui";
   import { navigationTarget, navigateTo } from "../../stores/navigation";
   import UncommittedRow from "./UncommittedRow.svelte";
   import CommitRow from "./CommitRow.svelte";
+  import PaneHeader from "./PaneHeader.svelte";
   import CommitHeader from "./CommitHeader.svelte";
   import FileList from "./FileList.svelte";
   import CommitBox from "./CommitBox.svelte";
@@ -225,6 +227,10 @@
       commits = log;
 
       if (!preserveSelection) {
+        // A fresh review opens here: freeze the snapshot end at the current
+        // HEAD (shared store) so "Mark reviewed" never sweeps up commits that
+        // arrive later.
+        captureReviewEnd(repo.id, log);
         // Select default view
         if (status?.dirtyCount && status.dirtyCount > 0) {
           selectUncommitted();
@@ -364,6 +370,19 @@
     {:else if currentPane.tab === "files"}
       <FilesTab repoId={repo.id} rev={repo.branch || "HEAD"} />
     {:else}
+      <!-- Persistent "needs review" header: repo, marker..HEAD range, counts,
+           and Mark reviewed / Undo (ALPH-146). -->
+      <PaneHeader
+        {repo}
+        {status}
+        {isFocused}
+        {commits}
+        scopeFiles={scopeFilesList}
+        {selectedCommit}
+        {isRangeSelected}
+        onmarked={() => queueMicrotask(() => loadHistory())}
+      />
+
       <!-- History Tab 3-Column Layout -->
       <div class="history-layout">
         <!-- Commits Column -->
@@ -548,7 +567,8 @@
   .history-layout {
     display: flex;
     width: 100%;
-    height: 100%;
+    flex: 1 1 auto;
+    min-height: 0;
     min-width: 0;
     overflow: hidden;
   }
