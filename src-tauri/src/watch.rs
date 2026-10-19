@@ -1,7 +1,8 @@
+use crate::git::refs::sync_fetch as git_sync_fetch;
 use crate::git::runner::GitRunner;
 use crate::git::status::query_repo_status;
 use notify::{Config, Event, RecommendedWatcher, RecursiveMode, Watcher};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
@@ -188,6 +189,99 @@ impl RepoWatcherManager {
         heads.remove(repo_id);
     }
 
+    /// Run `git fetch --prune` on configured repos at the interval stored in
+    /// settings. Fetches go through the same `sync_fetch` path as the manual
+    /// button (and therefore the same per-repo lock), and every affected view
+    /// gets a fresh status event afterwards. `autoFetchMinutes == 0` disables
+    /// the loop; changing the interval takes effect on the next tick without a
+    /// restart.
+    pub fn start_auto_fetcher(
+        &self,
+        app_handle: AppHandle,
+        runner: Arc<GitRunner>,
+        state_data: Arc<Mutex<crate::persist::PersistedState>>,
+    ) {
+        tokio::spawn(async move {
+            let mut last_fetch: HashMap<String, tokio::time::Instant> = HashMap::new();
+            let in_flight: Arc<Mutex<HashSet<String>>> = Arc::new(Mutex::new(HashSet::new()));
+            let mut ticker = tokio::time::interval(Duration::from_secs(5));
+
+            loop {
+                ticker.tick().await;
+
+                let (minutes, repos) = {
+                    let data = state_data.lock().await;
+                    (data.settings.auto_fetch_minutes, data.repos.clone())
+                };
+
+                if minutes == 0 {
+                    last_fetch.clear();
+                    continue;
+                }
+
+                // Branch views share a working copy: fetch once per path, then
+                // refresh the status of every view that points at it.
+                let mut groups: HashMap<String, Vec<crate::state::RepoEntry>> = HashMap::new();
+                for repo in repos {
+                    groups.entry(repo.path.clone()).or_default().push(repo);
+                }
+                let active_paths: HashSet<String> = groups.keys().cloned().collect();
+                last_fetch.retain(|path, _| active_paths.contains(path));
+
+                let now = tokio::time::Instant::now();
+                for (path, views) in groups {
+                    if in_flight.lock().await.contains(&path) {
+                        continue;
+                    }
+
+                    match last_fetch.get(&path) {
+                        None => {
+                            // First observation: start the clock instead of
+                            // fetching immediately on launch.
+                            last_fetch.insert(path, now);
+                            continue;
+                        }
+                        Some(previous)
+                            if !auto_fetch_due(now.duration_since(*previous).as_secs(), minutes) =>
+                        {
+                            continue;
+                        }
+                        _ => {}
+                    }
+
+                    last_fetch.insert(path.clone(), now);
+                    in_flight.lock().await.insert(path.clone());
+
+                    let app = app_handle.clone();
+                    let r = runner.clone();
+                    let flags = in_flight.clone();
+                    tokio::spawn(async move {
+                        let repo_path = PathBuf::from(&path);
+                        // Errors (offline, auth, no remote) stay silent: the
+                        // next interval retries and the status row remains the
+                        // source of truth.
+                        let _ = git_sync_fetch(&r, &repo_path).await;
+
+                        for view in views {
+                            let marker = view.marker.as_ref().map(|m| m.sha.as_str());
+                            let status = query_repo_status(
+                                &r,
+                                &view.id,
+                                &repo_path,
+                                view.branch.as_deref(),
+                                marker,
+                            )
+                            .await;
+                            let _ = app.emit("repo://status", &status);
+                        }
+
+                        flags.lock().await.remove(&path);
+                    });
+                }
+            }
+        });
+    }
+
     pub fn start_poller(
         &self,
         app_handle: AppHandle,
@@ -336,5 +430,25 @@ impl RepoWatcherManager {
                 }
             }
         });
+    }
+}
+
+/// Whether an auto-fetch is due. `0` minutes disables fetching entirely.
+pub fn auto_fetch_due(elapsed_secs: u64, interval_minutes: u32) -> bool {
+    interval_minutes > 0 && elapsed_secs >= u64::from(interval_minutes) * 60
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn auto_fetch_interval_is_honored() {
+        assert!(!auto_fetch_due(0, 0));
+        assert!(!auto_fetch_due(10_000, 0), "zero means off");
+        assert!(!auto_fetch_due(299, 5));
+        assert!(auto_fetch_due(300, 5));
+        assert!(auto_fetch_due(60, 1));
+        assert!(auto_fetch_due(3_600, 60));
     }
 }

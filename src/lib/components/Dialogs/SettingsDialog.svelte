@@ -3,7 +3,8 @@
   import { settings, updateSettings } from "../../stores/settings";
   import { repos, activeRepoId, refreshSingleStatus, loadRepos } from "../../stores/repos";
   import * as api from "../../api";
-  import type { Settings, BackupInfo } from "../../types";
+  import * as settingsLib from "../../settings";
+  import type { Settings, BackupInfo, EnvInfo, GitIdentity } from "../../types";
   import { formatRelativeTime, formatFullTimestamp } from "../../format";
   import { Modal, Button, Checkbox, Badge, Input } from "../common";
   import { checkForAppUpdates, downloadAndInstallUpdate } from "../../updater";
@@ -16,6 +17,31 @@
   let isInstallingUpdate = $state(false);
 
   let currentSettings = $derived($settings);
+  let activeRepo = $derived($repos.find((r) => r.id === $activeRepoId) || $repos[0] || null);
+
+  // Environment detection (real editors / shells)
+  let envInfo = $state<EnvInfo | null>(null);
+  let envError = $state<string | null>(null);
+  let detectedShells = $derived(envInfo?.shells ?? []);
+  let detectedEditors = $derived(envInfo?.editors ?? []);
+
+  // Git identity
+  let identity = $state<GitIdentity | null>(null);
+  let identityLoading = $state(false);
+  let identityError = $state<string | null>(null);
+  let savingIdentity = $state<"repo" | "global" | null>(null);
+  let repoNameInput = $state("");
+  let repoEmailInput = $state("");
+  let globalNameInput = $state("");
+  let globalEmailInput = $state("");
+  let repoNameError = $state<string | null>(null);
+  let repoEmailError = $state<string | null>(null);
+  let globalNameError = $state<string | null>(null);
+  let globalEmailError = $state<string | null>(null);
+
+  // Default branch draft so invalid text can be shown without saving
+  let defaultBranchDraft = $state("main");
+  let defaultBranchError = $state<string | null>(null);
 
   // Recovery state
   let selectedRepoId = $state<string | null>(null);
@@ -39,6 +65,124 @@
       loadBackupsForRepo(selectedRepoId);
     }
   });
+
+  $effect(() => {
+    if ($settingsOpen && !envInfo && !envError) {
+      loadEnvironment();
+    }
+  });
+
+  $effect(() => {
+    if ($settingsOpen && activeSection === "git") {
+      loadIdentity(activeRepo?.id ?? null);
+    }
+  });
+
+  $effect(() => {
+    defaultBranchDraft = currentSettings.defaultBranch;
+  });
+
+  let shellSelectValue = $derived(
+    !currentSettings.shell
+      ? ""
+      : detectedShells.some((s) => s.command === currentSettings.shell)
+        ? currentSettings.shell
+        : "__custom"
+  );
+
+  let editorSelectValue = $derived(
+    !currentSettings.externalEditorCmd
+      ? ""
+      : detectedEditors.find((e) => e.command === currentSettings.externalEditorCmd)?.id || "__custom"
+  );
+
+  async function loadEnvironment() {
+    try {
+      envInfo = await api.envCheck();
+    } catch (e: any) {
+      envError = e?.message || "Failed to detect installed editors and shells.";
+    }
+  }
+
+  async function loadIdentity(repoId: string | null) {
+    identityLoading = true;
+    identityError = null;
+    try {
+      identity = await api.gitIdentityGet(repoId || undefined);
+      repoNameInput = identity.localName || "";
+      repoEmailInput = identity.localEmail || "";
+      globalNameInput = identity.globalName || "";
+      globalEmailInput = identity.globalEmail || "";
+      repoNameError = null;
+      repoEmailError = null;
+      globalNameError = null;
+      globalEmailError = null;
+    } catch (e: any) {
+      identityError = e?.message || "Failed to read Git identity.";
+      identity = null;
+    } finally {
+      identityLoading = false;
+    }
+  }
+
+  function validateIdentityInputs(scope: "repo" | "global"): boolean {
+    if (scope === "repo") {
+      repoNameError = settingsLib.validateIdentityName(repoNameInput);
+      repoEmailError = settingsLib.validateIdentityEmail(repoEmailInput);
+      return !repoNameError && !repoEmailError;
+    }
+    globalNameError = settingsLib.validateIdentityName(globalNameInput);
+    globalEmailError = settingsLib.validateIdentityEmail(globalEmailInput);
+    return !globalNameError && !globalEmailError;
+  }
+
+  async function saveIdentity(scope: "repo" | "global") {
+    if (scope === "repo" && !activeRepo) return;
+    if (!validateIdentityInputs(scope)) return;
+
+    savingIdentity = scope;
+    try {
+      const result = await api.gitIdentitySet(
+        scope === "repo" ? activeRepo?.id : undefined,
+        scope,
+        (scope === "repo" ? repoNameInput : globalNameInput).trim(),
+        (scope === "repo" ? repoEmailInput : globalEmailInput).trim()
+      );
+      identity = result;
+      addToast({
+        message: scope === "repo" ? "Repository identity saved" : "Global Git identity saved",
+        kind: "success",
+      });
+      await loadIdentity(activeRepo?.id ?? null);
+    } catch (e: any) {
+      addToast({ message: e?.message || "Failed to save Git identity", kind: "error" });
+    } finally {
+      savingIdentity = null;
+    }
+  }
+
+  async function clearRepoIdentity() {
+    if (!activeRepo) return;
+    savingIdentity = "repo";
+    try {
+      identity = await api.gitIdentitySet(activeRepo.id, "repo", null, null);
+      addToast({ message: "Repository identity cleared — using global identity", kind: "info" });
+      await loadIdentity(activeRepo.id);
+    } catch (e: any) {
+      addToast({ message: e?.message || "Failed to clear repository identity", kind: "error" });
+    } finally {
+      savingIdentity = null;
+    }
+  }
+
+  function handleDefaultBranch(value: string) {
+    defaultBranchDraft = value;
+    const err = settingsLib.validateBranchName(value);
+    defaultBranchError = err;
+    if (!err) {
+      updateSettings({ ...currentSettings, defaultBranch: value.trim() });
+    }
+  }
 
   async function loadBackupsForRepo(repoId: string) {
     isLoadingBackups = true;
@@ -81,7 +225,20 @@
   }
 
   function handleSaveField<K extends keyof Settings>(key: K, value: Settings[K]) {
-    updateSettings({ ...currentSettings, [key]: value });
+    updateSettings(settingsLib.normalizeSettings({ ...currentSettings, [key]: value }));
+  }
+
+  function sourceLabel(source: GitIdentity["nameSource"]): string {
+    switch (source) {
+      case "repo":
+        return "Repository";
+      case "global":
+        return "Global";
+      case "system":
+        return "System";
+      default:
+        return "Not set";
+    }
   }
 </script>
 
@@ -171,34 +328,211 @@
             </div>
           </div>
 
+          <div class="setting-row">
+            <span class="setting-title text-strong">UI scale</span>
+            <div class="scale-wrap">
+              <input
+                type="range"
+                min="75"
+                max="150"
+                step="5"
+                value={Math.round(currentSettings.uiScale * 100)}
+                oninput={(e) =>
+                  handleSaveField(
+                    "uiScale",
+                    parseInt((e.target as HTMLInputElement).value, 10) / 100
+                  )}
+                aria-label="UI scale"
+              />
+              <span class="text-xs text-muted font-mono">
+                {Math.round(currentSettings.uiScale * 100)}%
+              </span>
+            </div>
+          </div>
+
+          <div class="setting-row">
+            <span class="setting-title text-strong">Tab size</span>
+            <div class="setting-num-wrap">
+              <Input
+                type="number"
+                min="1"
+                max="8"
+                size="sm"
+                value={String(currentSettings.tabSize)}
+                onchange={(e: Event) =>
+                  handleSaveField(
+                    "tabSize",
+                    parseInt((e.target as HTMLInputElement).value, 10) || 4
+                  )}
+              />
+            </div>
+          </div>
+          <p class="setting-desc text-xs text-muted">
+            Indentation width used by the diff viewer and the read-only code viewer.
+          </p>
         {:else if activeSection === "git"}
           <h3 class="text-strong">Git Preferences</h3>
+
+          <div class="identity-card">
+            <div class="identity-card-header">
+              <span class="setting-title text-strong">Git identity</span>
+              {#if identityLoading}
+                <span class="text-xs text-muted">Reading git config…</span>
+              {/if}
+            </div>
+
+            {#if identityError}
+              <div class="error-banner text-sm" role="alert">{identityError}</div>
+            {:else if identity}
+              <div class="identity-effective">
+                <span class="identity-name font-mono text-xs">
+                  {identity.effectiveName || "Name not set"}
+                </span>
+                <span class="identity-email font-mono text-xs text-muted">
+                  &lt;{identity.effectiveEmail || "email not set"}&gt;
+                </span>
+                <Badge variant={identity.nameSource === "unset" ? "warning" : "neutral"}>
+                  name: {sourceLabel(identity.nameSource)}
+                </Badge>
+                <Badge variant={identity.emailSource === "unset" ? "warning" : "neutral"}>
+                  email: {sourceLabel(identity.emailSource)}
+                </Badge>
+              </div>
+              {#if !identity.effectiveName || !identity.effectiveEmail}
+                <p class="text-xs text-muted identity-warning">
+                  Commits are blocked until both values are configured. Set them below.
+                </p>
+              {/if}
+            {/if}
+
+            {#if activeRepo}
+              <div class="identity-group">
+                <div class="identity-group-title text-sm text-strong">
+                  Repository override · <span class="font-mono">{activeRepo.name}</span>
+                </div>
+                <Input
+                  type="text"
+                  size="sm"
+                  placeholder={identity?.globalName ? `Global: ${identity.globalName}` : "Your name"}
+                  bind:value={repoNameInput}
+                  error={repoNameError || false}
+                />
+                {#if repoNameError}<span class="field-error">{repoNameError}</span>{/if}
+                <Input
+                  type="email"
+                  size="sm"
+                  placeholder={identity?.globalEmail ? `Global: ${identity.globalEmail}` : "you@example.com"}
+                  bind:value={repoEmailInput}
+                  error={repoEmailError || false}
+                />
+                {#if repoEmailError}<span class="field-error">{repoEmailError}</span>{/if}
+                <div class="identity-actions">
+                  <Button
+                    variant="default"
+                    size="sm"
+                    loading={savingIdentity === "repo"}
+                    disabled={savingIdentity !== null}
+                    onclick={() => saveIdentity("repo")}
+                  >
+                    Save for this repository
+                  </Button>
+                  <Button
+                    variant="subtle"
+                    size="sm"
+                    disabled={savingIdentity !== null || (!identity?.localName && !identity?.localEmail)}
+                    onclick={clearRepoIdentity}
+                  >
+                    Use global identity
+                  </Button>
+                </div>
+              </div>
+            {/if}
+
+            <div class="identity-group">
+              <div class="identity-group-title text-sm text-strong">Global identity</div>
+              <Input
+                type="text"
+                size="sm"
+                placeholder="Your name"
+                bind:value={globalNameInput}
+                error={globalNameError || false}
+              />
+              {#if globalNameError}<span class="field-error">{globalNameError}</span>{/if}
+              <Input
+                type="email"
+                size="sm"
+                placeholder="you@example.com"
+                bind:value={globalEmailInput}
+                error={globalEmailError || false}
+              />
+              {#if globalEmailError}<span class="field-error">{globalEmailError}</span>{/if}
+              <div class="identity-actions">
+                <Button
+                  variant="default"
+                  size="sm"
+                  loading={savingIdentity === "global"}
+                  disabled={savingIdentity !== null}
+                  onclick={() => saveIdentity("global")}
+                >
+                  Save globally
+                </Button>
+              </div>
+            </div>
+          </div>
+
+          <div class="setting-row col">
+            <span class="setting-title text-strong">Default branch</span>
+            <span class="setting-desc text-sm text-muted">
+              Used when adding an empty repository (no commits yet) so its first branch view has
+              the expected name. Normal repositories keep their checked-out branch.
+            </span>
+            <Input
+              type="text"
+              size="sm"
+              value={defaultBranchDraft}
+              error={defaultBranchError || false}
+              onchange={(e: Event) => handleDefaultBranch((e.target as HTMLInputElement).value)}
+            />
+            {#if defaultBranchError}<span class="field-error">{defaultBranchError}</span>{/if}
+          </div>
+
           <div class="setting-row">
             <span class="setting-title text-strong">Context lines</span>
             <div class="setting-num-wrap">
               <Input
                 type="number"
-                min="1"
+                min="0"
                 max="20"
                 size="sm"
                 value={String(currentSettings.contextLines)}
-                onchange={(e: Event) => handleSaveField("contextLines", parseInt((e.target as HTMLInputElement).value) || 3)}
+                onchange={(e: Event) => handleSaveField("contextLines", parseInt((e.target as HTMLInputElement).value) || 0)}
               />
             </div>
           </div>
 
           <div class="setting-row">
-            <span class="setting-title text-strong">Auto-fetch interval (minutes)</span>
-            <div class="setting-num-wrap">
-              <Input
-                type="number"
-                min="0"
-                max="60"
-                size="sm"
-                value={String(currentSettings.autoFetchMinutes)}
-                onchange={(e: Event) => handleSaveField("autoFetchMinutes", parseInt((e.target as HTMLInputElement).value) || 0)}
-              />
-            </div>
+            <span class="setting-title text-strong">Auto-fetch interval</span>
+            <select
+              class="setting-select text-sm auto-fetch-select"
+              value={String(currentSettings.autoFetchMinutes)}
+              onchange={(e) =>
+                handleSaveField(
+                  "autoFetchMinutes",
+                  parseInt((e.target as HTMLSelectElement).value, 10) || 0
+                )}
+            >
+              <option value="0">Off</option>
+              <option value="1">Every minute</option>
+              <option value="5">Every 5 minutes</option>
+              <option value="15">Every 15 minutes</option>
+              <option value="30">Every 30 minutes</option>
+              <option value="60">Every hour</option>
+              {#if ![0, 1, 5, 15, 30, 60].includes(currentSettings.autoFetchMinutes)}
+                <option value={String(currentSettings.autoFetchMinutes)}>
+                  Every {currentSettings.autoFetchMinutes} minutes
+                </option>
+              {/if}
+            </select>
           </div>
 
           <div class="setting-row">
@@ -210,28 +544,116 @@
           </div>
         {:else if activeSection === "terminal"}
           <h3 class="text-strong">Terminal Preferences</h3>
+
           <div class="setting-row col">
-            <span class="setting-title text-strong">Custom shell path</span>
+            <span class="setting-title text-strong">Shell</span>
+            <span class="setting-desc text-sm text-muted">
+              Detected from <code>/etc/shells</code> and your PATH. "Default" uses
+              {envInfo?.defaultShell || "$SHELL"}.
+            </span>
+            {#if envError}
+              <span class="field-error">{envError}</span>
+            {/if}
+            <select
+              class="setting-select text-sm"
+              value={shellSelectValue}
+              onchange={(e) => {
+                const value = (e.target as HTMLSelectElement).value;
+                if (value === "__custom") return;
+                handleSaveField("shell", value || null);
+              }}
+            >
+              <option value="">Default ({envInfo?.defaultShell || "detected shell"})</option>
+              {#each detectedShells as shell (shell.id)}
+                <option value={shell.command}>{shell.label} — {shell.command}</option>
+              {/each}
+              <option value="__custom">Custom path…</option>
+            </select>
             <Input
               type="text"
-              placeholder="e.g. /bin/zsh or pwsh.exe (leave empty for default)"
+              placeholder={envInfo?.defaultShell || "e.g. /bin/zsh"}
               size="sm"
               value={currentSettings.shell || ""}
-              onchange={(e: Event) => handleSaveField("shell", (e.target as HTMLInputElement).value || null)}
+              onchange={(e: Event) =>
+                handleSaveField("shell", (e.target as HTMLInputElement).value || null)}
+            />
+          </div>
+
+          <div class="setting-row">
+            <span class="setting-title text-strong">Font size</span>
+            <div class="setting-num-wrap">
+              <Input
+                type="number"
+                min="10"
+                max="20"
+                size="sm"
+                value={String(currentSettings.terminalFontSize)}
+                onchange={(e: Event) =>
+                  handleSaveField(
+                    "terminalFontSize",
+                    parseInt((e.target as HTMLInputElement).value) || 13
+                  )}
+              />
+            </div>
+          </div>
+
+          <div class="setting-row col">
+            <span class="setting-title text-strong">Prompts</span>
+            <span class="setting-desc text-sm text-muted">
+              Ask before closing or restarting a terminal whose shell is still running.
+            </span>
+            <Checkbox
+              checked={currentSettings.confirmTerminalClose}
+              onchange={(checked: boolean) => handleSaveField("confirmTerminalClose", checked)}
+              label="Confirm before hiding a running terminal"
+            />
+            <Checkbox
+              checked={currentSettings.confirmTerminalRestart}
+              onchange={(checked: boolean) => handleSaveField("confirmTerminalRestart", checked)}
+              label="Confirm before restarting the shell"
             />
           </div>
         {:else if activeSection === "integrations"}
           <h3 class="text-strong">External Integrations</h3>
+
           <div class="setting-row col">
-            <span class="setting-title text-strong">External editor command</span>
-            <span class="setting-desc text-sm text-muted">Placeholders: &#123;repo&#125; &#123;file&#125; &#123;line&#125;. Example: code -g &#123;repo&#125;/&#123;file&#125;:&#123;line&#125;</span>
+            <span class="setting-title text-strong">External editor</span>
+            <span class="setting-desc text-sm text-muted">
+              Detected editors only. "System default app" always works as a fallback.
+            </span>
+            {#if envError}
+              <span class="field-error">{envError}</span>
+            {/if}
+            <select
+              class="setting-select text-sm"
+              value={editorSelectValue}
+              onchange={(e) => {
+                const id = (e.target as HTMLSelectElement).value;
+                if (!id) {
+                  handleSaveField("externalEditorCmd", null);
+                } else if (id !== "__custom") {
+                  const editor = detectedEditors.find((candidate) => candidate.id === id);
+                  if (editor) handleSaveField("externalEditorCmd", editor.command);
+                }
+              }}
+            >
+              <option value="">System default app</option>
+              {#each detectedEditors.filter((editor) => editor.id !== "system") as editor (editor.id)}
+                <option value={editor.id}>{editor.label}</option>
+              {/each}
+              <option value="__custom">Custom command…</option>
+            </select>
             <Input
               type="text"
               placeholder={'code -g {repo}/{file}:{line}'}
               size="sm"
               value={currentSettings.externalEditorCmd || ""}
-              onchange={(e: Event) => handleSaveField("externalEditorCmd", (e.target as HTMLInputElement).value || null)}
+              onchange={(e: Event) =>
+                handleSaveField("externalEditorCmd", (e.target as HTMLInputElement).value || null)}
             />
+            <span class="setting-desc text-xs text-muted">
+              Placeholders: &#123;repo&#125; &#123;file&#125; &#123;line&#125; &#123;full&#125;. Example: code -g &#123;repo&#125;/&#123;file&#125;:&#123;line&#125;
+            </span>
           </div>
 
           <div class="setting-row col">
@@ -583,5 +1005,81 @@
     border: 1px solid var(--danger);
     border-radius: var(--r-md);
     color: var(--danger);
+  }
+
+  .scale-wrap {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    min-width: 190px;
+  }
+  .scale-wrap input[type="range"] {
+    flex: 1;
+    accent-color: var(--accent);
+  }
+
+  .identity-card {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    padding: 12px;
+    background-color: var(--bg-subtle);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--r-md);
+  }
+
+  .identity-card-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+  }
+
+  .identity-effective {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 6px;
+    padding: 6px 8px;
+    background-color: var(--bg);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--r-sm);
+  }
+
+  .identity-name {
+    color: var(--text);
+    font-weight: 600;
+  }
+
+  .identity-warning {
+    margin: -4px 0 0;
+    color: var(--warning);
+  }
+
+  .identity-group {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+
+  .identity-group-title {
+    margin-top: 2px;
+  }
+
+  .identity-actions {
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+    margin-top: 2px;
+  }
+
+  .field-error {
+    color: var(--danger);
+    font-size: 11px;
+    line-height: 15px;
+  }
+
+  .setting-select.auto-fetch-select {
+    min-width: 160px;
   }
 </style>

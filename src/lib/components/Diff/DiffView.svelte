@@ -1,5 +1,5 @@
 <script lang="ts">
-  import type { DiffFile, DiffMode, Hunk, DiffLine, NoteSide } from "../../types";
+  import type { DiffFile, Hunk, DiffLine, NoteSide } from "../../types";
   import { getLanguageFromPath, highlightCodeLines } from "../../highlight";
   import * as api from "../../api";
   import { repos, activeRepoId } from "../../stores/repos";
@@ -10,7 +10,6 @@
 
   interface Props {
     diffFile: DiffFile | null;
-    diffMode?: DiffMode;
     ignoreWhitespace?: boolean;
     repoId?: string;
     rev?: string;
@@ -21,7 +20,6 @@
 
   let {
     diffFile,
-    diffMode = "unified",
     ignoreWhitespace = false,
     repoId,
     rev = "HEAD",
@@ -721,7 +719,7 @@
     font-size: 12px;
     color: #353c44;
     letter-spacing: -0.1px;
-    tab-size: 4;
+    tab-size: var(--code-tab-size, 4);
     min-width: 100%;
     width: max-content;
   }

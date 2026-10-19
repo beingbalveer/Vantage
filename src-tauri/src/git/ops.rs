@@ -1,4 +1,5 @@
 use crate::error::AppError;
+use crate::git::identity::ensure_commit_identity;
 use crate::git::runner::GitRunner;
 use crate::state::{BackupInfo, CommitSummary};
 use chrono::Utc;
@@ -93,6 +94,10 @@ pub async fn commit(
     // Acquire per-repo mutex across the entire staging & commit operation
     let repo_lock = runner.get_repo_lock(repo_path).await;
     let _repo_guard = repo_lock.lock().await;
+
+    // Fail with an actionable message instead of git's raw "Author identity
+    // unknown" error, and do it before staging anything.
+    ensure_commit_identity(runner, repo_path).await?;
 
     // Check if HEAD exists
     let has_head = runner

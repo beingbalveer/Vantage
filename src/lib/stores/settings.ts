@@ -5,7 +5,6 @@ import { addToast } from "./ui";
 
 export const settings = writable<Settings>({
   theme: "system",
-  diffMode: "unified",
   ignoreWhitespace: false,
   contextLines: 3,
   autoFetchMinutes: 5,
@@ -14,6 +13,10 @@ export const settings = writable<Settings>({
   commitMessageCmd: null,
   terminalFontSize: 13,
   uiScale: 1.0,
+  defaultBranch: "main",
+  tabSize: 4,
+  confirmTerminalClose: true,
+  confirmTerminalRestart: true,
 });
 
 let systemMediaWatcher: MediaQueryList | null = null;
@@ -52,12 +55,20 @@ export function applyUiScale(scale: number) {
   (document.body.style as any).zoom = `${clamped}`;
 }
 
+/** Apply the shared code indentation width used by the diff and viewer. */
+export function applyCodeTabSize(tabSize: number) {
+  if (typeof document === "undefined") return;
+  const clamped = Math.max(1, Math.min(8, Math.round(tabSize || 4)));
+  document.documentElement.style.setProperty("--code-tab-size", `${clamped}`);
+}
+
 export async function loadSettings() {
   try {
     const s = await api.settingsGet();
     settings.set(s);
     applyTheme(s.theme);
     applyUiScale(s.uiScale);
+    applyCodeTabSize(s.tabSize);
   } catch (e: any) {
     console.error("Failed to load settings:", e);
     addToast({
@@ -72,6 +83,7 @@ export async function updateSettings(newSettings: Settings) {
   settings.set(newSettings);
   applyTheme(newSettings.theme);
   applyUiScale(newSettings.uiScale);
+  applyCodeTabSize(newSettings.tabSize);
   try {
     await api.settingsSet(newSettings);
   } catch (e: any) {
@@ -79,6 +91,7 @@ export async function updateSettings(newSettings: Settings) {
     settings.set(previous);
     applyTheme(previous.theme);
     applyUiScale(previous.uiScale);
+    applyCodeTabSize(previous.tabSize);
     addToast({
       message: "Failed to save settings: " + (e?.message || e),
       kind: "error",

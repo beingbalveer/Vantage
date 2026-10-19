@@ -80,7 +80,15 @@ impl TerminalManager {
                 .map(|p| p.to_string_lossy().to_string())
                 .unwrap_or_else(|_| "powershell.exe".to_string())
         } else {
-            std::env::var("SHELL").unwrap_or_else(|_| "/bin/sh".to_string())
+            std::env::var("SHELL")
+                .ok()
+                .filter(|path| std::path::Path::new(path).is_file())
+                .or_else(|| {
+                    which::which("sh")
+                        .ok()
+                        .map(|p| p.to_string_lossy().to_string())
+                })
+                .unwrap_or_else(|| "/bin/sh".to_string())
         }
     }
 

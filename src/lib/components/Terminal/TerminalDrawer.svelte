@@ -4,6 +4,7 @@
   import { FitAddon } from "@xterm/addon-fit";
   import "@xterm/xterm/css/xterm.css";
   import * as api from "../../api";
+  import { settings } from "../../stores/settings";
   import type { UnlistenFn } from "@tauri-apps/api/event";
 
   interface Props {
@@ -23,6 +24,11 @@
   let unlistenExit: UnlistenFn | null = null;
   let resizeObserver: ResizeObserver | null = null;
   let isExited = $state(false);
+  let pendingAction = $state<"hide" | "restart" | null>(null);
+
+  function fontSizeSetting(): number {
+    return Math.max(10, Math.min(20, $settings.terminalFontSize || 13));
+  }
 
   onMount(async () => {
     // derive palette from CSS tokens
@@ -30,7 +36,7 @@
 
     term = new Terminal({
       cursorBlink: true,
-      fontSize: 13,
+      fontSize: fontSizeSetting(),
       fontFamily: 'var(--font-mono), monospace',
       theme: {
         background: isDark ? "#171b20" : "#f0f2f5",
@@ -90,12 +96,27 @@
     if (term) term.dispose();
   });
 
+  // Apply font-size changes immediately, then refit the PTY so the shell sees
+  // the new column/row count.
+  $effect(() => {
+    const size = fontSizeSetting();
+    if (!term || term.options.fontSize === size) return;
+    term.options.fontSize = size;
+    setTimeout(() => {
+      if (fitAddon && term) {
+        fitAddon.fit();
+        api.termResize(repoId, term.cols, term.rows);
+      }
+    }, 0);
+  });
+
   async function handleClear() {
     term?.clear();
   }
 
   async function handleRestart() {
     isExited = false;
+    pendingAction = null;
     term?.clear();
     try {
       const res = await api.termRestart(repoId);
@@ -105,6 +126,29 @@
     } catch (e) {
       console.error("Failed to restart terminal:", e);
     }
+  }
+
+  function requestHide() {
+    if ($settings.confirmTerminalClose && !isExited) {
+      pendingAction = "hide";
+      return;
+    }
+    onclose?.();
+  }
+
+  function requestRestart() {
+    if ($settings.confirmTerminalRestart && !isExited) {
+      pendingAction = "restart";
+      return;
+    }
+    handleRestart();
+  }
+
+  function confirmPending() {
+    const action = pendingAction;
+    pendingAction = null;
+    if (action === "hide") onclose?.();
+    else if (action === "restart") handleRestart();
   }
 </script>
 
@@ -120,15 +164,27 @@
       {#if isExited}
         <span class="exit-badge text-xs">Exited</span>
       {/if}
-      <button class="term-btn" onclick={handleClear} title="Clear">
-        Clear
-      </button>
-      <button class="term-btn" onclick={handleRestart} title="Restart shell">
-        Restart
-      </button>
-      <button class="term-btn" onclick={onclose} title="Hide terminal">
-        Hide
-      </button>
+      {#if pendingAction}
+        <span class="confirm-text">
+          {pendingAction === "hide" ? "Hide running terminal?" : "Restart the shell?"}
+        </span>
+        <button class="term-btn confirm" onclick={confirmPending} title="Confirm">
+          {pendingAction === "hide" ? "Hide" : "Restart"}
+        </button>
+        <button class="term-btn" onclick={() => (pendingAction = null)} title="Cancel">
+          Cancel
+        </button>
+      {:else}
+        <button class="term-btn" onclick={handleClear} title="Clear">
+          Clear
+        </button>
+        <button class="term-btn" onclick={requestRestart} title="Restart shell">
+          Restart
+        </button>
+        <button class="term-btn" onclick={requestHide} title="Hide terminal">
+          Hide
+        </button>
+      {/if}
     </div>
   </div>
 
@@ -202,6 +258,18 @@
   }
   .term-btn:hover {
     background-color: var(--bg-muted);
+  }
+
+  .term-btn.confirm {
+    background-color: var(--accent);
+    border-color: var(--accent);
+    color: var(--accent-fg);
+  }
+
+  .confirm-text {
+    font-size: 11px;
+    color: var(--text-muted);
+    white-space: nowrap;
   }
 
   .term-body {

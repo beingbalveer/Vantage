@@ -1,4 +1,5 @@
 pub mod cmd;
+pub mod detect;
 pub mod error;
 pub mod git;
 pub mod persist;
@@ -65,6 +66,12 @@ pub fn run() {
                 watcher_mgr.start_poller(app_handle, runner, data_arc);
             });
 
+            let runner = state.runner.clone();
+            let data_arc = state.data.clone();
+            let watcher_mgr = state.watcher_mgr.clone();
+            let app_handle = app.handle().clone();
+            watcher_mgr.start_auto_fetcher(app_handle, runner, data_arc);
+
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -119,6 +126,8 @@ pub fn run() {
             reveal_in_file_manager,
             run_commit_message_cmd,
             env_check,
+            git_identity_get,
+            git_identity_set,
             pick_directory,
             repo_detect_stack,
             pick_icon_file,

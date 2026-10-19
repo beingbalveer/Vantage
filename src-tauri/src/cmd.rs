@@ -1,7 +1,11 @@
+use crate::detect::{detect_editors, detect_shells, system_editor_command, DetectedApp};
 use crate::error::AppError;
 use crate::git::blob::{get_blob_lines, get_blob_text, get_tree_list, BlobTextResult};
 use crate::git::diff::{get_scope_file_diff, get_scope_files};
 use crate::git::grep::{blame_line as git_blame_line, grep_definitions};
+use crate::git::identity::{
+    read_identity, write_identity, GitIdentity, IdentityScope,
+};
 use crate::git::log::get_log_page;
 use crate::git::ops::{
     check_pushed as git_check_pushed, commit as git_commit, discard as git_discard, list_backups,
@@ -41,7 +45,10 @@ pub struct AppState {
 impl AppState {
     pub fn new() -> Result<Self, AppError> {
         let persistence = StatePersistence::new()?;
-        let (data, startup_warning) = persistence.load();
+        let (mut data, startup_warning) = persistence.load();
+        // Values from older or hand-edited state files are clamped instead of
+        // being trusted verbatim.
+        data.settings = data.settings.clone().sanitized();
         Ok(Self {
             runner: Arc::new(GitRunner::new()),
             persistence,
@@ -92,11 +99,23 @@ pub async fn repo_add(
 
     let mut data = state.data.lock().await;
 
+    // An empty repository has no HEAD yet; use the configured default branch
+    // name so the first branch view has the name the terminal's first commit
+    // will create. Normal repositories keep tracking their checked-out HEAD.
+    let default_branch = data.settings.default_branch.clone();
+    let has_head = state
+        .runner
+        .run_read(&top_canon, &["rev-parse", "--verify", "HEAD"])
+        .await
+        .map(|o| o.success())
+        .unwrap_or(false);
+    let effective_branch = resolve_initial_branch(target_branch.as_deref(), has_head, &default_branch);
+
     // Duplicate check: both path and branch must match
     if let Some(existing) = data
         .repos
         .iter()
-        .find(|r| r.path == final_path && r.branch == target_branch)
+        .find(|r| r.path == final_path && r.branch == effective_branch)
     {
         return Ok(existing.clone());
     }
@@ -107,7 +126,7 @@ pub async fn repo_add(
         .unwrap_or_else(|| "repo".to_string());
 
     // Determine initial marker
-    let rev_target = target_branch.as_deref().unwrap_or("HEAD");
+    let rev_target = effective_branch.as_deref().unwrap_or("HEAD");
     let head_out = state
         .runner
         .run_read(&top_canon, &["rev-parse", rev_target])
@@ -135,7 +154,7 @@ pub async fn repo_add(
             Some(Marker {
                 sha,
                 set_at: Utc::now().to_rfc3339(),
-                branch: target_branch.clone(),
+                branch: effective_branch.clone(),
             })
         } else {
             None
@@ -151,7 +170,7 @@ pub async fn repo_add(
         id: repo_id.clone(),
         path: final_path,
         name: folder_name,
-        branch: target_branch.clone(),
+        branch: effective_branch.clone(),
         pinned: false,
         order: next_order,
         marker: marker.clone(),
@@ -168,7 +187,7 @@ pub async fn repo_add(
             app_handle,
             repo_id,
             top_canon,
-            target_branch,
+            effective_branch,
             marker.map(|m| m.sha),
             state.runner.clone(),
         )
@@ -1071,7 +1090,16 @@ pub async fn settings_get(state: State<'_, AppState>) -> Result<Settings, AppErr
 #[tauri::command]
 pub async fn settings_set(state: State<'_, AppState>, settings: Settings) -> Result<(), AppError> {
     let mut data = state.data.lock().await;
-    data.settings = settings;
+    let mut incoming = settings;
+    // Preserve unknown settings written by newer versions; the frontend only
+    // knows the fields it was built with.
+    for (key, value) in data.settings.extra.iter() {
+        incoming
+            .extra
+            .entry(key.clone())
+            .or_insert_with(|| value.clone());
+    }
+    data.settings = incoming.sanitized();
     state.persistence.save(&data)?;
     Ok(())
 }
@@ -1110,16 +1138,21 @@ pub async fn open_external_editor(
         )
     };
 
-    let template = cmd_template.unwrap_or_else(|| "code -g {full}:{line}".to_string());
+    // No configured editor means "system default app", which is always
+    // launchable, rather than a hard-coded `code` that may not be installed.
+    let template = cmd_template.unwrap_or_else(|| system_editor_command().to_string());
     let full_path = PathBuf::from(&repo_path).join(&path);
     let line_str = line.unwrap_or(1).to_string();
 
-    let tokens: Vec<&str> = template.split_whitespace().collect();
+    let tokens = split_command_template(&template);
     if tokens.is_empty() {
-        return Err(AppError::other("Editor command template is empty"));
+        return Err(AppError::new(
+            "Validation",
+            "Editor command template is empty. Choose an editor in Settings → Integrations.",
+        ));
     }
 
-    let program = tokens[0];
+    let program = &tokens[0];
     let args: Vec<String> = tokens[1..]
         .iter()
         .map(|tok| {
@@ -1133,9 +1166,69 @@ pub async fn open_external_editor(
     tokio::process::Command::new(program)
         .args(&args)
         .spawn()
-        .map_err(AppError::io)?;
+        .map_err(|e| {
+            AppError::new(
+                "EditorLaunch",
+                format!(
+                    "Could not launch editor '{}': {}. Choose an installed editor in Settings → Integrations.",
+                    program, e
+                ),
+            )
+        })?;
 
     Ok(())
+}
+
+/// Split an editor command template into arguments. Supports single and
+/// double quotes (so macOS app-bundle paths with spaces work) and backslash
+/// escapes. Deliberately does not run a shell.
+pub fn split_command_template(input: &str) -> Vec<String> {
+    let mut tokens = Vec::new();
+    let mut current = String::new();
+    let mut quote: Option<char> = None;
+    let mut escaped = false;
+    let mut has_token = false;
+
+    for ch in input.chars() {
+        if escaped {
+            current.push(ch);
+            has_token = true;
+            escaped = false;
+            continue;
+        }
+        match ch {
+            '\\' if quote != Some('\'') => {
+                escaped = true;
+                has_token = true;
+            }
+            '"' | '\'' => {
+                if quote == Some(ch) {
+                    quote = None;
+                } else if quote.is_none() {
+                    quote = Some(ch);
+                    has_token = true;
+                } else {
+                    current.push(ch);
+                    has_token = true;
+                }
+            }
+            c if c.is_whitespace() && quote.is_none() => {
+                if has_token {
+                    tokens.push(std::mem::take(&mut current));
+                    has_token = false;
+                }
+            }
+            c => {
+                current.push(c);
+                has_token = true;
+            }
+        }
+    }
+
+    if has_token {
+        tokens.push(current);
+    }
+    tokens
 }
 
 #[tauri::command]
@@ -1298,6 +1391,9 @@ pub struct EnvInfo {
     pub git_version: String,
     pub shell: String,
     pub startup_warning: Option<String>,
+    pub default_shell: String,
+    pub shells: Vec<DetectedApp>,
+    pub editors: Vec<DetectedApp>,
 }
 
 #[tauri::command]
@@ -1309,14 +1405,80 @@ pub async fn env_check(state: State<'_, AppState>) -> Result<EnvInfo, AppError> 
         .map_err(|_| AppError::git_missing())?;
 
     let git_version = out.stdout_string().trim().to_string();
-    let shell = TerminalManager::default_shell();
+    let default_shell = TerminalManager::default_shell();
+    let shells = detect_shells(&default_shell);
+    let editors = detect_editors();
     let startup_warning = state.startup_warning.clone();
 
     Ok(EnvInfo {
         git_version,
-        shell,
+        shell: default_shell.clone(),
         startup_warning,
+        default_shell,
+        shells,
+        editors,
     })
+}
+
+#[tauri::command]
+pub async fn git_identity_get(
+    state: State<'_, AppState>,
+    id: Option<String>,
+) -> Result<GitIdentity, AppError> {
+    let repo_path = match id {
+        Some(id) => {
+            let data = state.data.lock().await;
+            let entry = data
+                .repos
+                .iter()
+                .find(|r| r.id == id)
+                .ok_or_else(|| AppError::not_found("Repository not found"))?;
+            Some(PathBuf::from(&entry.path))
+        }
+        None => None,
+    };
+
+    read_identity(&state.runner, repo_path.as_deref()).await
+}
+
+#[tauri::command]
+pub async fn git_identity_set(
+    state: State<'_, AppState>,
+    id: Option<String>,
+    scope: String,
+    name: Option<String>,
+    email: Option<String>,
+) -> Result<GitIdentity, AppError> {
+    let scope = IdentityScope::parse(&scope)?;
+    let repo_path = match (scope, id) {
+        (IdentityScope::Repo, Some(id)) => {
+            let data = state.data.lock().await;
+            let entry = data
+                .repos
+                .iter()
+                .find(|r| r.id == id)
+                .ok_or_else(|| AppError::not_found("Repository not found"))?;
+            Some(PathBuf::from(&entry.path))
+        }
+        (IdentityScope::Repo, None) => {
+            return Err(AppError::new(
+                "Validation",
+                "Select a repository to set repository-specific identity.",
+            ));
+        }
+        (IdentityScope::Global, _) => None,
+    };
+
+    write_identity(
+        &state.runner,
+        repo_path.as_deref(),
+        scope,
+        name.as_deref(),
+        email.as_deref(),
+    )
+    .await?;
+
+    read_identity(&state.runner, repo_path.as_deref()).await
 }
 
 #[tauri::command]
@@ -1561,5 +1723,41 @@ pub async fn pick_icon_file() -> Result<Option<String>, AppError> {
         Ok(Some(b64))
     } else {
         Ok(None)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::split_command_template;
+
+    #[test]
+    fn splits_simple_commands() {
+        assert_eq!(
+            split_command_template("code -g {full}:{line}"),
+            vec!["code", "-g", "{full}:{line}"]
+        );
+    }
+
+    #[test]
+    fn splits_quoted_paths_with_spaces() {
+        assert_eq!(
+            split_command_template("\"/Applications/Visual Studio Code.app/bin/code\" -g {full}:{line}"),
+            vec![
+                "/Applications/Visual Studio Code.app/bin/code",
+                "-g",
+                "{full}:{line}"
+            ]
+        );
+        assert_eq!(
+            split_command_template("'/Applications/Sublime Text.app/subl' {full}"),
+            vec!["/Applications/Sublime Text.app/subl", "{full}"]
+        );
+    }
+
+    #[test]
+    fn handles_escapes_and_empty_input() {
+        assert_eq!(split_command_template("my\\ editor {full}"), vec!["my editor", "{full}"]);
+        assert!(split_command_template("   ").is_empty());
+        assert_eq!(split_command_template("open \"\""), vec!["open", ""]);
     }
 }

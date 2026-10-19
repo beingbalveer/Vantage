@@ -639,7 +639,7 @@
   .lines-container {
     font-size: 12.5px;
     line-height: 20px;
-    tab-size: 4;
+    tab-size: var(--code-tab-size, 4);
     min-width: 100%;
     width: max-content;
   }
