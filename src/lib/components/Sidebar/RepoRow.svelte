@@ -228,7 +228,17 @@
   {#if !$sidebarCollapsed}
     <div class="info">
       <span class="repo-name">{repo.name}</span>
-      <span class="branch-name">{displayBranch || "HEAD"}</span>
+      <span class="branch-line">
+        <span class="branch-name">{displayBranch || "HEAD"}</span>
+        {#if (status?.dirtyCount ?? 0) > 0}
+          <span
+            class="dirty-dot"
+            role="img"
+            title="{status?.dirtyCount} file{status?.dirtyCount === 1 ? '' : 's'} changed"
+            aria-label="{status?.dirtyCount} file{status?.dirtyCount === 1 ? '' : 's'} changed"
+          ></span>
+        {/if}
+      </span>
     </div>
 
     <button
@@ -261,6 +271,12 @@
         <Icon name="git-branch" size={16} />
         {displayBranch || "HEAD"}
       </div>
+      {#if (status?.dirtyCount ?? 0) > 0}
+        <div class="hover-line dirty">
+          <span class="dirty-dot" aria-hidden="true"></span>
+          {status?.dirtyCount} file{status?.dirtyCount === 1 ? "" : "s"} changed
+        </div>
+      {/if}
       <div class="hover-path">{repo.path}</div>
     </div>
   {/if}
@@ -505,6 +521,30 @@
   :global([data-theme="dark"]) .branch-name,
   :global(:root[data-theme="dark"]) .branch-name {
     color: var(--text-muted);
+  }
+
+  .branch-line {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    min-width: 0;
+  }
+
+  .branch-line .branch-name {
+    min-width: 0;
+  }
+
+  .dirty-dot {
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    background-color: var(--warning, #d29922);
+    flex-shrink: 0;
+  }
+
+  :global([data-theme="dark"]) .dirty-dot,
+  :global(:root[data-theme="dark"]) .dirty-dot {
+    background-color: var(--warning, #d29922);
   }
 
   .row-menu-btn {

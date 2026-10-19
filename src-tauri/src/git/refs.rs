@@ -1,6 +1,7 @@
 use crate::error::AppError;
 use crate::git::runner::GitRunner;
-use crate::state::BranchInfo;
+use crate::git::stash::{stash_pop_locked, stash_push_locked};
+use crate::state::{BranchInfo, CheckoutResult};
 use std::path::Path;
 
 pub async fn list_branches(
@@ -52,19 +53,89 @@ pub async fn checkout_branch(
     repo_path: &Path,
     branch: &str,
 ) -> Result<(), AppError> {
+    checkout_target(runner, repo_path, branch, None, None, false)
+        .await
+        .map(|_| ())
+}
+
+/// Check out `target` (branch/tag/commit), optionally dealing with a dirty tree.
+///
+/// `dirty_action`:
+/// - `"leave"` (default): plain checkout; git carries the changes across when it can
+///   and we surface its real error when it would overwrite them.
+/// - `"bring"`: stash first, check out, then re-apply the stash on the new branch.
+/// - `"stash"`: park the changes (honouring `include_untracked`) and check out.
+///
+/// Every branch of this function either completes the checkout or returns git's own
+/// error text, so the caller never dead-ends.
+pub async fn checkout_target(
+    runner: &GitRunner,
+    repo_path: &Path,
+    target: &str,
+    dirty_action: Option<&str>,
+    stash_message: Option<&str>,
+    include_untracked: bool,
+) -> Result<CheckoutResult, AppError> {
     let repo_lock = runner.get_repo_lock(repo_path).await;
     let _repo_guard = repo_lock.lock().await;
 
+    match dirty_action.unwrap_or("leave") {
+        "stash" => {
+            let push =
+                stash_push_locked(runner, repo_path, stash_message, include_untracked).await?;
+            match checkout_locked(runner, repo_path, target).await {
+                Ok(()) => Ok(CheckoutResult { stash: push.entry }),
+                Err(err) => {
+                    // Never strand the parked work: restore it on the current branch.
+                    if push.stashed {
+                        let _ = stash_pop_locked(runner, repo_path, 0).await;
+                    }
+                    Err(err)
+                }
+            }
+        }
+        "bring" => {
+            let push =
+                stash_push_locked(runner, repo_path, stash_message, include_untracked).await?;
+            if !push.stashed {
+                // Nothing to carry; a plain checkout is all that is needed.
+                checkout_locked(runner, repo_path, target).await?;
+                return Ok(CheckoutResult { stash: None });
+            }
+            match checkout_locked(runner, repo_path, target).await {
+                Ok(()) => {
+                    // Re-apply on the new branch; git's error is surfaced if it conflicts.
+                    stash_pop_locked(runner, repo_path, 0).await?;
+                    Ok(CheckoutResult { stash: None })
+                }
+                Err(err) => {
+                    let _ = stash_pop_locked(runner, repo_path, 0).await;
+                    Err(err)
+                }
+            }
+        }
+        _ => {
+            checkout_locked(runner, repo_path, target).await?;
+            Ok(CheckoutResult { stash: None })
+        }
+    }
+}
+
+async fn checkout_locked(
+    runner: &GitRunner,
+    repo_path: &Path,
+    target: &str,
+) -> Result<(), AppError> {
     let out = runner
-        .run_write(repo_path, &["checkout", branch], 20)
+        .run_write(repo_path, &["checkout", target], 20)
         .await?;
     if !out.success() {
-        if out.stderr.contains("local changes would be overwritten") {
-            return Err(AppError::dirty(
-                "Your local changes would be overwritten by checkout. Commit or discard your changes first.",
-            ));
+        let stderr = out.stderr.clone();
+        let message = stderr.trim().to_string();
+        if message.contains("local changes") || message.contains("would be overwritten") {
+            return Err(AppError::dirty(message).with_stderr(stderr));
         }
-        return Err(AppError::other(out.stderr));
+        return Err(AppError::other(message).with_stderr(stderr));
     }
     Ok(())
 }

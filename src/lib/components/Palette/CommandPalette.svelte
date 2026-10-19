@@ -18,7 +18,7 @@
   import { SHORTCUTS, formatKey } from "../../keys";
   import { fuzzyScore } from "../../fuzzy";
   import { formatRelativeTime } from "../../format";
-  import { addRepoDialogOpen, settingsOpen, shortcutsHelpOpen, addToast, sidebarCollapsed, openDialog } from "../../stores/ui";
+  import { addRepoDialogOpen, settingsOpen, shortcutsHelpOpen, addToast, sidebarCollapsed, openDialog, stashDialogOpen } from "../../stores/ui";
   import type { Layout, CommitSummary } from "../../types";
   import * as api from "../../api";
   import Icon from "../common/Icon.svelte";
@@ -442,6 +442,14 @@
         action: () => {
           $paletteOpen = false;
           $settingsOpen = true;
+        },
+      },
+      {
+        id: "cmd_stashes",
+        title: "Stashes…",
+        action: () => {
+          $paletteOpen = false;
+          $stashDialogOpen = true;
         },
       },
       {

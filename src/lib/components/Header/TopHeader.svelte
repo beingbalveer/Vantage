@@ -9,7 +9,7 @@
     setPaneTab,
     openRepoInFocusedPane,
   } from "../../stores/panes";
-  import { paletteOpen, settingsOpen, shortcutsHelpOpen, sidebarCollapsed, addToast } from "../../stores/ui";
+  import { paletteOpen, settingsOpen, shortcutsHelpOpen, sidebarCollapsed, addToast, requestCheckout } from "../../stores/ui";
   import { setOperationRunning, setOperationSuccess, setOperationError } from "../../stores/operation";
   import * as api from "../../api";
   import type { BranchInfo } from "../../types";
@@ -175,8 +175,18 @@
   async function checkoutCurrentBranch() {
     if (!activeRepo || isCheckingOut || isSyncing) return;
     const target = { id: activeRepo.id, branch: currentBranch };
-    isCheckingOut = true;
     closeBranchMenu();
+    if ((activeStatus?.dirtyCount ?? 0) > 0) {
+      // One prompt resolves the dirty working tree, then continues the checkout.
+      requestCheckout({
+        repoId: target.id,
+        repoName: activeRepo.name,
+        target: target.branch,
+        dirtyCount: activeStatus?.dirtyCount ?? 0,
+      });
+      return;
+    }
+    isCheckingOut = true;
     try {
       await api.checkout(target.id, target.branch);
       // All branch views of the same working copy need new isCheckedOut status.

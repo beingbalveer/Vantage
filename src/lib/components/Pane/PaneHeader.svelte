@@ -1,10 +1,12 @@
 <script lang="ts">
-  import type { RepoEntry, RepoStatus, BranchInfo } from "../../types";
+  import type { RepoEntry, RepoStatus, BranchInfo, StashEntry } from "../../types";
   import * as api from "../../api";
   import { paneCount, panes, toggleTerminalInPane, setPaneTab, closePane as removePane } from "../../stores/panes";
-  import { repos, loadRepos, removeRepo } from "../../stores/repos";
-  import { addToast, openDialog } from "../../stores/ui";
+  import { repos, loadRepos, removeRepo, refreshSingleStatus } from "../../stores/repos";
+  import { addToast, openDialog, requestCheckout, stashDialogOpen } from "../../stores/ui";
   import IconButton from "../common/IconButton.svelte";
+  import { formatRelativeTime } from "../../format";
+  import { formatStashIndex, summarizeStashSubject } from "../../stash";
   import { get } from "svelte/store";
 
   interface Props {
@@ -21,6 +23,9 @@
   let showBranchModal = $state(false);
   let branchFilter = $state("");
   let isSyncing = $state(false);
+  let stashes = $state<StashEntry[]>([]);
+  let stashBusy = $state<number | null>(null);
+  let pendingStashDrop = $state<StashEntry | null>(null);
 
   let filteredBranches = $derived(
     branches.filter(
@@ -60,8 +65,62 @@
       api.branchList(repo.id).then((b) => {
         branches = b;
       }).catch(() => {});
+      void loadStashes();
+    } else {
+      stashes = [];
     }
   });
+
+  async function loadStashes() {
+    if (!repo?.id) {
+      stashes = [];
+      return;
+    }
+    try {
+      stashes = await api.stashList(repo.id);
+    } catch {
+      stashes = [];
+    }
+  }
+
+  function toggleBranchMenu() {
+    showBranchMenu = !showBranchMenu;
+    if (showBranchMenu) {
+      pendingStashDrop = null;
+      void loadStashes();
+    }
+  }
+
+  async function handleStashPop(stash: StashEntry) {
+    if (!repo) return;
+    stashBusy = stash.index;
+    try {
+      await api.stashPop(repo.id, stash.index);
+      addToast({ message: `Popped ${formatStashIndex(stash.index)}`, kind: "success" });
+      await refreshSingleStatus(repo.id);
+      await loadRepos();
+      await loadStashes();
+    } catch (e: any) {
+      addToast({ message: e.message || "Pop failed", kind: "error" });
+    } finally {
+      stashBusy = null;
+    }
+  }
+
+  async function handleStashDrop(stash: StashEntry) {
+    if (!repo) return;
+    stashBusy = stash.index;
+    try {
+      await api.stashDrop(repo.id, stash.index);
+      addToast({ message: `Dropped ${formatStashIndex(stash.index)}`, kind: "info" });
+      pendingStashDrop = null;
+      await loadStashes();
+    } catch (e: any) {
+      addToast({ message: e.message || "Drop failed", kind: "error" });
+    } finally {
+      stashBusy = null;
+    }
+  }
 
   async function handleAddBranchView(targetBranch: string) {
     if (!repo) return;
@@ -88,9 +147,21 @@
   async function handleCheckout(branch: string) {
     if (!repo) return;
     showBranchMenu = false;
+    if ((status?.dirtyCount ?? 0) > 0) {
+      // One prompt resolves the dirty tree, then continues the checkout.
+      requestCheckout({
+        repoId: repo.id,
+        repoName: repo.name,
+        target: branch,
+        dirtyCount: status?.dirtyCount ?? 0,
+      });
+      return;
+    }
     try {
       await api.checkout(repo.id, branch);
       addToast({ message: `Checked out ${branch}`, kind: "success" });
+      await refreshSingleStatus(repo.id);
+      await loadRepos();
     } catch (e: any) {
       addToast({ message: e.message || "Checkout failed", kind: "error" });
     }
@@ -193,7 +264,7 @@
       <div class="branch-wrap">
         <button
           class="branch-btn"
-          onclick={() => (showBranchMenu = !showBranchMenu)}
+          onclick={toggleBranchMenu}
         >
           ⎇ {status?.branch || "main"} ▾
         </button>
@@ -222,6 +293,85 @@
                   </button>
                 </div>
               {/each}
+            </div>
+
+            <div class="menu-dropdown-divider"></div>
+
+            <div class="stash-section">
+              <div class="stash-header">
+                <span class="text-xs text-muted">Stashes ({stashes.length})</span>
+                <button
+                  class="stash-manage-btn"
+                  onclick={() => {
+                    showBranchMenu = false;
+                    $stashDialogOpen = true;
+                  }}
+                >
+                  Manage…
+                </button>
+              </div>
+
+              {#if stashes.length === 0}
+                <div class="stash-empty text-xs text-muted">No stashes</div>
+              {:else}
+                {#each stashes.slice(0, 5) as stash (stash.sha)}
+                  <div class="stash-popover-row">
+                    <div class="stash-popover-info">
+                      <span class="stash-popover-index font-mono text-xs">
+                        {formatStashIndex(stash.index)}
+                      </span>
+                      <span class="stash-popover-subject text-xs" title={stash.subject}>
+                        {summarizeStashSubject(stash.subject)}
+                      </span>
+                      <span class="stash-popover-time text-xs text-muted">
+                        {formatRelativeTime(stash.date)}
+                      </span>
+                    </div>
+                    {#if pendingStashDrop?.index === stash.index}
+                      <div class="stash-confirm">
+                        <span class="text-xs">Drop {formatStashIndex(stash.index)}?</span>
+                        <button
+                          class="stash-mini-btn"
+                          onclick={() => (pendingStashDrop = null)}
+                        >
+                          Cancel
+                        </button>
+                        <button
+                          class="stash-mini-btn danger"
+                          disabled={stashBusy !== null}
+                          onclick={() => handleStashDrop(stash)}
+                        >
+                          Drop
+                        </button>
+                      </div>
+                    {:else}
+                      <div class="stash-popover-actions">
+                        <button
+                          class="stash-mini-btn"
+                          disabled={stashBusy !== null}
+                          title="Restore and remove this stash"
+                          onclick={() => handleStashPop(stash)}
+                        >
+                          Pop
+                        </button>
+                        <button
+                          class="stash-mini-btn danger"
+                          disabled={stashBusy !== null}
+                          title="Delete this stash"
+                          onclick={() => (pendingStashDrop = stash)}
+                        >
+                          Drop
+                        </button>
+                      </div>
+                    {/if}
+                  </div>
+                {/each}
+                {#if stashes.length > 5}
+                  <div class="stash-empty text-xs text-muted">
+                    … and {stashes.length - 5} more
+                  </div>
+                {/if}
+              {/if}
             </div>
           </div>
         {/if}
@@ -426,13 +576,18 @@
     position: absolute;
     top: 28px;
     left: 0;
-    width: 200px;
+    width: 280px;
     background-color: var(--bg);
     border: 1px solid var(--border);
     border-radius: var(--r-md);
     box-shadow: var(--shadow-pop);
     z-index: 100;
     padding: 4px;
+  }
+
+  .branch-list {
+    max-height: 220px;
+    overflow-y: auto;
   }
 
   .branch-item {
@@ -618,6 +773,103 @@
     background-color: var(--accent);
     color: var(--accent-fg);
     border-color: var(--accent);
+  }
+
+  .stash-section {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    padding: 2px;
+  }
+
+  .stash-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 2px 4px;
+  }
+
+  .stash-manage-btn {
+    background: transparent;
+    border: none;
+    color: var(--accent);
+    font-size: 11px;
+    font-weight: 500;
+    cursor: pointer;
+    padding: 0 2px;
+  }
+  .stash-manage-btn:hover {
+    text-decoration: underline;
+  }
+
+  .stash-empty {
+    padding: 4px 6px;
+  }
+
+  .stash-popover-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 6px;
+    padding: 3px 4px;
+    border-radius: var(--r-sm);
+  }
+  .stash-popover-row:hover {
+    background-color: var(--bg-muted);
+  }
+
+  .stash-popover-info {
+    display: flex;
+    align-items: baseline;
+    gap: 6px;
+    min-width: 0;
+  }
+
+  .stash-popover-index {
+    color: var(--accent);
+    flex-shrink: 0;
+  }
+
+  .stash-popover-subject {
+    color: var(--text);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .stash-popover-time {
+    flex-shrink: 0;
+  }
+
+  .stash-popover-actions,
+  .stash-confirm {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    flex-shrink: 0;
+  }
+
+  .stash-mini-btn {
+    height: 20px;
+    padding: 0 6px;
+    font-size: 10px;
+    font-weight: 600;
+    border-radius: var(--r-sm);
+    border: 1px solid var(--border);
+    background-color: var(--bg);
+    color: var(--text);
+    cursor: pointer;
+  }
+  .stash-mini-btn:hover:not(:disabled) {
+    background-color: var(--bg-muted);
+  }
+  .stash-mini-btn.danger {
+    color: var(--danger);
+    border-color: var(--danger);
+  }
+  .stash-mini-btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
   }
 
   .modal-backdrop {

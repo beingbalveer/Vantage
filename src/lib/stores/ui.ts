@@ -94,6 +94,25 @@ export const settingsOpen = writable<boolean>(false);
 export const shortcutsHelpOpen = writable<boolean>(false);
 export const addRepoDialogOpen = writable<boolean>(false);
 export const scanFolderDialogOpen = writable<boolean>(false);
+export const stashDialogOpen = writable<boolean>(false);
+
+// Dirty-tree branch switching: a single prompt that offers leave / bring / stash.
+export interface CheckoutRequest {
+  repoId: string;
+  repoName: string;
+  target: string;
+  dirtyCount: number;
+}
+
+export const checkoutRequest = writable<CheckoutRequest | null>(null);
+
+export function requestCheckout(request: CheckoutRequest) {
+  checkoutRequest.set(request);
+}
+
+export function clearCheckoutRequest() {
+  checkoutRequest.set(null);
+}
 
 // Active modal dialogs
 export interface ActiveDialog {
