@@ -1,5 +1,5 @@
 use crate::git::runner::GitRunner;
-use crate::state::{MarkerState, RepoStatus};
+use crate::state::{MarkerState, OperationKind, RepoStatus};
 use std::path::Path;
 
 #[derive(Debug, Default, Clone)]
@@ -10,6 +10,86 @@ pub struct ParsedStatusV2 {
     pub ahead: u32,
     pub behind: u32,
     pub dirty_count: u32,
+    pub conflicted_paths: Vec<String>,
+}
+
+/// Extract the paths from `git status --porcelain=v2 -z` unmerged (`u`) records.
+///
+/// Record shape (space separated, path last and may contain spaces):
+/// `u <XY> <sub> <m1> <m2> <m3> <mW> <h1> <h2> <h3> <path>`
+pub fn parse_unmerged_paths(output: &[u8]) -> Vec<String> {
+    let mut paths = Vec::new();
+    for part in output.split(|&b| b == 0) {
+        if !part.starts_with(b"u ") {
+            continue;
+        }
+        let line = String::from_utf8_lossy(part);
+        if let Some(path) = line.splitn(11, ' ').nth(10) {
+            if !path.is_empty() {
+                paths.push(path.to_string());
+            }
+        }
+    }
+    paths
+}
+
+/// Extract deduplicated paths from `git ls-files -u -z` records.
+///
+/// Record shape: `<mode> <object> <stage>\t<path>\0` (up to three stages per path).
+pub fn parse_unmerged_ls_files(output: &[u8]) -> Vec<String> {
+    let mut paths: Vec<String> = Vec::new();
+    for rec in output.split(|&b| b == 0) {
+        if rec.is_empty() {
+            continue;
+        }
+        if let Some(tab) = rec.iter().position(|&b| b == b'\t') {
+            let path = String::from_utf8_lossy(&rec[tab + 1..]).to_string();
+            if !path.is_empty() && !paths.contains(&path) {
+                paths.push(path);
+            }
+        }
+    }
+    paths
+}
+
+/// Detect an in-progress repository operation from the resolved git directory.
+///
+/// Uses the same marker files git itself creates:
+/// `.git/rebase-merge` / `.git/rebase-apply`, `MERGE_HEAD`, `CHERRY_PICK_HEAD`,
+/// `REVERT_HEAD`. Rebase is checked first because a rebase can also carry a
+/// `CHERRY_PICK_HEAD` while replaying a commit.
+pub fn detect_operation(git_dir: &Path) -> Option<OperationKind> {
+    if git_dir.join("rebase-merge").is_dir() || git_dir.join("rebase-apply").is_dir() {
+        return Some(OperationKind::Rebase);
+    }
+    if git_dir.join("MERGE_HEAD").is_file() {
+        return Some(OperationKind::Merge);
+    }
+    if git_dir.join("CHERRY_PICK_HEAD").is_file() {
+        return Some(OperationKind::CherryPick);
+    }
+    if git_dir.join("REVERT_HEAD").is_file() {
+        return Some(OperationKind::Revert);
+    }
+    None
+}
+
+/// Branch being rebased, read from `.git/rebase-merge/head-name`.
+///
+/// A rebase detaches HEAD, so porcelain reports `(detached)`. The head-name
+/// file is what lets us still map the working-tree operation to the branch the
+/// user is viewing.
+pub fn rebase_head_branch(git_dir: &Path) -> Option<String> {
+    for dir in ["rebase-merge", "rebase-apply"] {
+        let file = git_dir.join(dir).join("head-name");
+        if let Ok(raw) = std::fs::read_to_string(&file) {
+            let name = raw.trim();
+            if !name.is_empty() {
+                return Some(name.strip_prefix("refs/heads/").unwrap_or(name).to_string());
+            }
+        }
+    }
+    None
 }
 
 pub fn parse_porcelain_v2(output: &[u8]) -> ParsedStatusV2 {
@@ -55,8 +135,15 @@ pub fn parse_porcelain_v2(output: &[u8]) -> ParsedStatusV2 {
             }
             result.ahead = ahead;
             result.behind = behind;
-        } else if line.starts_with("1 ") || line.starts_with("u ") || line.starts_with("? ") {
+        } else if line.starts_with("1 ") || line.starts_with("? ") {
             result.dirty_count += 1;
+        } else if line.starts_with("u ") {
+            result.dirty_count += 1;
+            if let Some(path) = line.splitn(11, ' ').nth(10) {
+                if !path.is_empty() {
+                    result.conflicted_paths.push(path.to_string());
+                }
+            }
         } else if line.starts_with("2 ") {
             result.dirty_count += 1;
             // Rename entries in -z format have an extra field for origPath
@@ -90,6 +177,9 @@ pub async fn query_repo_status(
             ahead: 0,
             behind: 0,
             dirty_count: 0,
+            operation: None,
+            conflicted_count: 0,
+            conflicted_paths: Vec::new(),
             new_commit_count: 0,
             marker_state: MarkerState::None,
             last_activity_at: None,
@@ -122,6 +212,9 @@ pub async fn query_repo_status(
                     ahead: 0,
                     behind: 0,
                     dirty_count: 0,
+                    operation: None,
+                    conflicted_count: 0,
+                    conflicted_paths: Vec::new(),
                     new_commit_count: 0,
                     marker_state: MarkerState::None,
                     last_activity_at: None,
@@ -140,6 +233,9 @@ pub async fn query_repo_status(
                 ahead: 0,
                 behind: 0,
                 dirty_count: 0,
+                operation: None,
+                conflicted_count: 0,
+                conflicted_paths: Vec::new(),
                 new_commit_count: 0,
                 marker_state: MarkerState::None,
                 last_activity_at: None,
@@ -199,10 +295,35 @@ pub async fn query_repo_status(
     // Determine last_activity_at
     let last_activity_at = get_last_activity(runner, repo_path, target_branch).await;
 
+    let git_dir = match crate::git::ops::get_real_git_dir(runner, repo_path).await {
+        Ok(dir) => Some(dir),
+        Err(_) => None,
+    };
+    let operation = git_dir.as_deref().and_then(detect_operation);
+
     let is_checked_out = match target_branch {
         None => true,
-        Some(tb) => parsed.branch.as_deref() == Some(tb),
+        Some(tb) => {
+            parsed.branch.as_deref() == Some(tb)
+                // A rebase detaches HEAD; map it back to the branch being
+                // rebased so the conflict banner and file list still work.
+                || (parsed.branch.is_none()
+                    && git_dir
+                        .as_deref()
+                        .and_then(rebase_head_branch)
+                        .as_deref()
+                        == Some(tb))
+        }
     };
+
+    // In-progress operation + unmerged paths belong to the working tree, so they
+    // are only meaningful for the checked-out branch view.
+    let (operation, conflicted_paths) = if is_checked_out {
+        (operation, parsed.conflicted_paths.clone())
+    } else {
+        (None, Vec::new())
+    };
+    let conflicted_count = conflicted_paths.len() as u32;
 
     let mut ahead = if is_checked_out { parsed.ahead } else { 0 };
     if is_checked_out && ahead == 0 && parsed.upstream.is_none() {
@@ -246,6 +367,9 @@ pub async fn query_repo_status(
         } else {
             0
         },
+        operation,
+        conflicted_count,
+        conflicted_paths,
         new_commit_count,
         marker_state,
         last_activity_at,
@@ -308,5 +432,98 @@ mod tests {
         let parsed = parse_porcelain_v2(input);
         assert_eq!(parsed.branch, Some("feat".to_string()));
         assert_eq!(parsed.dirty_count, 3);
+    }
+
+    #[test]
+    fn test_rebase_head_branch_detaches_to_viewed_branch() {
+        let base = std::env::temp_dir().join(format!("vantage_rebase_{}", uuid::Uuid::new_v4()));
+        let git_dir = base.join("gitdir");
+        std::fs::create_dir_all(git_dir.join("rebase-merge")).unwrap();
+
+        std::fs::write(
+            git_dir.join("rebase-merge").join("head-name"),
+            "refs/heads/feat/conflicts\n",
+        )
+        .unwrap();
+        assert_eq!(
+            rebase_head_branch(&git_dir),
+            Some("feat/conflicts".to_string())
+        );
+
+        // Plain names are returned as-is, and rebase-apply is a fallback.
+        std::fs::remove_dir_all(git_dir.join("rebase-merge")).unwrap();
+        std::fs::create_dir_all(git_dir.join("rebase-apply")).unwrap();
+        std::fs::write(git_dir.join("rebase-apply").join("head-name"), "main\n").unwrap();
+        assert_eq!(rebase_head_branch(&git_dir), Some("main".to_string()));
+        assert_eq!(rebase_head_branch(&base.join("missing")), None);
+
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn test_parse_porcelain_v2_unmerged_entries() {
+        // Real `git status --porcelain=v2 -z` output while a merge conflicts.
+        let input = b"# branch.oid abc\0# branch.head main\0u UU N... 100644 100644 100644 100644 aaa bbb ccc f.txt\0u AA N... 100644 100644 100644 100644 aaa bbb ccc dir with space/other file.txt\0";
+        let parsed = parse_porcelain_v2(input);
+        assert_eq!(parsed.branch, Some("main".to_string()));
+        // Each unmerged entry still counts as a dirty file.
+        assert_eq!(parsed.dirty_count, 2);
+        assert_eq!(
+            parsed.conflicted_paths,
+            vec![
+                "f.txt".to_string(),
+                "dir with space/other file.txt".to_string()
+            ]
+        );
+    }
+
+    #[test]
+    fn test_parse_unmerged_paths_ignores_other_records() {
+        let input = b"1 .M N... 100644 100644 100644 abc abc src/main.rs\0u UU N... 100644 100644 100644 100644 aaa bbb ccc conflicted.rs\0? untracked.txt\0";
+        assert_eq!(
+            parse_unmerged_paths(input),
+            vec!["conflicted.rs".to_string()]
+        );
+    }
+
+    #[test]
+    fn test_parse_unmerged_ls_files_dedupes_stages() {
+        let input = b"100644 aaa 1\tf.txt\x00100644 bbb 2\tf.txt\x00100644 ccc 3\tf.txt\x00100644 ddd 2\tsub/g.txt\x00";
+        assert_eq!(
+            parse_unmerged_ls_files(input),
+            vec!["f.txt".to_string(), "sub/g.txt".to_string()]
+        );
+    }
+
+    #[test]
+    fn test_detect_operation_precedence_and_none() {
+        let base = std::env::temp_dir().join(format!("vantage_status_{}", uuid::Uuid::new_v4()));
+        let git_dir = base.join("gitdir");
+        std::fs::create_dir_all(&git_dir).unwrap();
+
+        // Nothing in progress.
+        assert_eq!(detect_operation(&git_dir), None);
+
+        // Merge.
+        std::fs::write(git_dir.join("MERGE_HEAD"), "abc").unwrap();
+        assert_eq!(detect_operation(&git_dir), Some(OperationKind::Merge));
+        std::fs::remove_file(git_dir.join("MERGE_HEAD")).unwrap();
+
+        // Cherry-pick.
+        std::fs::write(git_dir.join("CHERRY_PICK_HEAD"), "abc").unwrap();
+        assert_eq!(detect_operation(&git_dir), Some(OperationKind::CherryPick));
+        std::fs::remove_file(git_dir.join("CHERRY_PICK_HEAD")).unwrap();
+
+        // Revert.
+        std::fs::write(git_dir.join("REVERT_HEAD"), "abc").unwrap();
+        assert_eq!(detect_operation(&git_dir), Some(OperationKind::Revert));
+        std::fs::remove_file(git_dir.join("REVERT_HEAD")).unwrap();
+
+        // Rebase wins over a lingering CHERRY_PICK_HEAD.
+        std::fs::create_dir_all(git_dir.join("rebase-merge")).unwrap();
+        std::fs::write(git_dir.join("CHERRY_PICK_HEAD"), "abc").unwrap();
+        assert_eq!(detect_operation(&git_dir), Some(OperationKind::Rebase));
+
+        let _ = std::fs::remove_dir_all(&base);
     }
 }

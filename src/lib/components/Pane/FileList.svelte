@@ -228,6 +228,7 @@
 
       <div
         class="file-row {isSelected ? 'selected' : ''}"
+        class:conflicted={file.status === "conflicted"}
         onclick={() => onselectfile?.(file.path)}
         onkeydown={(e) => {
           if (e.key === "Enter" || e.key === " ") {
@@ -237,7 +238,7 @@
         }}
         role="button"
         tabindex="0"
-        title="{file.path} ({file.status}{file.additions > 0 ? ', +' + file.additions : ''}{file.deletions > 0 ? ', −' + file.deletions : ''}){triage ? ' · ' + triage.label + ': ' + triage.detail : ''}"
+        title="{file.path} ({file.status === 'conflicted' ? 'unmerged' : file.status}{file.additions > 0 ? ', +' + file.additions : ''}{file.deletions > 0 ? ', −' + file.deletions : ''}){triage ? ' · ' + triage.label + ': ' + triage.detail : ''}"
       >
         {#if showCommitControls}
           <input
@@ -258,7 +259,14 @@
         </div>
 
         <div class="row-right">
-          <span class="status-badge {file.status}" aria-label={file.status} title={file.status}>
+          {#if file.status === "conflicted"}
+            <span class="conflict-tag">unmerged</span>
+          {/if}
+          <span
+            class="status-badge {file.status}"
+            aria-label={file.status === "conflicted" ? "unmerged" : file.status}
+            title={file.status === "conflicted" ? "unmerged" : file.status}
+          >
             {statusGlyph(file.status)}
           </span>
         </div>
@@ -375,6 +383,23 @@
   }
   .file-row.selected {
     background: #e6e9ed;
+  }
+  .file-row.conflicted {
+    background: var(--danger-subtle, rgba(218, 54, 51, 0.08));
+  }
+  .file-row.conflicted:hover {
+    background: var(--danger-subtle, rgba(218, 54, 51, 0.14));
+  }
+  .file-row.conflicted.selected {
+    background: var(--danger-subtle, rgba(218, 54, 51, 0.18));
+  }
+  .conflict-tag {
+    color: var(--danger);
+    font-size: 10px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+    white-space: nowrap;
   }
   .file-row:focus-visible {
     outline: 2px solid var(--accent);

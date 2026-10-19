@@ -91,6 +91,8 @@ pub fn run() {
             discard,
             revert,
             revert_range,
+            operation_continue,
+            operation_abort,
             reset_to,
             check_pushed,
             backup_list,
