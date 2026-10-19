@@ -1,19 +1,47 @@
 <script lang="ts">
-  import type { CommitSummary } from "../../types";
+  import type { ComponentProps } from "svelte";
+  import type { CommitSummary, FlagKind, TriageFlag } from "../../types";
   import { formatRelativeTime } from "../../format";
+  import {
+    formatFlagAriaLabel,
+    formatFlagTooltip,
+    sortFlagsBySeverity,
+  } from "../../triage";
   import Icon from "../common/Icon.svelte";
+
+  type IconName = ComponentProps<typeof Icon>["name"];
+
+  // DESIGN.md §10 icon mapping. Every kind in triage.rs has an icon here.
+  const FLAG_ICONS: Record<FlagKind, IconName> = {
+    large: "files",
+    deletionHeavy: "trash",
+    dependencies: "package",
+    config: "gear",
+    testsRemoved: "test-tube",
+    secrets: "key",
+    bigFile: "hard-drive",
+    binary: "binary",
+  };
 
   interface Props {
     commit: CommitSummary;
     isSelected: boolean;
     isLocal?: boolean;
+    flags?: TriageFlag[];
     onselect?: () => void;
     onclick?: () => void;
   }
 
-  let { commit, isSelected, isLocal = false, onselect, onclick }: Props = $props();
+  let { commit, isSelected, isLocal = false, flags = [], onselect, onclick }: Props = $props();
 
   let isMerge = $derived(commit.parents && commit.parents.length > 1);
+
+  // Most urgent rule first; show at most 3 icons then a "+N" overflow chip.
+  let flagList = $derived(sortFlagsBySeverity(flags));
+  let shownFlags = $derived(flagList.slice(0, 3));
+  let flagOverflow = $derived(Math.max(0, flagList.length - 3));
+  let flagTooltip = $derived(formatFlagTooltip(flagList));
+  let flagAria = $derived(formatFlagAriaLabel(flagList));
 
   function handleTrigger(e?: Event) {
     if (e) e.stopPropagation();
@@ -46,6 +74,18 @@
     </span>
   </span>
   <div class="commit-trailing">
+    {#if flagList.length > 0}
+      <span class="commit-flags" role="img" aria-label={flagAria} title={flagTooltip}>
+        {#each shownFlags as flag (flag.kind)}
+          <span class="flag-icon sev-{flag.severity}">
+            <Icon name={FLAG_ICONS[flag.kind]} size={13} />
+          </span>
+        {/each}
+        {#if flagOverflow > 0}
+          <span class="flag-overflow">+{flagOverflow}</span>
+        {/if}
+      </span>
+    {/if}
     {#if isMerge}
       <span class="merge-badge">merge</span>
     {/if}
@@ -165,6 +205,36 @@
     gap: 6px;
     margin-left: auto;
     flex-shrink: 0;
+  }
+  .commit-flags {
+    display: inline-flex;
+    align-items: center;
+    gap: 3px;
+    height: 20px;
+    flex-shrink: 0;
+  }
+  .flag-icon {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 16px;
+    height: 16px;
+    flex-shrink: 0;
+  }
+  .flag-icon.sev-info {
+    color: var(--text-muted);
+  }
+  .flag-icon.sev-caution {
+    color: var(--warning);
+  }
+  .flag-icon.sev-warn {
+    color: var(--danger);
+  }
+  .flag-overflow {
+    font-size: 10px;
+    line-height: 16px;
+    color: var(--text-muted);
+    font-variant-numeric: tabular-nums;
   }
   .merge-badge {
     flex-shrink: 0;

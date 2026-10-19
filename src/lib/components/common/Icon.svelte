@@ -43,7 +43,8 @@
     | "grid"
     | "worktree"
     | "changes"
-    | "file";
+    | "file"
+    | "files";
 
   interface Props {
     name: IconName;
@@ -254,6 +255,11 @@
     <!-- Document -->
     <path d="M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z" />
     <path d="M14 3v6h6" />
+  {:else if name === "files"}
+    <!-- SF Symbol doc.on.doc / stacked documents (large change) -->
+    <path d="M20 7h-3a2 2 0 0 1-2-2V2" />
+    <path d="M9 18a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h7l4 4v10a2 2 0 0 1-2 2Z" />
+    <path d="M3 7.6v12.8A1.6 1.6 0 0 0 4.6 22h9.8" />
   {/if}
 </svg>
 

@@ -1,11 +1,12 @@
 <script lang="ts">
-  import { onMount, onDestroy, untrack } from "svelte";
-  import type { RepoEntry, RepoStatus, CommitSummary, FileChange, DiffFile, DiffScope } from "../../types";
+  import { onMount, onDestroy, tick, untrack } from "svelte";
+  import type { RepoEntry, RepoStatus, CommitSummary, FileChange, DiffFile, DiffScope, TriageFlag } from "../../types";
   import * as api from "../../api";
   import { settings } from "../../stores/settings";
   import { panes, focusedPaneIndex, focusPane } from "../../stores/panes";
-  import { addToast } from "../../stores/ui";
+  import { addToast, activeDialog, paletteOpen, settingsOpen, shortcutsHelpOpen, addRepoDialogOpen, scanFolderDialogOpen } from "../../stores/ui";
   import { navigationTarget, navigateTo } from "../../stores/navigation";
+  import { findFlaggedCommitIndex, matchShortcut } from "../../keys";
   import UncommittedRow from "./UncommittedRow.svelte";
   import CommitRow from "./CommitRow.svelte";
   import CommitHeader from "./CommitHeader.svelte";
@@ -77,6 +78,18 @@
   let isRangeSelected = $state(false);
   let currentScope = $state<DiffScope>({ type: "working" });
 
+  // Triage flags, cached per commit SHA for the loaded history page (ALPH-147).
+  let flagsBySha = $state<Record<string, TriageFlag[]>>({});
+  let commitsScrollEl = $state<HTMLDivElement | null>(null);
+
+  let flaggedCount = $derived.by(() => {
+    let n = 0;
+    for (const c of commits) {
+      if ((flagsBySha[c.sha]?.length ?? 0) > 0) n++;
+    }
+    return n;
+  });
+
   let selectedCommit = $derived(
     selectedCommitSha && !isUncommittedSelected
       ? commits.find((c) => c.sha === selectedCommitSha) || null
@@ -134,6 +147,7 @@
     const currentId = repo?.id || "";
     if (currentId !== lastLoadedRepoId) {
       lastLoadedRepoId = currentId;
+      flagsBySha = {};
       untrack(() => {
         if (currentId) {
           loadHistory();
@@ -189,6 +203,7 @@
 
   onMount(() => {
     let active = true;
+    window.addEventListener("keydown", handleFlagKey);
     (async () => {
       try {
         const h = await api.onHeadChanged((payload: { repoId: string; sha: string }) => {
@@ -211,6 +226,7 @@
 
     return () => {
       active = false;
+      window.removeEventListener("keydown", handleFlagKey);
       unlistenHead?.();
       unlistenStatus?.();
     };
@@ -223,6 +239,11 @@
       const log = await api.logPage(repo.id, 0, 200);
       if (gen !== historyGen) return;
       commits = log;
+
+      // Batch-request triage flags for the loaded page. Failures are ignored
+      // per-SHA (the backend omits SHAs it could not evaluate) so the list
+      // never breaks because flagging failed (ALPH-147).
+      void loadFlags(repo.id, log.map((c) => c.sha), gen);
 
       if (!preserveSelection) {
         // Select default view
@@ -245,6 +266,84 @@
       }
     } catch (e) {
       console.error("Failed to load history:", e);
+    }
+  }
+
+  // Fetch triage flags for a set of SHAs and merge them into the cache.
+  // Per-SHA failures are silent by design: a flagged SHA simply stays blank.
+  async function loadFlags(repoId: string, shas: string[], gen: number) {
+    if (shas.length === 0) return;
+    try {
+      const result = await api.commitFlags(repoId, shas);
+      if (gen !== historyGen) return;
+      flagsBySha = { ...flagsBySha, ...result };
+    } catch (e) {
+      console.warn("Failed to load triage flags:", e);
+    }
+  }
+
+  // `{` / `}` jump to the previous/next flagged commit in the loaded history.
+  async function jumpToFlag(direction: "next" | "prev") {
+    if (commits.length === 0) return;
+
+    const tagged = commits.map((c) => ({ flags: flagsBySha[c.sha] ?? [] }));
+    if (!tagged.some((c) => c.flags.length > 0)) {
+      addToast({ message: "No flagged commits in this history", kind: "info" });
+      return;
+    }
+
+    const currentIndex = selectedCommitSha
+      ? commits.findIndex((c) => c.sha === selectedCommitSha)
+      : -1;
+    const targetIndex = findFlaggedCommitIndex(tagged, currentIndex, direction);
+
+    if (targetIndex < 0 || targetIndex === currentIndex) {
+      addToast({
+        message:
+          direction === "next"
+            ? "No later flagged commits"
+            : "No earlier flagged commits",
+        kind: "info",
+      });
+      return;
+    }
+
+    const target = commits[targetIndex];
+    if (!target) return;
+    selectCommit(target.sha);
+    await tick();
+    const row = commitsScrollEl?.querySelector(`[data-sha="${target.sha}"]`);
+    if (row instanceof HTMLElement) row.scrollIntoView({ block: "nearest" });
+  }
+
+  function handleFlagKey(e: KeyboardEvent) {
+    if (!isFocused || !repo || currentPane?.tab !== "history") return;
+    if (
+      $activeDialog ||
+      $paletteOpen ||
+      $settingsOpen ||
+      $shortcutsHelpOpen ||
+      $addRepoDialogOpen ||
+      $scanFolderDialogOpen
+    ) {
+      return;
+    }
+    if (e.metaKey || e.ctrlKey || e.altKey) return;
+    const target = e.target as HTMLElement | null;
+    if (
+      target &&
+      (target instanceof HTMLInputElement ||
+        target instanceof HTMLTextAreaElement ||
+        target.isContentEditable)
+    ) {
+      return;
+    }
+    if (matchShortcut(e, "{")) {
+      e.preventDefault();
+      void jumpToFlag("prev");
+    } else if (matchShortcut(e, "}")) {
+      e.preventDefault();
+      void jumpToFlag("next");
     }
   }
 
@@ -370,7 +469,7 @@
         {#if !focusDiff}
           <div class="commits-col" style="width: {commitsColWidth}px;">
             <!-- Commits List -->
-            <div class="commits-scroll">
+            <div class="commits-scroll" bind:this={commitsScrollEl}>
               <UncommittedRow
                 dirtyCount={status?.dirtyCount || 0}
                 isSelected={isUncommittedSelected}
@@ -386,13 +485,16 @@
                   {commit}
                   isSelected={selectedCommitSha === commit.sha}
                   isLocal={unpushedShas.has(commit.sha)}
+                  flags={flagsBySha[commit.sha] ?? []}
                   onselect={() => selectCommit(commit.sha)}
                 />
               {/each}
             </div>
 
-            {#if branchCommitLabel}
-              <div class="history-footer">{branchCommitLabel}</div>
+            {#if branchCommitLabel || flaggedCount > 0}
+              <div class="history-footer">
+                {branchCommitLabel}{#if flaggedCount > 0}<span class="history-flagged"> · {flaggedCount} flagged</span>{/if}
+              </div>
             {/if}
           </div>
 
@@ -582,6 +684,10 @@
     color: #7c847a;
     font-size: 11px;
     user-select: none;
+  }
+
+  .history-flagged {
+    color: var(--warning);
   }
 
   .detail-layout {
