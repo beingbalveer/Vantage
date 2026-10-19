@@ -6,6 +6,12 @@
   import { panes, focusedPaneIndex, focusPane } from "../../stores/panes";
   import { addToast } from "../../stores/ui";
   import { navigationTarget, navigateTo } from "../../stores/navigation";
+  import {
+    HISTORY_PAGE_SIZE,
+    formatHistoryFooter,
+    hasMoreHistory,
+    isEditableTarget,
+  } from "../../history";
   import UncommittedRow from "./UncommittedRow.svelte";
   import CommitRow from "./CommitRow.svelte";
   import CommitHeader from "./CommitHeader.svelte";
@@ -83,16 +89,26 @@
       : null
   );
 
-  // Prototype parity: the commits column ends with a quiet branch summary
-  // (approved-prototype.html · .history-footer). The history is paged at 200,
-  // so the count is reported as "200+" when the page is full.
-  let branchCommitLabel = $derived(
-    commits.length === 0
-      ? ""
-      : `${commits.length >= 200 ? "200+" : commits.length} ${
-          commits.length === 1 ? "commit" : "commits"
-        } on this branch`
-  );
+  // History paging + filter state (ALPH-149). `historyTotal` is the true commit
+  // count (or match count) from the backend, so the footer never claims a bogus
+  // hard "200+" cap.
+  let historyTotal = $state(0);
+  let historyCapped = $state(false);
+  let historyLoading = $state(false);
+  let historyLoadingMore = $state(false);
+  let historyFilter = $state("");
+  let historyFilterApplied = $state("");
+  let historyFilterInput = $state<HTMLInputElement | null>(null);
+  let historySentinel = $state<HTMLElement | null>(null);
+  let filterDebounce: ReturnType<typeof setTimeout> | undefined;
+
+  let historyFilterActive = $derived(historyFilterApplied.trim().length > 0);
+  let historyMeta = $derived({
+    total: historyTotal,
+    capped: historyCapped,
+    loaded: commits.length,
+  });
+  let historyFooterLabel = $derived(formatHistoryFooter(historyMeta, historyFilterActive));
 
   let unpushedShas = $derived.by(() => {
     const ahead = status?.ahead || 0;
@@ -136,6 +152,10 @@
       lastLoadedRepoId = currentId;
       untrack(() => {
         if (currentId) {
+          historyFilter = "";
+          historyFilterApplied = "";
+          historyTotal = 0;
+          historyCapped = false;
           loadHistory();
         } else {
           commits = [];
@@ -145,6 +165,8 @@
           selectedFilePath = null;
           isUncommittedSelected = false;
           isRangeSelected = false;
+          historyTotal = 0;
+          historyCapped = false;
         }
       });
     }
@@ -211,6 +233,7 @@
 
     return () => {
       active = false;
+      clearTimeout(filterDebounce);
       unlistenHead?.();
       unlistenStatus?.();
     };
@@ -219,19 +242,31 @@
   async function loadHistory(preserveSelection = false) {
     if (!repo) return;
     const gen = ++historyGen;
+    historyLoading = true;
+    historyLoadingMore = false;
+    const query = historyFilterApplied;
     try {
-      const log = await api.logPage(repo.id, 0, 200);
+      const page = await api.historyPage(repo.id, 0, HISTORY_PAGE_SIZE, query || undefined);
       if (gen !== historyGen) return;
-      commits = log;
+      commits = page.commits;
+      historyTotal = page.total;
+      historyCapped = page.capped;
+      historyLoading = false;
 
       if (!preserveSelection) {
-        // Select default view
-        if (status?.dirtyCount && status.dirtyCount > 0) {
+        if (query) {
+          // Filtering: land on the newest match, or clear when nothing matches.
+          if (page.commits.length > 0) {
+            selectCommit(page.commits[0].sha);
+          } else {
+            clearSelection();
+          }
+        } else if (status?.dirtyCount && status.dirtyCount > 0) {
           selectUncommitted();
         } else if (status?.newCommitCount && status.newCommitCount > 0 && repo.marker) {
           selectRange();
-        } else if (log.length > 0) {
-          selectCommit(log[0].sha);
+        } else if (page.commits.length > 0) {
+          selectCommit(page.commits[0].sha);
         }
       } else {
         // If current selection is commit, reload files; if uncommitted, reload files
@@ -244,9 +279,112 @@
         }
       }
     } catch (e) {
+      if (gen !== historyGen) return;
+      historyLoading = false;
       console.error("Failed to load history:", e);
     }
   }
+
+  // Append the next page without disturbing selection, scroll or the open diff.
+  async function loadMoreHistory() {
+    if (!repo || historyLoading || historyLoadingMore) return;
+    if (!hasMoreHistory(historyMeta)) return;
+    const gen = historyGen;
+    const skip = commits.length;
+    historyLoadingMore = true;
+    try {
+      const page = await api.historyPage(
+        repo.id,
+        skip,
+        HISTORY_PAGE_SIZE,
+        historyFilterApplied || undefined
+      );
+      if (gen !== historyGen) return;
+      const seen = new Set(commits.map((c) => c.sha));
+      commits = [...commits, ...page.commits.filter((c) => !seen.has(c.sha))];
+      historyTotal = page.total;
+      historyCapped = page.capped;
+    } catch (e: any) {
+      if (gen !== historyGen) return;
+      console.error("Failed to load more history:", e);
+      addToast({ message: e.message || "Failed to load more commits", kind: "error" });
+    } finally {
+      if (gen === historyGen) historyLoadingMore = false;
+    }
+  }
+
+  function clearSelection() {
+    selectedCommitSha = null;
+    isUncommittedSelected = false;
+    isRangeSelected = false;
+    scopeFilesList = [];
+    currentDiffFile = null;
+    selectedFilePath = null;
+    checkedPaths = [];
+  }
+
+  function applyFilter(value: string) {
+    const next = value.trim();
+    if (next === historyFilterApplied) return;
+    historyFilterApplied = next;
+    loadHistory(false);
+  }
+
+  function onFilterInput(e: Event) {
+    historyFilter = (e.target as HTMLInputElement).value;
+    clearTimeout(filterDebounce);
+    filterDebounce = setTimeout(() => applyFilter(historyFilter), 220);
+  }
+
+  function onFilterKeydown(e: KeyboardEvent) {
+    if (e.key === "Escape") {
+      e.preventDefault();
+      clearFilter();
+      (e.target as HTMLInputElement)?.blur();
+    } else if (e.key === "Enter") {
+      e.preventDefault();
+      clearTimeout(filterDebounce);
+      applyFilter(historyFilter);
+    }
+  }
+
+  function clearFilter() {
+    clearTimeout(filterDebounce);
+    historyFilter = "";
+    if (historyFilterApplied !== "") {
+      historyFilterApplied = "";
+      loadHistory(false);
+    }
+    historyFilterInput?.focus();
+  }
+
+  // `/` focuses the history filter for the focused pane (F3) without hijacking
+  // typing in inputs, textareas or the embedded terminal.
+  function handlePaneKeydown(e: KeyboardEvent) {
+    if (!isFocused || !repo || currentPane?.tab !== "history") return;
+    if (e.metaKey || e.ctrlKey || e.altKey) return;
+    if (e.key !== "/") return;
+    if (isEditableTarget(e.target)) return;
+    e.preventDefault();
+    historyFilterInput?.focus();
+    historyFilterInput?.select();
+  }
+
+  // Auto-load the next page as the sentinel nears the viewport (F3 infinite scroll).
+  $effect(() => {
+    const el = historySentinel;
+    if (!el || !hasMoreHistory(historyMeta)) return;
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (entries.some((entry) => entry.isIntersecting)) {
+          loadMoreHistory();
+        }
+      },
+      { rootMargin: "160px" }
+    );
+    observer.observe(el);
+    return () => observer.disconnect();
+  });
 
   function selectUncommitted() {
     isUncommittedSelected = true;
@@ -347,6 +485,8 @@
   }
 </script>
 
+<svelte:window onkeydown={handlePaneKeydown} />
+
 <div
   class="pane-container {isFocused ? 'focused' : ''}"
   onpointerdown={() => focusPane(paneIndex)}
@@ -369,15 +509,55 @@
         <!-- Commits Column -->
         {#if !focusDiff}
           <div class="commits-col" style="width: {commitsColWidth}px;">
+            <!-- History filter (F3): matches message, author or touched path -->
+            <div class="history-filter">
+              <span class="filter-icon" aria-hidden="true">
+                <Icon name="search" size={14} />
+              </span>
+              <input
+                class="filter-input"
+                type="text"
+                placeholder="Filter commits"
+                aria-label="Filter commits by message, author, or path"
+                bind:this={historyFilterInput}
+                value={historyFilter}
+                oninput={onFilterInput}
+                onkeydown={onFilterKeydown}
+              />
+              {#if historyFilter}
+                <button
+                  class="filter-clear"
+                  type="button"
+                  aria-label="Clear history filter"
+                  onclick={clearFilter}
+                >
+                  <Icon name="close" size={13} />
+                </button>
+              {/if}
+            </div>
+
             <!-- Commits List -->
             <div class="commits-scroll">
-              <UncommittedRow
-                dirtyCount={status?.dirtyCount || 0}
-                isSelected={isUncommittedSelected}
-                onselect={selectUncommitted}
-              />
+              {#if !historyFilterActive}
+                <UncommittedRow
+                  dirtyCount={status?.dirtyCount || 0}
+                  isSelected={isUncommittedSelected}
+                  onselect={selectUncommitted}
+                />
+              {/if}
 
-              {#if commits.length === 0}
+              {#if historyLoading && commits.length === 0}
+                <div class="history-status text-sm text-muted">Loading history…</div>
+              {:else if commits.length === 0 && historyFilterActive}
+                <div class="history-empty">
+                  <span class="text-sm text-muted">
+                    No commits match “{historyFilterApplied}”.
+                  </span>
+                  <button class="empty-clear" type="button" onclick={clearFilter}>
+                    Clear filter
+                  </button>
+                </div>
+              {:else if commits.length === 0}
                 <div class="empty-commits text-sm text-muted">No commits yet</div>
               {/if}
 
@@ -389,10 +569,23 @@
                   onselect={() => selectCommit(commit.sha)}
                 />
               {/each}
+
+              {#if hasMoreHistory(historyMeta)}
+                <div class="load-more-row" bind:this={historySentinel}>
+                  <button
+                    class="load-more"
+                    type="button"
+                    disabled={historyLoadingMore}
+                    onclick={loadMoreHistory}
+                  >
+                    {historyLoadingMore ? "Loading…" : "Load more"}
+                  </button>
+                </div>
+              {/if}
             </div>
 
-            {#if branchCommitLabel}
-              <div class="history-footer">{branchCommitLabel}</div>
+            {#if historyFooterLabel}
+              <div class="history-footer">{historyFooterLabel}</div>
             {/if}
           </div>
 
@@ -569,9 +762,116 @@
     overflow-x: hidden;
   }
 
+  /* History filter (F3). 28px control, quiet until focused. */
+  .history-filter {
+    flex-shrink: 0;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    height: 28px;
+    margin: 8px;
+    padding: 0 8px;
+    border: 1px solid var(--border);
+    border-radius: var(--r-sm);
+    background: var(--bg-subtle);
+    color: var(--text-faint);
+  }
+  .history-filter:focus-within {
+    border-color: var(--accent);
+    background: var(--bg);
+    color: var(--text-muted);
+  }
+  .filter-icon {
+    display: inline-flex;
+    align-items: center;
+    flex-shrink: 0;
+  }
+  .filter-input {
+    flex: 1;
+    min-width: 0;
+    border: 0;
+    outline: none;
+    background: transparent;
+    color: var(--text);
+    font-family: inherit;
+    font-size: 12.5px;
+  }
+  .filter-input::placeholder {
+    color: var(--text-faint);
+  }
+  .filter-clear {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+    width: 18px;
+    height: 18px;
+    padding: 0;
+    border: 0;
+    border-radius: 4px;
+    background: transparent;
+    color: var(--text-muted);
+    cursor: pointer;
+  }
+  .filter-clear:hover {
+    background: var(--bg-muted);
+    color: var(--text);
+  }
+
   .empty-commits {
     padding: 24px 16px;
     text-align: center;
+  }
+
+  .history-status {
+    padding: 16px;
+  }
+
+  .history-empty {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 10px;
+    padding: 28px 16px;
+    text-align: center;
+    overflow-wrap: anywhere;
+  }
+  .empty-clear {
+    border: 1px solid var(--border);
+    border-radius: var(--r-sm);
+    background: var(--bg-subtle);
+    color: var(--text);
+    font-size: 12px;
+    padding: 4px 10px;
+    cursor: pointer;
+  }
+  .empty-clear:hover {
+    border-color: var(--accent);
+    color: var(--accent);
+  }
+
+  /* Paging sentinel (F3). Sits at the list foot and self-loads when near. */
+  .load-more-row {
+    display: flex;
+    justify-content: center;
+    padding: 12px;
+  }
+  .load-more {
+    border: 1px solid var(--border);
+    border-radius: var(--r-sm);
+    background: var(--bg-subtle);
+    color: var(--text-muted);
+    font-size: 12px;
+    padding: 4px 14px;
+    cursor: pointer;
+  }
+  .load-more:hover:not(:disabled) {
+    border-color: var(--accent);
+    color: var(--accent);
+  }
+  .load-more:disabled {
+    cursor: default;
+    opacity: 0.7;
   }
 
   /* Quiet branch summary pinned to the foot of the commits column

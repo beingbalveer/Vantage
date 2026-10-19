@@ -12,6 +12,7 @@ import type {
   DiffScope,
   EnvInfo,
   FileChange,
+  HistoryPage,
   Layout,
   RepoEntry,
   RepoStatus,
@@ -89,6 +90,15 @@ export async function logPage(
   query?: string
 ): Promise<CommitSummary[]> {
   return invoke("log_page", { id, skip, limit, query });
+}
+
+export async function historyPage(
+  id: string,
+  skip: number,
+  limit: number,
+  query?: string
+): Promise<HistoryPage> {
+  return invoke("history_page", { id, skip, limit, query });
 }
 
 export async function commitFlags(

@@ -79,6 +79,7 @@ pub fn run() {
             marker_set,
             marker_set_to_head,
             log_page,
+            history_page,
             commit_flags,
             scope_files,
             scope_file_diff,
