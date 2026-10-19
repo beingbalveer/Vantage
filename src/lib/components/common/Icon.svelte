@@ -43,6 +43,8 @@
     | "grid"
     | "worktree"
     | "changes"
+    | "pencil"
+    | "undo"
     | "file";
 
   interface Props {
@@ -250,6 +252,14 @@
     <!-- Uncommitted changes -->
     <circle cx="12" cy="12" r="8" stroke-dasharray="2 3" />
     <path d="M12 8v8m-4-4h8" />
+  {:else if name === "pencil"}
+    <!-- SF Symbol pencil -->
+    <path d="M12 20h9" />
+    <path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z" />
+  {:else if name === "undo"}
+    <!-- SF Symbol arrow.uturn.backward -->
+    <path d="M9 14 4 9l5-5" />
+    <path d="M4 9h10.5a5.5 5.5 0 0 1 5.5 5.5 5.5 5.5 0 0 1-5.5 5.5H11" />
   {:else if name === "file"}
     <!-- Document -->
     <path d="M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z" />

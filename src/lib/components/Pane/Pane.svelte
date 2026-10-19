@@ -4,7 +4,8 @@
   import * as api from "../../api";
   import { settings } from "../../stores/settings";
   import { panes, focusedPaneIndex, focusPane } from "../../stores/panes";
-  import { addToast } from "../../stores/ui";
+  import { addToast, composerRequest } from "../../stores/ui";
+  import { refreshSingleStatus } from "../../stores/repos";
   import { navigationTarget, navigateTo } from "../../stores/navigation";
   import UncommittedRow from "./UncommittedRow.svelte";
   import CommitRow from "./CommitRow.svelte";
@@ -35,6 +36,9 @@
   // reference does not show (RELAY-UI · UI-06).
   let commitMode = $state(false);
   let showCommitDetails = $state(false);
+  // Bumped when the palette asks to amend the last commit, so the composer
+  // opens already in amend mode (ALPH-154).
+  let amendRequestToken = $state(0);
   let commitsColWidth = $state(savedPaneWidth("vantage_commits_col_width", viewportPaneWidths().commits));
   let filesColWidth = $state(savedPaneWidth("vantage_files_col_width", viewportPaneWidths().files));
 
@@ -165,6 +169,32 @@
           selectFile($navigationTarget.path);
         }
       }
+    }
+  });
+
+  // Amend request from the command palette (ALPH-154): open the composer on the
+  // uncommitted row in amend mode for the targeted repo.
+  $effect(() => {
+    const req = $composerRequest;
+    if (!req) return;
+    if (repo && req.repoId === repo.id) {
+      isUncommittedSelected = true;
+      isRangeSelected = false;
+      selectedCommitSha = null;
+      currentScope = { type: "working" };
+      commitMode = true;
+      showCommitDetails = false;
+      amendRequestToken += 1;
+      loadScopeFiles({ type: "working" });
+    }
+    composerRequest.set(null);
+  });
+
+  // Drop a consumed amend request when the composer closes so reopening it does
+  // not unexpectedly start amending the last commit.
+  $effect(() => {
+    if (!(isUncommittedSelected && commitMode)) {
+      amendRequestToken = 0;
     }
   });
 
@@ -447,9 +477,10 @@
                   repoId={repo.id}
                   branch={status?.branch || "main"}
                   selectedPaths={checkedPaths}
-                  oncommit={() => {
-                    api.repoStatus(repo.id).then((s) => {
-                      loadHistory();
+                  amendToken={amendRequestToken}
+                  oncommit={(preserve = false) => {
+                    refreshSingleStatus(repo.id).then(() => {
+                      loadHistory(preserve);
                     });
                   }}
                 />

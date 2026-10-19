@@ -249,7 +249,7 @@
           <div class="recovery-header">
             <h3 class="text-strong">Recovery & Backups</h3>
             <p class="text-sm text-muted">
-              Restore uncommitted changes or dropped commits from automatic backups saved during discard or reset operations. Backups are stored in <code>refs/vantage/backup/*</code> for 30 days.
+              Restore uncommitted changes or dropped commits from automatic backups saved during discard, reset, amend, or undo operations. Backups are stored in <code>refs/vantage/backup/*</code> for 30 days.
             </p>
           </div>
 

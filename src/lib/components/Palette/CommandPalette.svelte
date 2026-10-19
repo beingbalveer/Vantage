@@ -18,9 +18,10 @@
   import { SHORTCUTS, formatKey } from "../../keys";
   import { fuzzyScore } from "../../fuzzy";
   import { formatRelativeTime } from "../../format";
-  import { addRepoDialogOpen, settingsOpen, shortcutsHelpOpen, addToast, sidebarCollapsed, openDialog } from "../../stores/ui";
+  import { addRepoDialogOpen, settingsOpen, shortcutsHelpOpen, addToast, sidebarCollapsed, openDialog, composerRequest } from "../../stores/ui";
   import type { Layout, CommitSummary } from "../../types";
   import * as api from "../../api";
+  import { runUndoLastCommit } from "../../undoCommit";
   import Icon from "../common/Icon.svelte";
 
   let query = $state("");
@@ -146,6 +147,34 @@
             await refreshSingleStatus(focusedRepoId);
           } catch (e: any) {
             addToast({ message: e.message || "Failed to mark as reviewed", kind: "error" });
+          }
+        },
+      },
+      {
+        id: "cmd_amend_last_commit",
+        title: "Amend last commit…",
+        action: () => {
+          $paletteOpen = false;
+          if (!focusedRepoId) {
+            addToast({ message: "No repository open in the focused pane", kind: "info" });
+            return;
+          }
+          composerRequest.set({ repoId: focusedRepoId, action: "amend" });
+        },
+      },
+      {
+        id: "cmd_undo_last_commit",
+        title: "Undo last commit",
+        action: async () => {
+          $paletteOpen = false;
+          if (!focusedRepoId) {
+            addToast({ message: "No repository open in the focused pane", kind: "info" });
+            return;
+          }
+          try {
+            await runUndoLastCommit(focusedRepoId);
+          } catch (e: any) {
+            addToast({ message: e.message || "Failed to undo last commit", kind: "error" });
           }
         },
       },

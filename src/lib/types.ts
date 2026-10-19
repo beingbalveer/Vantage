@@ -211,6 +211,23 @@ export interface EnvInfo {
   startupWarning?: string | null;
 }
 
+export interface HeadCommitInfo {
+  sha: string;
+  short: string;
+  subject: string;
+  body: string;
+  date: string;
+  isPushed: boolean;
+  hasParent: boolean;
+  operationInProgress: string | null;
+}
+
+export interface UndoCommitResult {
+  undone: CommitSummary;
+  backupRef: string;
+  message: string;
+}
+
 export interface CommitMsgResult {
   summary: string;
   body: string | null;

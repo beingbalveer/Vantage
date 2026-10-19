@@ -75,6 +75,124 @@ async fn load_backup_record(
     None
 }
 
+/// Detects an in-progress history-mutating git operation by inspecting the
+/// repository's real git directory. Pure (path in, operation name out) so it is
+/// cheap to reason about and test. Returns `None` when the tree is at rest.
+pub fn operation_in_progress(git_dir: &Path) -> Option<String> {
+    let has = |name: &str| git_dir.join(name).exists();
+    if has("MERGE_HEAD") {
+        Some("merge".to_string())
+    } else if has("rebase-merge") || has("rebase-apply") {
+        Some("rebase".to_string())
+    } else if has("CHERRY_PICK_HEAD") {
+        Some("cherry-pick".to_string())
+    } else if has("REVERT_HEAD") {
+        Some("revert".to_string())
+    } else {
+        None
+    }
+}
+
+/// Refuses amend/undo while a merge/rebase/cherry-pick/revert is in progress.
+/// The user finishes it in the terminal (F13/§12) rather than letting the app
+/// silently rewrite a half-applied history.
+async fn ensure_no_operation_in_progress(
+    runner: &GitRunner,
+    repo_path: &Path,
+) -> Result<(), AppError> {
+    let git_dir = get_real_git_dir(runner, repo_path).await?;
+    if let Some(op) = operation_in_progress(&git_dir) {
+        return Err(AppError::conflict(format!(
+            "A {} is in progress. Finish or abort it in the terminal before changing history.",
+            op
+        )));
+    }
+    Ok(())
+}
+
+/// Reads a single commit as a `CommitSummary` using the same machine format as
+/// history paging (`%x1f`/`%x1e` separators), so parsing stays in one place.
+async fn read_commit_summary(
+    runner: &GitRunner,
+    repo_path: &Path,
+    rev: &str,
+) -> Result<CommitSummary, AppError> {
+    let log_out = runner
+        .run_read(
+            repo_path,
+            &[
+                "log",
+                "-1",
+                "--format=%H%x1f%an%x1f%ae%x1f%aI%x1f%P%x1f%s%x1f%b%x1e",
+                "--shortstat",
+                rev,
+            ],
+        )
+        .await?;
+
+    crate::git::log::parse_log_output(&log_out.stdout_string(), &std::collections::HashSet::new())
+        .into_iter()
+        .next()
+        .ok_or_else(|| AppError::other("Failed to read commit summary"))
+}
+
+/// Details the commit composer needs before offering "Amend last commit":
+/// what HEAD is, whether it is already on a remote, whether it has a parent,
+/// and whether a merge/rebase is currently in progress.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HeadCommitInfo {
+    pub sha: String,
+    pub short: String,
+    pub subject: String,
+    pub body: String,
+    pub date: String,
+    pub is_pushed: bool,
+    pub has_parent: bool,
+    pub operation_in_progress: Option<String>,
+}
+
+pub async fn head_commit_info(
+    runner: &GitRunner,
+    repo_path: &Path,
+) -> Result<HeadCommitInfo, AppError> {
+    let git_dir = get_real_git_dir(runner, repo_path).await?;
+    let op = operation_in_progress(&git_dir);
+
+    let head_out = runner
+        .run_read(repo_path, &["rev-parse", "--verify", "HEAD"])
+        .await?;
+    if !head_out.success() {
+        return Err(AppError::other("There are no commits to amend yet."));
+    }
+    let head_sha = head_out.stdout_string().trim().to_string();
+
+    let commit = read_commit_summary(runner, repo_path, "HEAD").await?;
+
+    let has_parent = runner
+        .run_read(repo_path, &["rev-parse", "--verify", "HEAD~1"])
+        .await
+        .map(|o| o.success())
+        .unwrap_or(false);
+
+    // "Already pushed" only warns (amend rewrites the remote branch); it does
+    // not block, matching GitHub Desktop.
+    let is_pushed = check_pushed(runner, repo_path, &head_sha)
+        .await
+        .unwrap_or(false);
+
+    Ok(HeadCommitInfo {
+        sha: commit.sha.clone(),
+        short: commit.short.clone(),
+        subject: commit.subject.clone(),
+        body: commit.body.clone(),
+        date: commit.date.clone(),
+        is_pushed,
+        has_parent,
+        operation_in_progress: op,
+    })
+}
+
 pub async fn commit(
     runner: &GitRunner,
     repo_path: &Path,
@@ -311,6 +429,255 @@ pub async fn commit(
         .into_iter()
         .next()
         .ok_or_else(|| AppError::other("Failed to get commit summary after commit"))
+}
+
+/// Amend HEAD, optionally folding in the selected paths. Creates a backup ref
+/// first so the rewrite is always recoverable from Recovery. Author date is
+/// left untouched (git's `--amend` default); we deliberately do not pass
+/// `--reset-author`. An empty `paths` slice performs a message/body-only amend.
+pub async fn amend_commit(
+    runner: &GitRunner,
+    repo_path: &Path,
+    paths: &[String],
+    summary: &str,
+    body: Option<&str>,
+) -> Result<CommitSummary, AppError> {
+    if summary.trim().is_empty() {
+        return Err(AppError::other("Commit summary cannot be empty"));
+    }
+
+    let repo_lock = runner.get_repo_lock(repo_path).await;
+    let _repo_guard = repo_lock.lock().await;
+
+    ensure_no_operation_in_progress(runner, repo_path).await?;
+
+    let head_out = runner
+        .run_read(repo_path, &["rev-parse", "--verify", "HEAD"])
+        .await?;
+    if !head_out.success() {
+        return Err(AppError::other("There are no commits to amend yet."));
+    }
+    let old_head = head_out.stdout_string().trim().to_string();
+    let old_short: String = old_head.chars().take(7).collect();
+
+    // Backup the pre-amend commit before rewriting it.
+    let backup_id = format!(
+        "{}_{}",
+        Utc::now().timestamp_millis(),
+        uuid::Uuid::new_v4().simple()
+    );
+    let backup_ref = format!("refs/vantage/backup/{}-amend", backup_id);
+    let update_res = runner
+        .run_write(repo_path, &["update-ref", &backup_ref, &old_head], 20)
+        .await?;
+    if !update_res.success() {
+        return Err(AppError::other("Failed to create backup ref before amend"));
+    }
+
+    // Stage selected untracked files as intent-to-add so `--only` recognises
+    // them, and pull in the origin side of any selected renames.
+    let mut paths_to_commit: Vec<String> = paths.to_vec();
+    let mut untracked_in_paths: Vec<String> = Vec::new();
+
+    if !paths.is_empty() {
+        let status_out = runner
+            .run_read(
+                repo_path,
+                &["status", "--porcelain=v2", "-z", "--untracked-files=all"],
+            )
+            .await?;
+
+        let raw_parts: Vec<&[u8]> = status_out.stdout.split(|&b| b == 0).collect();
+        let mut i = 0;
+        while i < raw_parts.len() {
+            let part = raw_parts[i];
+            if part.is_empty() {
+                i += 1;
+                continue;
+            }
+
+            if part.starts_with(b"? ") {
+                let un_path = String::from_utf8_lossy(&part[2..]).to_string();
+                if paths.contains(&un_path) {
+                    untracked_in_paths.push(un_path);
+                }
+                i += 1;
+            } else if part.starts_with(b"2 ") {
+                let line = String::from_utf8_lossy(part);
+                let tokens: Vec<&str> = line.split(' ').collect();
+                if tokens.len() >= 9 && i + 1 < raw_parts.len() {
+                    let path = tokens[tokens.len() - 1].to_string();
+                    let orig_path = String::from_utf8_lossy(raw_parts[i + 1]).to_string();
+                    if paths.contains(&path) && !paths_to_commit.contains(&orig_path) {
+                        paths_to_commit.push(orig_path);
+                    }
+                    i += 2;
+                    continue;
+                }
+                i += 1;
+            } else {
+                i += 1;
+            }
+        }
+
+        if !untracked_in_paths.is_empty() {
+            let mut add_args = vec!["add", "-N", "--"];
+            for p in &untracked_in_paths {
+                add_args.push(p);
+            }
+            let add_out = runner.run_write_literal(repo_path, &add_args, 20).await?;
+            if !add_out.success() {
+                return Err(AppError::other(add_out.stderr));
+            }
+        }
+    }
+
+    let mut commit_args = vec!["commit", "--amend", "-m", summary];
+    let body_str;
+    if let Some(b) = body {
+        if !b.trim().is_empty() {
+            body_str = b.to_string();
+            commit_args.push("-m");
+            commit_args.push(&body_str);
+        }
+    }
+    // Message-only amend leaves the index untouched; otherwise limit the amend
+    // to the explicitly selected paths.
+    if !paths.is_empty() {
+        commit_args.push("--only");
+        commit_args.push("--");
+        for p in &paths_to_commit {
+            commit_args.push(p);
+        }
+    }
+
+    let commit_res = runner.run_write_literal(repo_path, &commit_args, 60).await;
+    match commit_res {
+        Ok(out) if out.success() => {}
+        Ok(out) => {
+            if !untracked_in_paths.is_empty() {
+                let mut reset_args = vec!["reset", "HEAD", "--"];
+                for p in &untracked_in_paths {
+                    reset_args.push(p);
+                }
+                let _ = runner.run_write_literal(repo_path, &reset_args, 20).await;
+            }
+            return Err(AppError::other(out.stderr));
+        }
+        Err(e) => {
+            if !untracked_in_paths.is_empty() {
+                let mut reset_args = vec!["reset", "HEAD", "--"];
+                for p in &untracked_in_paths {
+                    reset_args.push(p);
+                }
+                let _ = runner.run_write_literal(repo_path, &reset_args, 20).await;
+            }
+            return Err(e);
+        }
+    }
+
+    let record = BackupRecord {
+        id: format!("{}-amend", backup_id),
+        kind: "amend".to_string(),
+        head_sha: Some(old_head),
+        stash_sha: None,
+        paths: Vec::new(),
+        untracked_dir: None,
+        created_at: Utc::now().to_rfc3339(),
+        description: format!("Amended commit {}", old_short),
+    };
+    save_backup_record(runner, repo_path, &record).await?;
+
+    read_commit_summary(runner, repo_path, "HEAD").await
+}
+
+/// Result of undoing the last commit: the removed commit, where its backup
+/// lives, and a human message for the toast.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UndoCommitResult {
+    pub undone: CommitSummary,
+    pub backup_ref: String,
+    pub message: String,
+}
+
+/// Pure helper so the wording of the undo outcome is unit-tested and shared.
+pub fn undo_success_message(short: &str, subject: &str) -> String {
+    format!(
+        "Undid commit {} ({}). Its changes are staged and the message is ready to re-commit.",
+        short, subject
+    )
+}
+
+/// `reset --soft HEAD~1`: move the branch back one commit while keeping the
+/// undone changes in the index and working tree, so nothing is lost and the
+/// commit can be re-created. A backup ref of the removed commit is saved first.
+pub async fn undo_last_commit(
+    runner: &GitRunner,
+    repo_path: &Path,
+) -> Result<UndoCommitResult, AppError> {
+    let repo_lock = runner.get_repo_lock(repo_path).await;
+    let _repo_guard = repo_lock.lock().await;
+
+    ensure_no_operation_in_progress(runner, repo_path).await?;
+
+    let head_out = runner
+        .run_read(repo_path, &["rev-parse", "--verify", "HEAD"])
+        .await?;
+    if !head_out.success() {
+        return Err(AppError::other("There are no commits to undo yet."));
+    }
+    let old_head = head_out.stdout_string().trim().to_string();
+
+    let parent_out = runner
+        .run_read(repo_path, &["rev-parse", "--verify", "HEAD~1"])
+        .await?;
+    if !parent_out.success() {
+        return Err(AppError::other(
+            "Cannot undo the initial commit — there is no earlier commit to reset to.",
+        ));
+    }
+
+    let undone = read_commit_summary(runner, repo_path, "HEAD").await?;
+
+    // Backup the commit we are about to remove so it is never silently lost.
+    let backup_id = format!(
+        "{}_{}",
+        Utc::now().timestamp_millis(),
+        uuid::Uuid::new_v4().simple()
+    );
+    let backup_ref = format!("refs/vantage/backup/{}-undo", backup_id);
+    let update_res = runner
+        .run_write(repo_path, &["update-ref", &backup_ref, &old_head], 20)
+        .await?;
+    if !update_res.success() {
+        return Err(AppError::other("Failed to create backup ref before undo"));
+    }
+
+    let out = runner
+        .run_write(repo_path, &["reset", "--soft", "HEAD~1"], 30)
+        .await?;
+    if !out.success() {
+        return Err(AppError::other(out.stderr));
+    }
+
+    let record = BackupRecord {
+        id: format!("{}-undo", backup_id),
+        kind: "undo".to_string(),
+        head_sha: Some(old_head),
+        stash_sha: None,
+        paths: Vec::new(),
+        untracked_dir: None,
+        created_at: Utc::now().to_rfc3339(),
+        description: format!("Undo commit {}", undone.short),
+    };
+    save_backup_record(runner, repo_path, &record).await?;
+
+    Ok(UndoCommitResult {
+        message: undo_success_message(&undone.short, &undone.subject),
+        backup_ref,
+        undone,
+    })
 }
 
 pub async fn discard(
@@ -713,6 +1080,10 @@ pub async fn list_backups(
                     "reset"
                 } else if r_ref.contains("discard") {
                     "discard"
+                } else if r_ref.contains("amend") {
+                    "amend"
+                } else if r_ref.contains("undo") {
+                    "undo"
                 } else {
                     "backup"
                 };
@@ -793,6 +1164,18 @@ pub async fn restore_backup(
                         .await;
                 }
             }
+        } else if record.kind == "amend" || record.kind == "undo" {
+            // Put HEAD back on the pre-amend / pre-undo commit. The rewritten
+            // (amend) or removed (undo) commit's changes are contained in this
+            // commit, so a hard reset restores the exact prior state.
+            if let Some(ref head) = record.head_sha {
+                let out = runner
+                    .run_write(repo_path, &["reset", "--hard", head], 30)
+                    .await?;
+                if !out.success() {
+                    return Err(AppError::other(out.stderr));
+                }
+            }
         } else if record.kind == "discard" {
             // Restore ONLY the specific tracked files that were discarded (R08)
             if let Some(ref stash) = record.stash_sha {
@@ -856,6 +1239,13 @@ pub async fn restore_backup(
             return Err(AppError::other(out.stderr));
         }
     } else if backup_ref.contains("reset") {
+        let out = runner
+            .run_write(repo_path, &["reset", "--hard", backup_ref], 30)
+            .await?;
+        if !out.success() {
+            return Err(AppError::other(out.stderr));
+        }
+    } else if backup_ref.contains("amend") || backup_ref.contains("undo") {
         let out = runner
             .run_write(repo_path, &["reset", "--hard", backup_ref], 30)
             .await?;
@@ -1350,5 +1740,282 @@ mod tests {
         let backups = list_backups(&runner, &repo.path).await.unwrap();
         assert_eq!(backups.len(), 1);
         assert_eq!(backups[0].r#ref, recent_ref);
+    }
+
+    #[test]
+    fn test_operation_in_progress_detection() {
+        let base = std::env::temp_dir().join(format!("vantage_op_{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(&base).unwrap();
+
+        // At rest.
+        assert_eq!(operation_in_progress(&base), None);
+
+        // Merge.
+        fs::write(base.join("MERGE_HEAD"), "abc\n").unwrap();
+        assert_eq!(operation_in_progress(&base), Some("merge".to_string()));
+        fs::remove_file(base.join("MERGE_HEAD")).unwrap();
+
+        // Rebase (directory marker).
+        fs::create_dir_all(base.join("rebase-merge")).unwrap();
+        assert_eq!(operation_in_progress(&base), Some("rebase".to_string()));
+        fs::remove_dir_all(base.join("rebase-merge")).unwrap();
+
+        // Cherry-pick takes precedence over revert ordering.
+        fs::write(base.join("CHERRY_PICK_HEAD"), "abc\n").unwrap();
+        assert_eq!(operation_in_progress(&base), Some("cherry-pick".to_string()));
+
+        let _ = fs::remove_dir_all(&base);
+    }
+
+    #[tokio::test]
+    async fn test_amend_preserves_author_date_and_updates_message() {
+        let runner = GitRunner::new();
+        let repo = TempTestRepo::new(&runner).await;
+
+        let f = repo.path.join("file.txt");
+        fs::write(&f, "v1\n").unwrap();
+        runner
+            .run_write(&repo.path, &["add", "file.txt"], 10)
+            .await
+            .unwrap();
+        runner
+            .run_write(&repo.path, &["commit", "-m", "frist commit"], 10)
+            .await
+            .unwrap();
+
+        let author_before = runner
+            .run_read(&repo.path, &["log", "-1", "--format=%aI"])
+            .await
+            .unwrap()
+            .stdout_string()
+            .trim()
+            .to_string();
+        let original_head = runner
+            .run_read(&repo.path, &["rev-parse", "HEAD"])
+            .await
+            .unwrap()
+            .stdout_string()
+            .trim()
+            .to_string();
+
+        // Add a forgotten file, then amend with a corrected message.
+        let extra = repo.path.join("forgotten.txt");
+        fs::write(&extra, "forgotten\n").unwrap();
+
+        let amended = amend_commit(
+            &runner,
+            &repo.path,
+            &["forgotten.txt".to_string()],
+            "first commit (fixed)",
+            None,
+        )
+        .await
+        .expect("amend should succeed");
+
+        assert_eq!(amended.subject, "first commit (fixed)");
+        assert_ne!(amended.sha, original_head, "amend must rewrite the commit");
+
+        let author_after = runner
+            .run_read(&repo.path, &["log", "-1", "--format=%aI"])
+            .await
+            .unwrap()
+            .stdout_string()
+            .trim()
+            .to_string();
+        assert_eq!(
+            author_before, author_after,
+            "amend must preserve the author date"
+        );
+
+        // The forgotten file is now part of HEAD.
+        let files = runner
+            .run_read(&repo.path, &["show", "--name-only", "--format=", "HEAD"])
+            .await
+            .unwrap()
+            .stdout_string();
+        assert!(files.contains("forgotten.txt"));
+
+        // A recoverable backup of the pre-amend commit exists.
+        let backups = list_backups(&runner, &repo.path).await.unwrap();
+        assert!(backups.iter().any(|b| b.kind == "amend"));
+
+        // Recovery restores the original commit.
+        let amend_backup = backups.iter().find(|b| b.kind == "amend").unwrap();
+        restore_backup(&runner, &repo.path, &amend_backup.r#ref)
+            .await
+            .unwrap();
+        let restored = runner
+            .run_read(&repo.path, &["rev-parse", "HEAD"])
+            .await
+            .unwrap()
+            .stdout_string()
+            .trim()
+            .to_string();
+        assert_eq!(restored, original_head);
+    }
+
+    #[tokio::test]
+    async fn test_undo_last_commit_soft_resets_and_keeps_message() {
+        let runner = GitRunner::new();
+        let repo = TempTestRepo::new(&runner).await;
+
+        let f = repo.path.join("file.txt");
+        fs::write(&f, "v1\n").unwrap();
+        runner
+            .run_write(&repo.path, &["add", "file.txt"], 10)
+            .await
+            .unwrap();
+        runner
+            .run_write(&repo.path, &["commit", "-m", "c1"], 10)
+            .await
+            .unwrap();
+        let c1 = runner
+            .run_read(&repo.path, &["rev-parse", "HEAD"])
+            .await
+            .unwrap()
+            .stdout_string()
+            .trim()
+            .to_string();
+
+        fs::write(&f, "v2\n").unwrap();
+        runner
+            .run_write(&repo.path, &["commit", "-am", "c2 subject"], 10)
+            .await
+            .unwrap();
+
+        let result = undo_last_commit(&runner, &repo.path)
+            .await
+            .expect("undo should succeed");
+
+        // HEAD moved back to c1.
+        let new_head = runner
+            .run_read(&repo.path, &["rev-parse", "HEAD"])
+            .await
+            .unwrap()
+            .stdout_string()
+            .trim()
+            .to_string();
+        assert_eq!(new_head, c1);
+
+        // Message is preserved for re-commit.
+        assert_eq!(result.undone.subject, "c2 subject");
+        assert!(result.message.contains("c2 subject"));
+
+        // The undone changes are staged (soft reset), not lost.
+        let status = runner
+            .run_read(&repo.path, &["status", "--porcelain"])
+            .await
+            .unwrap()
+            .stdout_string();
+        assert!(
+            status.contains("M  file.txt"),
+            "undone change must remain staged: {}",
+            status
+        );
+
+        // A recoverable backup of the undone commit exists and restores it.
+        let backups = list_backups(&runner, &repo.path).await.unwrap();
+        let undo_backup = backups.iter().find(|b| b.kind == "undo").unwrap();
+        restore_backup(&runner, &repo.path, &undo_backup.r#ref)
+            .await
+            .unwrap();
+        let restored = runner
+            .run_read(&repo.path, &["rev-parse", "HEAD"])
+            .await
+            .unwrap()
+            .stdout_string()
+            .trim()
+            .to_string();
+        assert_ne!(restored, c1);
+        assert_eq!(fs::read_to_string(&f).unwrap(), "v2\n");
+    }
+
+    #[tokio::test]
+    async fn test_undo_and_amend_refuse_mid_merge() {
+        let runner = GitRunner::new();
+        let repo = TempTestRepo::new(&runner).await;
+
+        let f = repo.path.join("file.txt");
+        fs::write(&f, "v1\n").unwrap();
+        runner
+            .run_write(&repo.path, &["add", "file.txt"], 10)
+            .await
+            .unwrap();
+        runner
+            .run_write(&repo.path, &["commit", "-m", "c1"], 10)
+            .await
+            .unwrap();
+
+        // Simulate a merge in progress.
+        let git_dir = get_real_git_dir(&runner, &repo.path).await.unwrap();
+        fs::write(git_dir.join("MERGE_HEAD"), "abc\n").unwrap();
+
+        let undo_err = undo_last_commit(&runner, &repo.path).await;
+        assert!(undo_err.is_err(), "undo must refuse mid-merge");
+        assert_eq!(undo_err.unwrap_err().code, "Conflict");
+
+        let amend_err = amend_commit(&runner, &repo.path, &[], "nope", None).await;
+        assert!(amend_err.is_err(), "amend must refuse mid-merge");
+        assert_eq!(amend_err.unwrap_err().code, "Conflict");
+    }
+
+    #[tokio::test]
+    async fn test_undo_refuses_on_unborn_or_initial_commit() {
+        let runner = GitRunner::new();
+        let repo = TempTestRepo::new(&runner).await;
+
+        // Unborn HEAD (no commits yet).
+        let unborn_err = undo_last_commit(&runner, &repo.path).await;
+        assert!(unborn_err.is_err());
+        assert_eq!(unborn_err.unwrap_err().code, "Other");
+
+        // Single initial commit has no parent to reset to.
+        let f = repo.path.join("file.txt");
+        fs::write(&f, "v1\n").unwrap();
+        runner
+            .run_write(&repo.path, &["add", "file.txt"], 10)
+            .await
+            .unwrap();
+        runner
+            .run_write(&repo.path, &["commit", "-m", "root"], 10)
+            .await
+            .unwrap();
+
+        let root_err = undo_last_commit(&runner, &repo.path).await;
+        assert!(root_err.is_err(), "must refuse to undo the initial commit");
+        assert!(root_err
+            .unwrap_err()
+            .message
+            .contains("initial commit"));
+    }
+
+    #[tokio::test]
+    async fn test_amend_message_only_without_paths() {
+        let runner = GitRunner::new();
+        let repo = TempTestRepo::new(&runner).await;
+
+        let f = repo.path.join("file.txt");
+        fs::write(&f, "v1\n").unwrap();
+        runner
+            .run_write(&repo.path, &["add", "file.txt"], 10)
+            .await
+            .unwrap();
+        runner
+            .run_write(&repo.path, &["commit", "-m", "typo msg"], 10)
+            .await
+            .unwrap();
+
+        let amended = amend_commit(&runner, &repo.path, &[], "fixed msg", None)
+            .await
+            .expect("message-only amend should succeed");
+        assert_eq!(amended.subject, "fixed msg");
+
+        // No working-tree changes should have been introduced.
+        let status = runner
+            .run_read(&repo.path, &["status", "--porcelain"])
+            .await
+            .unwrap()
+            .stdout_string();
+        assert!(status.trim().is_empty(), "index must stay clean: {}", status);
     }
 }

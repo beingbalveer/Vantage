@@ -4,9 +4,11 @@ use crate::git::diff::{get_scope_file_diff, get_scope_files};
 use crate::git::grep::{blame_line as git_blame_line, grep_definitions};
 use crate::git::log::get_log_page;
 use crate::git::ops::{
-    check_pushed as git_check_pushed, commit as git_commit, discard as git_discard, list_backups,
+    amend_commit as git_amend_commit, check_pushed as git_check_pushed, commit as git_commit,
+    discard as git_discard, head_commit_info as git_head_commit_info, list_backups,
     reset_to as git_reset_to, restore_backup, revert as git_revert,
-    revert_range as git_revert_range,
+    revert_range as git_revert_range, undo_last_commit as git_undo_last_commit,
+    HeadCommitInfo, UndoCommitResult,
 };
 use crate::git::refs::{
     checkout_branch, get_remote_url, list_branches, sync_fetch as git_sync_fetch,
@@ -672,6 +674,65 @@ pub async fn commit(
 
     verify_branch_checked_out(&state.runner, &repo_path, branch.as_deref()).await?;
     git_commit(&state.runner, &repo_path, &paths, &summary, body.as_deref()).await
+}
+
+#[tauri::command]
+pub async fn head_commit_info(
+    state: State<'_, AppState>,
+    id: String,
+) -> Result<HeadCommitInfo, AppError> {
+    let repo_path = {
+        let data = state.data.lock().await;
+        let entry = data
+            .repos
+            .iter()
+            .find(|r| r.id == id)
+            .ok_or_else(|| AppError::not_found("Repository not found"))?;
+        PathBuf::from(&entry.path)
+    };
+
+    git_head_commit_info(&state.runner, &repo_path).await
+}
+
+#[tauri::command]
+pub async fn amend_commit(
+    state: State<'_, AppState>,
+    id: String,
+    paths: Vec<String>,
+    summary: String,
+    body: Option<String>,
+) -> Result<CommitSummary, AppError> {
+    let (repo_path, branch) = {
+        let data = state.data.lock().await;
+        let entry = data
+            .repos
+            .iter()
+            .find(|r| r.id == id)
+            .ok_or_else(|| AppError::not_found("Repository not found"))?;
+        (PathBuf::from(&entry.path), entry.branch.clone())
+    };
+
+    verify_branch_checked_out(&state.runner, &repo_path, branch.as_deref()).await?;
+    git_amend_commit(&state.runner, &repo_path, &paths, &summary, body.as_deref()).await
+}
+
+#[tauri::command]
+pub async fn undo_last_commit(
+    state: State<'_, AppState>,
+    id: String,
+) -> Result<UndoCommitResult, AppError> {
+    let (repo_path, branch) = {
+        let data = state.data.lock().await;
+        let entry = data
+            .repos
+            .iter()
+            .find(|r| r.id == id)
+            .ok_or_else(|| AppError::not_found("Repository not found"))?;
+        (PathBuf::from(&entry.path), entry.branch.clone())
+    };
+
+    verify_branch_checked_out(&state.runner, &repo_path, branch.as_deref()).await?;
+    git_undo_last_commit(&state.runner, &repo_path).await
 }
 
 #[tauri::command]

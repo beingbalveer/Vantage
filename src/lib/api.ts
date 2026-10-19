@@ -12,12 +12,14 @@ import type {
   DiffScope,
   EnvInfo,
   FileChange,
+  HeadCommitInfo,
   Layout,
   RepoEntry,
   RepoStatus,
   RepoStackInfo,
   Settings,
   TriageFlag,
+  UndoCommitResult,
 } from "./types";
 
 // Repos
@@ -165,6 +167,23 @@ export async function commit(
   body?: string
 ): Promise<CommitSummary> {
   return invoke("commit", { id, paths, summary, body });
+}
+
+export async function headCommitInfo(id: string): Promise<HeadCommitInfo> {
+  return invoke("head_commit_info", { id });
+}
+
+export async function amendCommit(
+  id: string,
+  paths: string[],
+  summary: string,
+  body?: string
+): Promise<CommitSummary> {
+  return invoke("amend_commit", { id, paths, summary, body });
+}
+
+export async function undoLastCommit(id: string): Promise<UndoCommitResult> {
+  return invoke("undo_last_commit", { id });
 }
 
 export async function discard(id: string, paths: string[]): Promise<BackupInfo> {
