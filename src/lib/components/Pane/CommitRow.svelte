@@ -26,7 +26,7 @@
   class="commit-item {isSelected ? 'active' : ''} {commit.isNew ? 'is-new' : 'is-reviewed'} {isMerge ? 'merge-commit' : ''} {isLocal ? 'is-local' : ''}"
   onclick={handleTrigger}
   onkeydown={(e) => {
-    if (e.key === "Enter" || e.key === " ") {
+    if (e.key === " ") {
       e.preventDefault();
       handleTrigger(e);
     }

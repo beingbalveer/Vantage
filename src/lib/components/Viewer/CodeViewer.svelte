@@ -6,6 +6,7 @@
   import { formatRelativeTime } from "../../format";
   import { isMac } from "../../keys";
   import { addToast } from "../../stores/ui";
+  import { registerHandler, registerDismiss, ownsPaneKeyboard } from "../../commands";
   import Icon from "../common/Icon.svelte";
 
   interface Props {
@@ -13,6 +14,7 @@
     path: string;
     rev?: string;
     targetLine?: number;
+    paneIndex?: number;
     onopenineditor?: () => void;
     onnavigatetofile?: (path: string, line: number) => void;
   }
@@ -22,6 +24,7 @@
     path = $bindable(),
     rev = "HEAD",
     targetLine,
+    paneIndex = 0,
     onopenineditor,
     onnavigatetofile,
   }: Props = $props();
@@ -309,31 +312,53 @@
     }
   }
 
-  function handleGlobalKeydown(e: KeyboardEvent) {
-    const isMacPlatform = isMac();
-    const mod = isMacPlatform ? e.metaKey : e.ctrlKey;
-
-    if (mod && (e.key === "f" || e.key === "F")) {
-      e.preventDefault();
-      openFindBar();
-    } else if (e.key === "F12") {
-      e.preventDefault();
-      const sel = window.getSelection()?.toString().trim();
-      const word = sel || getWordUnderCaret();
-      if (word) handlePeekDef(word);
-    } else if (e.key === "Escape") {
-      if (findOpen) {
-        findOpen = false;
-      }
-      if (peekOpen) {
-        peekOpen = false;
-      }
-      handleLineLeave();
-    }
+  function peekFromSelection(): boolean {
+    const sel = window.getSelection()?.toString().trim();
+    const word = sel || getWordUnderCaret();
+    if (!word) return false;
+    void handlePeekDef(word);
+    return true;
   }
-</script>
 
-<svelte:window onkeydown={handleGlobalKeydown} />
+  // Shortcuts for the code viewer are owned by the registry so the router can
+  // apply the shared typing guard and context resolution.
+  $effect(() => {
+    const unregister = [
+      registerHandler(
+        "find_in_file",
+        () => {
+          if (!ownsPaneKeyboard(paneIndex)) return false;
+          void openFindBar();
+          return true;
+        },
+        "files"
+      ),
+      registerHandler(
+        "peek_def",
+        () => (ownsPaneKeyboard(paneIndex) ? peekFromSelection() : false),
+        "files"
+      ),
+      registerDismiss(() => {
+        if (!ownsPaneKeyboard(paneIndex)) return false;
+        let closed = false;
+        if (findOpen) {
+          findOpen = false;
+          closed = true;
+        }
+        if (peekOpen) {
+          peekOpen = false;
+          closed = true;
+        }
+        if (blameLineNo != null) {
+          handleLineLeave();
+          closed = true;
+        }
+        return closed;
+      }),
+    ];
+    return () => unregister.forEach((off) => off());
+  });
+</script>
 
 <div class="code-viewer">
   <!-- Viewer Header -->

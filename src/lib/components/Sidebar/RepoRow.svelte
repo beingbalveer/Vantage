@@ -10,6 +10,7 @@
   } from "../../stores/panes";
   import { repos, loadRepos, activeRepoId, removeRepo } from "../../stores/repos";
   import { addToast, sidebarCollapsed, openDialog } from "../../stores/ui";
+  import { registerDismiss } from "../../commands";
   import * as api from "../../api";
   import { get } from "svelte/store";
   import Icon from "../common/Icon.svelte";
@@ -54,17 +55,33 @@
   }
 
   onMount(() => {
-    // Scroll (capture, since scroll doesn't bubble) and Escape dismiss the card.
+    // Scroll (capture, since scroll doesn't bubble) dismisses the card.
     const onScroll = () => stopHover();
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") stopHover();
-    };
     window.addEventListener("scroll", onScroll, true);
-    window.addEventListener("keydown", onKey);
     return () => {
       window.removeEventListener("scroll", onScroll, true);
-      window.removeEventListener("keydown", onKey);
     };
+  });
+
+  // Escape is owned by the registry's dismiss stack (no ad-hoc window listener).
+  $effect(() => {
+    const unregister = registerDismiss(() => {
+      if (showMenu) {
+        showMenu = false;
+        menuPos = null;
+        return true;
+      }
+      if (showBranchModal) {
+        showBranchModal = false;
+        return true;
+      }
+      if (hovered) {
+        stopHover();
+        return true;
+      }
+      return false;
+    });
+    return unregister;
   });
 
   // Collapse/expand transitions must dismiss the card.

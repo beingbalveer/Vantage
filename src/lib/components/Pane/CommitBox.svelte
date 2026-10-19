@@ -2,6 +2,7 @@
   import { settings } from "../../stores/settings";
   import * as api from "../../api";
   import { addToast } from "../../stores/ui";
+  import { registerHandler } from "../../commands";
   import Icon from "../common/Icon.svelte";
 
   interface Props {
@@ -63,6 +64,21 @@
       isCommitting = false;
     }
   }
+
+  $effect(() => {
+    const unregister = registerHandler(
+      "commit",
+      () => {
+        const active = document.activeElement as HTMLElement | null;
+        if (!active?.closest(".commit-box")) return false;
+        if (!canCommit) return false;
+        void handleCommit();
+        return true;
+      },
+      "history"
+    );
+    return unregister;
+  });
 </script>
 
 <div class="commit-box">
@@ -74,11 +90,6 @@
       aria-label="Commit summary"
       bind:value={summary}
       class="summary-input"
-      onkeydown={(e) => {
-        if ((e.metaKey || e.ctrlKey) && e.key === "Enter") {
-          handleCommit();
-        }
-      }}
     />
     {#if hasAiCmd}
       <button

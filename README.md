@@ -76,26 +76,32 @@ Press `?` inside Vantage at any time to open the interactive keyboard shortcut o
 | `Mod+O` | Add repository |
 | `Mod+1` / `Mod+2` / `Mod+3` | Focus pane 1, 2, or 3 |
 | `Mod+\` | Cycle pane count (1, 2, 3 columns) |
+| `Mod+W` | Close focused pane |
 | `Mod+B` | Toggle sidebar (full / collapsed icons) |
 | `` Mod+` `` | Toggle terminal drawer in focused pane |
 | `Mod+[` / `Mod+]` | Switch to previous / next repository in focused pane |
 | `Mod+,` | Open Settings |
-| `Mod+Shift+F` | Fetch repository |
-| `j` / `k` | Navigate next / previous item in focused list (commits, files) |
+| `Mod+Shift+R` | Refresh all repositories |
+| `Mod+Shift+F` | Fetch / Pull / Push (Sync) |
+| `j` / `k` | Navigate next / previous item in focused list (commits or files) |
 | `Shift+j` / `Shift+k` | Extend commit selection |
 | `{` / `}` | Jump to previous / next flagged commit |
-| `r` | Mark reviewed (advances marker to HEAD) |
+| `Enter` | Move focus: commits → files → diff (History tab) |
+| `r` | Mark reviewed (advances marker to HEAD, or to the newest selected commit) |
+| `c` | Copy commit SHA (History tab) / copy repository path (Files tab) |
 | `]` / `[` | Jump to next / previous file in diff |
 | `n` / `p` | Jump to next / previous hunk |
 | `e` | Expand all context in current file |
 | `w` | Toggle ignore whitespace |
-| `c` | Copy commit SHA |
-| `/` | Search history or filter files |
-| `Alt+Click` / `F12` | Peek symbol definition |
-| `Mod+Enter` | Commit staged changes / Save review note |
-| `Esc` | Close dialog, palette, or popover |
+| `/` | Filter the file list (Files tab) |
+| `F12` | Peek symbol definition (code viewer; `Alt+Click` also works) |
+| `Mod+F` | Find in file (code viewer) |
+| `Mod+Enter` | Commit selected changes (when the commit box is open) |
+| `t` | Switch between History and Files tabs |
+| `?` | Keyboard shortcuts help |
+| `Esc` | Close dialog, palette, menu, or popover |
 
-*`Mod` corresponds to `Cmd` on macOS and `Ctrl` on Windows / Linux.*
+*`Mod` corresponds to `Cmd` on macOS and `Ctrl` on Windows / Linux. Single-letter shortcuts never fire while typing in an input or the terminal; the terminal keeps only the modifier shortcuts it needs (`` Mod+` ``, `Mod+1/2/3`, `Mod+B`, `Mod+[` / `Mod+]`, and `Ctrl+Shift+P` on Windows / Linux).*
 
 ---
 

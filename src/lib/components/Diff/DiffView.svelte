@@ -6,6 +6,7 @@
   import { panes, focusedPaneIndex } from "../../stores/panes";
   import { addToast } from "../../stores/ui";
   import { settings, updateSettings } from "../../stores/settings";
+  import { registerHandler, registerDismiss, ownsPaneKeyboard } from "../../commands";
   import Icon from "../common/Icon.svelte";
 
   interface Props {
@@ -14,6 +15,7 @@
     ignoreWhitespace?: boolean;
     repoId?: string;
     rev?: string;
+    paneIndex?: number;
     onexpandcontext?: (oldStart: number, count: number) => void;
     onviewfile?: (path: string) => void;
     onloadforce?: () => void;
@@ -25,6 +27,7 @@
     ignoreWhitespace = false,
     repoId,
     rev = "HEAD",
+    paneIndex = 0,
     onexpandcontext,
     onviewfile,
     onloadforce,
@@ -64,6 +67,70 @@
     end: number;
     side: NoteSide;
   } | null>(null);
+
+  // Hunk navigation / diff body focus target for Enter.
+  let diffBodyEl = $state<HTMLElement | null>(null);
+  let activeHunkIndex = $state(-1);
+
+  $effect(() => {
+    // Reset hunk cursor whenever the displayed file changes.
+    void diffFile;
+    activeHunkIndex = -1;
+  });
+
+  function moveHunk(direction: 1 | -1): boolean {
+    if (!diffBodyEl || localHunks.length === 0) return false;
+    const headers = Array.from(
+      diffBodyEl.querySelectorAll<HTMLElement>("[data-hunk-index]")
+    );
+    if (headers.length === 0) return false;
+
+    if (activeHunkIndex < 0) {
+      activeHunkIndex = direction > 0 ? 0 : headers.length - 1;
+    } else {
+      activeHunkIndex = Math.max(
+        0,
+        Math.min(headers.length - 1, activeHunkIndex + direction)
+      );
+    }
+    headers[activeHunkIndex]?.scrollIntoView({ block: "start", behavior: "smooth" });
+    return true;
+  }
+
+  // Registry-owned shortcuts. There is no component-level `window` listener:
+  // the single router in lib/commands.ts decides ownership and typing guards.
+  $effect(() => {
+    const unregister = [
+      registerHandler(
+        "expand_context",
+        () => {
+          if (!ownsPaneKeyboard(paneIndex) || !diffFile) return false;
+          void expandAllContext();
+          return true;
+        },
+        "diff"
+      ),
+      registerHandler(
+        "next_hunk",
+        () => (ownsPaneKeyboard(paneIndex) ? moveHunk(1) : false),
+        "diff"
+      ),
+      registerHandler(
+        "prev_hunk",
+        () => (ownsPaneKeyboard(paneIndex) ? moveHunk(-1) : false),
+        "diff"
+      ),
+      registerDismiss(() => {
+        if (!ownsPaneKeyboard(paneIndex)) return false;
+        if (selectedRange) {
+          selectedRange = null;
+          return true;
+        }
+        return false;
+      }),
+    ];
+    return () => unregister.forEach((off) => off());
+  });
 
   function handleLineClick(lineNo: number | null, side: NoteSide, e: MouseEvent) {
     if (lineNo == null) return;
@@ -294,27 +361,6 @@
     }
   }
 
-  function handleKeydown(e: KeyboardEvent) {
-    const target = e.target as HTMLElement | null;
-    if (
-      target &&
-      (target.tagName === "INPUT" ||
-        target.tagName === "TEXTAREA" ||
-        target.isContentEditable)
-    ) {
-      return;
-    }
-
-    if (e.key === "e" || e.key === "E") {
-      if (!e.metaKey && !e.ctrlKey && !e.altKey) {
-        e.preventDefault();
-        expandAllContext();
-      }
-    } else if (e.key === "Escape") {
-      selectedRange = null;
-    }
-  }
-
   /** Normalized hunk label. The backend already stores context (text after the
    *  second `@@`), so we only strip a leading range if one slipped through,
    *  which prevents printing `@@ … @@` twice (RELAY-UI · UI-06). */
@@ -370,8 +416,6 @@
   }
 </script>
 
-<svelte:window onkeydown={handleKeydown} />
-
 <div class="diff-view-container">
   {#if !diffFile}
     <div class="empty-diff">
@@ -405,7 +449,7 @@
     </div>
 
     <!-- Hunks Body -->
-    <div class="diff-body">
+    <div class="diff-body" bind:this={diffBodyEl} tabindex="-1">
         {#if localHunks.length === 0}
           <div class="empty-diff">
             <span class="text-muted">No changes in this file</span>
@@ -447,7 +491,7 @@
             {/if}
 
             <!-- Hunk Header -->
-            <div class="hunk-header font-mono text-xs">
+            <div class="hunk-header font-mono text-xs" data-hunk-index={hIdx}>
               {hunkLabel(hunk)}
             </div>
 
@@ -655,6 +699,7 @@
     flex: 1;
     overflow: auto;
     min-width: 100%;
+    outline: none;
   }
 
   .expand-row {

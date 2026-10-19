@@ -3,6 +3,7 @@
   import * as api from "../../api";
   import CodeViewer from "../Viewer/CodeViewer.svelte";
   import { createHorizontalResizer } from "../../resizer";
+  import { registerHandler, ownsPaneKeyboard } from "../../commands";
   import Icon from "../common/Icon.svelte";
   import { navigationTarget } from "../../stores/navigation";
 
@@ -11,14 +12,23 @@
     rev?: string;
     targetFile?: string | null;
     targetLine?: number | null;
+    paneIndex?: number;
   }
 
-  let { repoId, rev = "HEAD", targetFile = null, targetLine: initialTargetLine = null }: Props = $props();
+  let {
+    repoId,
+    rev = "HEAD",
+    targetFile = null,
+    targetLine: initialTargetLine = null,
+    paneIndex = 0,
+  }: Props = $props();
 
   let fileList = $state<string[]>([]);
   let filterText = $state("");
   let selectedFile = $state<string | null>(null);
   let activeTargetLine = $state<number | null>(null);
+  let filterEl = $state<HTMLInputElement | null>(null);
+  let treeEl = $state<HTMLElement | null>(null);
 
   $effect(() => {
     if (targetFile) selectedFile = targetFile;
@@ -78,6 +88,44 @@
       console.error("Failed to open external editor:", e);
     }
   }
+
+  function selectFileAt(index: number) {
+    const file = filteredFiles[index];
+    if (!file) return;
+    selectedFile = file;
+    activeTargetLine = null;
+    queueMicrotask(() => {
+      treeEl?.querySelector<HTMLElement>(`[data-file-row="${CSS.escape(file)}"]`)?.scrollIntoView({
+        block: "nearest",
+      });
+    });
+  }
+
+  function moveFile(delta: 1 | -1): boolean {
+    if (!ownsPaneKeyboard(paneIndex) || filteredFiles.length === 0) return false;
+    const current = selectedFile ? filteredFiles.indexOf(selectedFile) : -1;
+    const next = Math.max(0, Math.min(filteredFiles.length - 1, (current < 0 ? 0 : current) + delta));
+    selectFileAt(next);
+    return true;
+  }
+
+  $effect(() => {
+    const unregister = [
+      registerHandler(
+        "filter_files",
+        () => {
+          if (!ownsPaneKeyboard(paneIndex)) return false;
+          filterEl?.focus();
+          filterEl?.select();
+          return true;
+        },
+        "files"
+      ),
+      registerHandler("list_down", () => moveFile(1), "files"),
+      registerHandler("list_up", () => moveFile(-1), "files"),
+    ];
+    return () => unregister.forEach((off) => off());
+  });
 </script>
 
 <div class="files-tab-container">
@@ -85,6 +133,7 @@
   <div class="tree-pane" style="width: {treeWidth}px;">
     <div class="filter-header">
       <input
+        bind:this={filterEl}
         type="text"
         placeholder="Filter files (/)"
         bind:value={filterText}
@@ -92,11 +141,12 @@
       />
     </div>
 
-    <div class="file-tree-scroll">
+    <div class="file-tree-scroll" bind:this={treeEl}>
       {#each filteredFiles as f (f)}
         <button
           type="button"
           class="file-row {selectedFile === f ? 'selected' : ''}"
+          data-file-row={f}
           onclick={() => {
             selectedFile = f;
             activeTargetLine = null;
@@ -130,6 +180,7 @@
         path={selectedFile}
         rev={rev || "HEAD"}
         targetLine={activeTargetLine || undefined}
+        {paneIndex}
         onopenineditor={openInEditor}
         onnavigatetofile={(filePath, line) => {
           selectedFile = filePath;

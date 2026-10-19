@@ -11,6 +11,7 @@
   } from "../../stores/panes";
   import { paletteOpen, settingsOpen, shortcutsHelpOpen, sidebarCollapsed, addToast } from "../../stores/ui";
   import { setOperationRunning, setOperationSuccess, setOperationError } from "../../stores/operation";
+  import { registerDismiss } from "../../commands";
   import * as api from "../../api";
   import type { BranchInfo } from "../../types";
   import Icon from "../common/Icon.svelte";
@@ -222,12 +223,20 @@
     }
   }
 
-  function handleWindowKeydown(e: KeyboardEvent) {
-    if (e.key === "Escape") {
-      if (showBranchMenu) closeBranchMenu();
-      if (showMore) showMore = false;
-    }
-  }
+  $effect(() => {
+    const unregister = registerDismiss(() => {
+      if (showBranchMenu) {
+        closeBranchMenu();
+        return true;
+      }
+      if (showMore) {
+        showMore = false;
+        return true;
+      }
+      return false;
+    });
+    return unregister;
+  });
 
   onDestroy(() => {
     branchGeneration++;
@@ -235,8 +244,6 @@
     showMore = false;
   });
 </script>
-
-<svelte:window onkeydown={handleWindowKeydown} />
 
 <header class="top-header" data-tauri-drag-region>
   <div class="traffic-lights-spacer" data-tauri-drag-region></div>

@@ -1,25 +1,19 @@
 <script lang="ts">
   import { get } from "svelte/store";
-  import { paletteOpen } from "../../stores/ui";
-  import { repos, loadRepos, refreshSingleStatus, refreshAllStatuses, activeRepoId, removeRepo } from "../../stores/repos";
+  import { paletteOpen, addToast } from "../../stores/ui";
+  import { repos, activeRepoId } from "../../stores/repos";
   import {
     openRepoInFocusedPane,
     openRepoInNextPane,
-    cyclePaneCount,
-    setPaneCount,
-    paneCount,
-    closePane,
     panes,
     focusedPaneIndex,
     setPaneTab,
-    toggleTerminalInPane,
   } from "../../stores/panes";
-  import { settings, updateSettings } from "../../stores/settings";
-  import { SHORTCUTS, formatKey } from "../../keys";
+  import { formatKey } from "../../keys";
+  import { paletteCommands, runCommand, getBaseContexts, applyNamedLayout } from "../../commands";
   import { fuzzyScore } from "../../fuzzy";
   import { formatRelativeTime } from "../../format";
-  import { addRepoDialogOpen, settingsOpen, shortcutsHelpOpen, addToast, sidebarCollapsed, openDialog } from "../../stores/ui";
-  import type { Layout, CommitSummary } from "../../types";
+  import type { CommitSummary } from "../../types";
   import * as api from "../../api";
   import Icon from "../common/Icon.svelte";
 
@@ -102,406 +96,30 @@
   let items = $derived.by(() => {
     const list: PaletteItem[] = [];
 
-    // Commands definition
-    const commands: Omit<PaletteItem, "type" | "score">[] = [
-      {
-        id: "cmd_add_repo",
-        title: "Add repository…",
-        shortcut: "Mod+O",
-        action: () => {
-          $paletteOpen = false;
-          $addRepoDialogOpen = true;
-        },
+    // Commands come from the single shortcut registry so labels and
+    // keybindings cannot drift between the palette, Help and the router.
+    const commands: Omit<PaletteItem, "type" | "score">[] = paletteCommands(getBaseContexts()).map((c) => ({
+      id: c.id,
+      title: c.label,
+      shortcut: c.keys.length > 0 ? c.keys.map((k) => formatKey(k)).join(" / ") : undefined,
+      action: () => {
+        $paletteOpen = false;
+        runCommand(c.id);
       },
-      {
-        id: "cmd_browse_repo",
-        title: "Browse and add repository…",
-        action: async () => {
-          $paletteOpen = false;
-          try {
-            const selected = await api.pickDirectory();
-            if (selected) {
-              const entry = await api.repoAdd(selected);
-              addToast({ message: `Added repository ${entry.name}`, kind: "success" });
-              await loadRepos();
-            }
-          } catch (e: any) {
-            addToast({ message: e.message || "Failed to add repository", kind: "error" });
-          }
-        },
-      },
-      {
-        id: "cmd_mark_reviewed",
-        title: "Mark as reviewed",
-        shortcut: "r",
-        action: async () => {
-          $paletteOpen = false;
-          if (!focusedRepoId) {
-            addToast({ message: "No focused repository to mark reviewed", kind: "info" });
-            return;
-          }
-          try {
-            await api.markerSetToHead(focusedRepoId);
-            addToast({ message: "Marked as reviewed", kind: "success" });
-            await refreshSingleStatus(focusedRepoId);
-          } catch (e: any) {
-            addToast({ message: e.message || "Failed to mark as reviewed", kind: "error" });
-          }
-        },
-      },
-      {
-        id: "cmd_switch_tab",
-        title: "Switch tab (History / Files)",
-        shortcut: "t",
-        action: () => {
-          $paletteOpen = false;
-          const fIdx = get(focusedPaneIndex);
-          const currentPanes = get(panes);
-          const currentTab = currentPanes[fIdx]?.tab || "history";
-          setPaneTab(fIdx, currentTab === "history" ? "files" : "history");
-        },
-      },
-      {
-        id: "cmd_toggle_terminal",
-        title: "Toggle terminal drawer",
-        shortcut: "Mod+`",
-        action: () => {
-          $paletteOpen = false;
-          const fIdx = get(focusedPaneIndex);
-          toggleTerminalInPane(fIdx);
-        },
-      },
-      {
-        id: "cmd_toggle_sidebar",
-        title: "Toggle sidebar",
-        shortcut: "Mod+B",
-        action: () => {
-          $paletteOpen = false;
-          $sidebarCollapsed = !$sidebarCollapsed;
-        },
-      },
-      {
-        id: "cmd_toggle_whitespace",
-        title: "Toggle ignore whitespace",
-        shortcut: "w",
-        action: () => {
-          $paletteOpen = false;
-          const curr = get(settings);
-          const next = !curr.ignoreWhitespace;
-          updateSettings({ ...curr, ignoreWhitespace: next });
-          addToast({ message: `Ignore whitespace: ${next ? "on" : "off"}`, kind: "info" });
-        },
-      },
-      {
-        id: "cmd_sync",
-        title: "Fetch / Pull / Push (Sync)",
-        shortcut: "Mod+Shift+F",
-        action: async () => {
-          $paletteOpen = false;
-          if (!focusedRepoId) {
-            addToast({ message: "No active repository to sync", kind: "info" });
-            return;
-          }
-          try {
-            addToast({ message: "Fetching origin...", kind: "info" });
-            await api.syncFetch(focusedRepoId);
-            await refreshSingleStatus(focusedRepoId);
-            addToast({ message: "Fetch complete", kind: "success" });
-          } catch (e: any) {
-            addToast({ message: e.message || "Sync failed", kind: "error" });
-          }
-        },
-      },
-      {
-        id: "cmd_open_editor",
-        title: "Open in external editor",
-        action: async () => {
-          $paletteOpen = false;
-          if (!focusedRepoId) {
-            addToast({ message: "No active repository selected", kind: "info" });
-            return;
-          }
-          try {
-            await api.openExternalEditor(focusedRepoId, "");
-          } catch (e: any) {
-            addToast({ message: e.message || "Failed to open in editor", kind: "error" });
-          }
-        },
-      },
-      {
-        id: "cmd_reveal_file_manager",
-        title: "Reveal repository in file manager",
-        action: async () => {
-          $paletteOpen = false;
-          if (!focusedRepo?.path) {
-            addToast({ message: "No active repository selected", kind: "info" });
-            return;
-          }
-          try {
-            await api.revealInFileManager(focusedRepo.path);
-          } catch (e: any) {
-            addToast({ message: e.message || "Failed to reveal in file manager", kind: "error" });
-          }
-        },
-      },
-      {
-        id: "cmd_copy_path",
-        title: "Copy repository path",
-        shortcut: "c",
-        action: async () => {
-          $paletteOpen = false;
-          if (!focusedRepo?.path) {
-            addToast({ message: "No active repository selected", kind: "info" });
-            return;
-          }
-          try {
-            await navigator.clipboard.writeText(focusedRepo.path);
-            addToast({ message: `Copied path: ${focusedRepo.path}`, kind: "info" });
-          } catch (e: any) {
-            addToast({ message: e.message || "Failed to copy path", kind: "error" });
-          }
-        },
-      },
-      {
-        id: "cmd_save_layout",
-        title: "Save layout as…",
-        action: async () => {
-          $paletteOpen = false;
-          const name = prompt("Enter a name for this layout (e.g. 'frontend + backend'):");
-          if (!name || !name.trim()) return;
-          try {
-            const count = get(paneCount);
-            const currentPanes = get(panes);
-            const layoutData: Layout = {
-              paneCount: count,
-              panes: currentPanes.slice(0, count).map((p) => ({
-                repoId: p.repoId,
-                tab: p.tab,
-                widths: null,
-              })),
-              sidebarWidth: 232,
-              sidebarCollapsed: get(sidebarCollapsed),
-              terminalHeight: 240,
-              terminalOpen: currentPanes.some((p) => p.terminalOpen),
-              windowBounds: null,
-            };
-            await api.layoutSet(layoutData);
+    }));
 
-            try {
-              const raw = localStorage.getItem("vantage_saved_layouts") || localStorage.getItem("relay_saved_layouts") || "{}";
-              const saved = JSON.parse(raw);
-              saved[name.trim()] = {
-                name: name.trim(),
-                paneCount: count,
-                panes: currentPanes.slice(0, count).map((p) => ({
-                  repoId: p.repoId,
-                  tab: p.tab,
-                })),
-                savedAt: new Date().toISOString(),
-              };
-              localStorage.setItem("vantage_saved_layouts", JSON.stringify(saved));
-            } catch {}
-
-            addToast({ message: `Layout "${name.trim()}" saved`, kind: "success" });
-          } catch (e: any) {
-            addToast({ message: e.message || "Failed to save layout", kind: "error" });
-          }
-        },
-      },
-      {
-        id: "cmd_load_layout",
-        title: "Load layout…",
-        action: async () => {
-          $paletteOpen = false;
-          try {
-            const raw = localStorage.getItem("vantage_saved_layouts") || localStorage.getItem("relay_saved_layouts") || "{}";
-            const saved = JSON.parse(raw);
-            const names = Object.keys(saved);
-
-            let chosenLayout: any = null;
-            if (names.length > 0) {
-              const listPrompt = names.map((n, i) => `${i + 1}. ${n}`).join("\n");
-              const chosen = prompt(
-                `Select layout to load:\n${listPrompt}\n\nEnter name or number (or leave empty to load default persisted layout):`
-              );
-              if (chosen === null) return;
-              if (chosen.trim()) {
-                const num = parseInt(chosen.trim(), 10);
-                const name = !isNaN(num) && names[num - 1] ? names[num - 1] : chosen.trim();
-                if (saved[name]) {
-                  chosenLayout = saved[name];
-                }
-              }
-            }
-
-            if (!chosenLayout) {
-              chosenLayout = await api.layoutGet();
-            }
-
-            if (chosenLayout) {
-              const targetCount = Math.max(1, Math.min(3, chosenLayout.paneCount || 1));
-              setPaneCount(targetCount);
-              panes.update((list) => {
-                return list.map((p, i) => {
-                  if (i < targetCount && chosenLayout.panes?.[i]) {
-                    return {
-                      ...p,
-                      repoId: chosenLayout.panes[i].repoId,
-                      tab: chosenLayout.panes[i].tab || "history",
-                    };
-                  }
-                  return p;
-                });
-              });
-              addToast({
-                message: `Loaded layout (${targetCount} ${targetCount === 1 ? "pane" : "panes"})`,
-                kind: "success",
-              });
-            }
-          } catch (e: any) {
-            addToast({ message: e.message || "Failed to load layout", kind: "error" });
-          }
-        },
-      },
-      {
-        id: "cmd_split_pane",
-        title: "Split pane / Cycle panes",
-        shortcut: "Mod+\\",
-        action: () => {
-          $paletteOpen = false;
-          cyclePaneCount();
-        },
-      },
-      {
-        id: "cmd_close_pane",
-        title: "Close focused pane",
-        shortcut: "Mod+W",
-        action: () => {
-          $paletteOpen = false;
-          const count = get(paneCount);
-          if (count <= 1) {
-            addToast({ message: "Cannot close the only open pane", kind: "info" });
-            return;
-          }
-          const fIdx = get(focusedPaneIndex);
-          closePane(fIdx);
-          addToast({ message: `Closed pane ${fIdx + 1}`, kind: "info" });
-        },
-      },
-      {
-        id: "cmd_focus_pane_1",
-        title: "Focus pane 1",
-        shortcut: "Mod+1",
-        action: () => {
-          $paletteOpen = false;
-          focusedPaneIndex.set(0);
-        },
-      },
-      {
-        id: "cmd_focus_pane_2",
-        title: "Focus pane 2",
-        shortcut: "Mod+2",
-        action: () => {
-          $paletteOpen = false;
-          if (get(paneCount) < 2) setPaneCount(2);
-          focusedPaneIndex.set(1);
-        },
-      },
-      {
-        id: "cmd_focus_pane_3",
-        title: "Focus pane 3",
-        shortcut: "Mod+3",
-        action: () => {
-          $paletteOpen = false;
-          if (get(paneCount) < 3) setPaneCount(3);
-          focusedPaneIndex.set(2);
-        },
-      },
-      {
-        id: "cmd_refresh_all",
-        title: "Refresh all repositories",
-        shortcut: "Mod+Shift+R",
-        action: async () => {
-          $paletteOpen = false;
-          await refreshAllStatuses();
-          addToast({ message: "Refreshed all repositories", kind: "info" });
-        },
-      },
-      {
-        id: "cmd_settings",
-        title: "Open settings",
-        shortcut: "Mod+,",
-        action: () => {
-          $paletteOpen = false;
-          $settingsOpen = true;
-        },
-      },
-      {
-        id: "cmd_recovery",
-        title: "Recovery (Backups)",
-        action: () => {
-          $paletteOpen = false;
-          $settingsOpen = true;
-        },
-      },
-      {
-        id: "cmd_shortcuts",
-        title: "Keyboard shortcuts help",
-        shortcut: "?",
-        action: () => {
-          $paletteOpen = false;
-          $shortcutsHelpOpen = true;
-        },
-      },
-      {
-        id: "cmd_remove_repo",
-        title: "Remove current repository from Relay…",
-        action: () => {
-          $paletteOpen = false;
-          const currentPanes = get(panes);
-          const fIdx = get(focusedPaneIndex);
-          const focusedPane = currentPanes[fIdx];
-          if (!focusedPane?.repoId) {
-            addToast({ message: "No active repository selected to remove", kind: "info" });
-            return;
-          }
-          const allRepos = get(repos);
-          const currentRepo = allRepos.find((r) => r.id === focusedPane.repoId);
-          if (!currentRepo) return;
-
-          openDialog({ type: "remove_repo", repoId: currentRepo.id, data: { repo: currentRepo } });
-        },
-      },
-    ];
-
-    // Add named layouts if present
+    // Add named layouts if present. These are user data, not registry
+    // commands; they still route through the layout command's applier.
     try {
       const raw = localStorage.getItem("vantage_saved_layouts") || localStorage.getItem("relay_saved_layouts") || "{}";
       const saved = JSON.parse(raw);
       for (const name of Object.keys(saved)) {
         commands.push({
-          id: `cmd_load_layout_${name}`,
+          id: `load_layout_${name}`,
           title: `Load layout: ${name}`,
           action: () => {
             $paletteOpen = false;
-            const targetLayout = saved[name];
-            if (targetLayout) {
-              const targetCount = Math.max(1, Math.min(3, targetLayout.paneCount || 1));
-              setPaneCount(targetCount);
-              panes.update((list) => {
-                return list.map((p, i) => {
-                  if (i < targetCount && targetLayout.panes?.[i]) {
-                    return {
-                      ...p,
-                      repoId: targetLayout.panes[i].repoId,
-                      tab: targetLayout.panes[i].tab || "history",
-                    };
-                  }
-                  return p;
-                });
-              });
-              addToast({ message: `Loaded layout "${name}"`, kind: "success" });
-            }
+            applyNamedLayout(name, saved[name]);
           },
         });
       }
@@ -674,7 +292,16 @@
   });
 
   function handleKeydown(e: KeyboardEvent) {
-    if (e.key === "Escape") {
+    const mod = e.metaKey || e.ctrlKey;
+    if (
+      (mod && e.key.toLowerCase() === "k") ||
+      (e.ctrlKey && e.shiftKey && e.key.toLowerCase() === "p")
+    ) {
+      // The registry also carries this binding, but the palette input is an
+      // editable target and must not be intercepted by the global router.
+      e.preventDefault();
+      $paletteOpen = false;
+    } else if (e.key === "Escape") {
       $paletteOpen = false;
     } else if (e.key === "ArrowDown") {
       e.preventDefault();
@@ -787,7 +414,7 @@
 
               {#if item.shortcut}
                 <span class="row-shortcut font-mono text-xs">
-                  {formatKey(item.shortcut)}
+                  {item.shortcut}
                 </span>
               {/if}
 

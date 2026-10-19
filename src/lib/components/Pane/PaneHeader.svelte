@@ -4,6 +4,7 @@
   import { paneCount, panes, toggleTerminalInPane, setPaneTab, closePane as removePane } from "../../stores/panes";
   import { repos, loadRepos, removeRepo } from "../../stores/repos";
   import { addToast, openDialog } from "../../stores/ui";
+  import { registerDismiss } from "../../commands";
   import IconButton from "../common/IconButton.svelte";
   import { get } from "svelte/store";
 
@@ -123,6 +124,25 @@
   function closePane() {
     removePane(paneIndex);
   }
+
+  $effect(() => {
+    const unregister = registerDismiss(() => {
+      if (showBranchModal) {
+        showBranchModal = false;
+        return true;
+      }
+      if (showRepoMenu) {
+        showRepoMenu = false;
+        return true;
+      }
+      if (showBranchMenu) {
+        showBranchMenu = false;
+        return true;
+      }
+      return false;
+    });
+    return unregister;
+  });
 </script>
 
 <div class="pane-header">

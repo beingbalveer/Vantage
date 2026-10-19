@@ -3,16 +3,9 @@
   import { loadRepos, repos, statuses, initRepoListeners } from "./lib/stores/repos";
   import { loadSettings } from "./lib/stores/settings";
   import { panes } from "./lib/stores/panes";
-  import {
-    paletteOpen,
-    addRepoDialogOpen,
-    settingsOpen,
-    shortcutsHelpOpen,
-    sidebarCollapsed,
-    addToast,
-  } from "./lib/stores/ui";
+  import { sidebarCollapsed, addToast } from "./lib/stores/ui";
   import { viewportPaneWidths, savedPaneWidth } from "./lib/layout";
-  import { matchShortcut } from "./lib/keys";
+  import { dispatchKeyboard } from "./lib/commands";
   import * as api from "./lib/api";
   import { checkForAppUpdates } from "./lib/updater";
   import { createHorizontalResizer, createHorizontalResizerKeyboard } from "./lib/resizer";
@@ -91,40 +84,10 @@
     checkForAppUpdates(false).catch(() => {});
   });
 
+  // Single global keyboard router. All shortcuts are resolved through the
+  // context-aware registry in lib/keys.ts + lib/commands.ts.
   function handleGlobalKeydown(e: KeyboardEvent) {
-    const isInput =
-      e.target instanceof HTMLInputElement ||
-      e.target instanceof HTMLTextAreaElement ||
-      (e.target as HTMLElement)?.isContentEditable;
-
-    if (matchShortcut(e, "Mod+K") || matchShortcut(e, "Ctrl+Shift+P")) {
-      e.preventDefault();
-      $paletteOpen = !$paletteOpen;
-      return;
-    }
-
-    if (matchShortcut(e, "Mod+O")) {
-      e.preventDefault();
-      $addRepoDialogOpen = true;
-      return;
-    }
-
-    if (matchShortcut(e, "Mod+B")) {
-      e.preventDefault();
-      $sidebarCollapsed = !$sidebarCollapsed;
-      return;
-    }
-
-    if (matchShortcut(e, "Mod+,")) {
-      e.preventDefault();
-      $settingsOpen = true;
-      return;
-    }
-
-    if (!isInput && e.key === "?") {
-      e.preventDefault();
-      $shortcutsHelpOpen = true;
-    }
+    dispatchKeyboard(e);
   }
 </script>
 

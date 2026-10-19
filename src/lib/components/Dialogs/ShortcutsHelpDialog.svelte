@@ -1,9 +1,10 @@
 <script lang="ts">
   import { shortcutsHelpOpen } from "../../stores/ui";
-  import { SHORTCUTS } from "../../keys";
+  import { COMMANDS, SHORTCUT_CATEGORIES } from "../../keys";
   import { Modal, Kbd } from "../common";
 
-  let categories = ["Navigation", "Review", "Diff", "Panes", "Terminal"] as const;
+  let categories = SHORTCUT_CATEGORIES;
+  let shortcuts = COMMANDS.filter((c) => c.keys.length > 0);
 </script>
 
 {#if $shortcutsHelpOpen}
@@ -18,10 +19,12 @@
         <div class="cat-section">
           <h4 class="cat-title text-strong text-xs">{cat}</h4>
           <div class="shortcut-list">
-            {#each SHORTCUTS.filter((s) => s.category === cat) as s}
+            {#each shortcuts.filter((s) => s.category === cat) as s}
               <div class="shortcut-row">
-                <span class="desc text-sm">{s.description}</span>
-                <Kbd shortcut={s.key} />
+                <span class="desc text-sm">{s.label}</span>
+                <span class="keys">
+                  {#each s.keys as k}<Kbd shortcut={k} />{/each}
+                </span>
               </div>
             {/each}
           </div>
@@ -62,5 +65,12 @@
 
   .desc {
     color: var(--text);
+  }
+
+  .keys {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    flex-shrink: 0;
   }
 </style>

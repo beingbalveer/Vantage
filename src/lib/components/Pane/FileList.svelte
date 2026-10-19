@@ -1,6 +1,7 @@
 <script lang="ts">
   import type { FileChange } from "../../types";
   import { splitPath } from "../../format";
+  import { registerDismiss } from "../../commands";
   import Icon from "../common/Icon.svelte";
 
   interface Props {
@@ -138,6 +139,15 @@
   }
 
   let showOptions = $state(false);
+
+  $effect(() => {
+    const unregister = registerDismiss(() => {
+      if (!showOptions) return false;
+      showOptions = false;
+      return true;
+    });
+    return unregister;
+  });
 </script>
 
 <div class="file-list-container">
@@ -228,9 +238,10 @@
 
       <div
         class="file-row {isSelected ? 'selected' : ''}"
+        data-file-path={file.path}
         onclick={() => onselectfile?.(file.path)}
         onkeydown={(e) => {
-          if (e.key === "Enter" || e.key === " ") {
+          if (e.key === " ") {
             e.preventDefault();
             onselectfile?.(file.path);
           }
