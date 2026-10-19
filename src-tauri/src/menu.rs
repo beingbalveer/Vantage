@@ -155,6 +155,28 @@ pub fn build<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<Menu<R>> {
 
     let help_shortcuts = item(app, MenuAction::HelpShortcuts, None)?;
 
+    // Standard window controls. These are predefined OS items: they have no
+    // MenuAction id and are handled natively rather than dispatched to the
+    // frontend. `WINDOW_SUBMENU_ID` matches Tauri's default menu convention.
+    let window_menu = Submenu::with_id_and_items(
+        app,
+        tauri::menu::WINDOW_SUBMENU_ID,
+        "Window",
+        true,
+        &[
+            &PredefinedMenuItem::minimize(app, None)?,
+            &PredefinedMenuItem::maximize(app, None)?,
+            #[cfg(target_os = "macos")]
+            &PredefinedMenuItem::separator(app)?,
+            &PredefinedMenuItem::close_window(app, None)?,
+        ],
+    )?;
+
+    // Registering the submenu as NSApp's windows menu lets macOS append the
+    // standard window list and "Bring All to Front" automatically.
+    #[cfg(target_os = "macos")]
+    window_menu.set_as_windows_menu_for_nsapp()?;
+
     #[cfg(target_os = "macos")]
     let app_menu = Submenu::with_items(
         app,
@@ -251,6 +273,7 @@ pub fn build<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<Menu<R>> {
             &repository_menu,
             &branch_menu,
             &view_menu,
+            &window_menu,
             &help_menu,
         ],
     )
@@ -260,6 +283,11 @@ pub fn build<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<Menu<R>> {
 mod tests {
     use super::*;
     use std::collections::HashSet;
+
+    // These tests cover only custom, dispatchable actions. Predefined items
+    // (Minimize/Zoom/Close Window, Edit, About, …) are handled by the OS and
+    // intentionally have no MenuAction id, so they must not be added to `ALL`
+    // or routed through the frontend dispatcher.
 
     #[test]
     fn action_ids_are_unique() {
@@ -273,6 +301,12 @@ mod tests {
             assert_eq!(MenuAction::from_id(action.id()), Some(*action));
         }
         assert_eq!(MenuAction::from_id("not-a-real-command"), None);
+    }
+
+    #[test]
+    fn predefined_and_submenu_ids_do_not_dispatch() {
+        // The Window submenu is native UI, not a frontend command.
+        assert_eq!(MenuAction::from_id(tauri::menu::WINDOW_SUBMENU_ID), None);
     }
 
     #[test]
