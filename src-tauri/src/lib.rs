@@ -69,6 +69,7 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             repo_add,
+            repo_clone,
             repo_scan,
             repo_remove,
             repo_update,

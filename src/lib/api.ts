@@ -33,6 +33,22 @@ export async function pickDirectory(): Promise<string | null> {
   return invoke("pick_directory");
 }
 
+export async function repoClone(
+  cloneId: string,
+  url: string,
+  destParent: string,
+  name?: string,
+  branch?: string
+): Promise<RepoEntry> {
+  return invoke("repo_clone", {
+    cloneId,
+    url,
+    destParent,
+    name: name || undefined,
+    branch: branch || undefined,
+  });
+}
+
 export async function repoScan(path: string, depth?: number): Promise<string[]> {
   return invoke("repo_scan", { path, depth });
 }
@@ -321,4 +337,17 @@ export function onTermExit(
   cb: (payload: { repoId: string }) => void
 ): Promise<UnlistenFn> {
   return listen<{ repoId: string }>("term://exit", (event) => cb(event.payload));
+}
+
+export interface CloneProgressPayload {
+  cloneId: string;
+  line: string;
+}
+
+export function onCloneProgress(
+  cb: (payload: CloneProgressPayload) => void
+): Promise<UnlistenFn> {
+  return listen<CloneProgressPayload>("repo://clone-progress", (event) =>
+    cb(event.payload)
+  );
 }
