@@ -248,7 +248,7 @@ pub struct PaneLayout {
     pub widths: Option<Vec<f32>>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct WindowBounds {
     pub x: i32,

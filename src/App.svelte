@@ -1,8 +1,9 @@
 <script lang="ts">
-  import { onMount } from "svelte";
+  import { onMount, onDestroy } from "svelte";
   import { loadRepos, repos, statuses, initRepoListeners } from "./lib/stores/repos";
   import { loadSettings } from "./lib/stores/settings";
   import { panes } from "./lib/stores/panes";
+  import { dispatchMenuCommand } from "./lib/menu";
   import {
     paletteOpen,
     addRepoDialogOpen,
@@ -32,6 +33,7 @@
 
   let gitVersion = $state("");
   let statusText = $state("Ready");
+  let unlistenMenu: (() => void) | undefined;
 
   let repoList = $derived($repos);
   let statusMap = $derived($statuses);
@@ -59,6 +61,11 @@
   });
 
   onMount(async () => {
+    // Native menu clicks arrive as ids and reuse the palette/shortcut stores.
+    unlistenMenu = await api.onMenuCommand((command) => {
+      void dispatchMenuCommand(command);
+    });
+
     await loadSettings();
     await loadRepos();
     initRepoListeners();
@@ -89,6 +96,10 @@
 
     // Check for updates silently on startup
     checkForAppUpdates(false).catch(() => {});
+  });
+
+  onDestroy(() => {
+    unlistenMenu?.();
   });
 
   function handleGlobalKeydown(e: KeyboardEvent) {

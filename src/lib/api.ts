@@ -322,3 +322,8 @@ export function onTermExit(
 ): Promise<UnlistenFn> {
   return listen<{ repoId: string }>("term://exit", (event) => cb(event.payload));
 }
+
+// Native menu dispatch (see src-tauri/src/menu.rs and src/lib/menu.ts)
+export function onMenuCommand(cb: (command: string) => void): Promise<UnlistenFn> {
+  return listen<string>("menu://command", (event) => cb(event.payload));
+}
