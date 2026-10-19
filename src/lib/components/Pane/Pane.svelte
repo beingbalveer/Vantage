@@ -4,6 +4,7 @@
   import * as api from "../../api";
   import { settings } from "../../stores/settings";
   import { panes, focusedPaneIndex, focusPane } from "../../stores/panes";
+  import { captureReviewEnd } from "../../stores/review";
   import { addToast } from "../../stores/ui";
   import { navigationTarget, navigateTo } from "../../stores/navigation";
   import UncommittedRow from "./UncommittedRow.svelte";
@@ -78,11 +79,6 @@
   let isRangeSelected = $state(false);
   let currentScope = $state<DiffScope>({ type: "working" });
 
-  // END SHA of the review snapshot, captured when the review opens. "Mark
-  // reviewed" targets this sha (never HEAD at click time) so commits that land
-  // while the user is reviewing stay unreviewed (ALPH-146).
-  let reviewEndSha = $state<string | null>(null);
-
   let selectedCommit = $derived(
     selectedCommitSha && !isUncommittedSelected
       ? commits.find((c) => c.sha === selectedCommitSha) || null
@@ -142,7 +138,6 @@
       lastLoadedRepoId = currentId;
       untrack(() => {
         if (currentId) {
-          reviewEndSha = null;
           loadHistory();
         } else {
           commits = [];
@@ -152,7 +147,6 @@
           selectedFilePath = null;
           isUncommittedSelected = false;
           isRangeSelected = false;
-          reviewEndSha = null;
         }
       });
     }
@@ -234,8 +228,9 @@
 
       if (!preserveSelection) {
         // A fresh review opens here: freeze the snapshot end at the current
-        // HEAD so "Mark reviewed" never sweeps up commits that arrive later.
-        reviewEndSha = log[0]?.sha ?? null;
+        // HEAD (shared store) so "Mark reviewed" never sweeps up commits that
+        // arrive later.
+        captureReviewEnd(repo.id, log);
         // Select default view
         if (status?.dirtyCount && status.dirtyCount > 0) {
           selectUncommitted();
@@ -385,7 +380,6 @@
         scopeFiles={scopeFilesList}
         {selectedCommit}
         {isRangeSelected}
-        {reviewEndSha}
         onmarked={() => queueMicrotask(() => loadHistory())}
       />
 

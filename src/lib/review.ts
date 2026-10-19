@@ -86,6 +86,27 @@ export function shaCommitsAgo(
 }
 
 /**
+ * The END SHA of a freshly loaded review page. `commits` is newest-first, so
+ * its head is the snapshot end. This is the single capture rule used by the
+ * review store; both the header and the palette consume the stored result.
+ */
+export function reviewSnapshotEnd(commits: CommitSummary[]): string | null {
+  return commits[0]?.sha ?? null;
+}
+
+/**
+ * Marker target for "Mark reviewed": prefer the snapshot the user was shown,
+ * and only fall back to the newest loaded commit when no snapshot was captured
+ * yet. Never consults a live HEAD.
+ */
+export function resolveMarkTarget(
+  snapshotEnd: string | null | undefined,
+  commits: CommitSummary[]
+): string | null {
+  return snapshotEnd ?? reviewSnapshotEnd(commits);
+}
+
+/**
  * How many commits landed on top of the captured review snapshot while the
  * user was reviewing. `commits` is newest-first; the snapshot end's index is
  * exactly the number of newer commits. Returns 0 when the end isn't in this

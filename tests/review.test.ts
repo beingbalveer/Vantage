@@ -8,6 +8,8 @@ import {
   fileCountLabel,
   shaCommitsAgo,
   countArrivedSinceOpen,
+  reviewSnapshotEnd,
+  resolveMarkTarget,
 } from "../src/lib/review";
 import type { CommitSummary, FileChange, RepoEntry } from "../src/lib/types";
 
@@ -104,5 +106,21 @@ describe("review helpers", () => {
     // Snapshot not in the loaded page: cannot tell, so report none.
     expect(countArrivedSinceOpen(commits, "missing")).toBe(0);
     expect(countArrivedSinceOpen(commits, null)).toBe(0);
+  });
+
+  it("captures the snapshot end as the newest commit", () => {
+    expect(reviewSnapshotEnd([commit("head"), commit("older")])).toBe("head");
+    expect(reviewSnapshotEnd([])).toBeNull();
+  });
+
+  it("resolves the mark target from the snapshot, never a live HEAD", () => {
+    const commits = [commit("live-head"), commit("older")];
+    // A captured snapshot always wins, even when newer commits are loaded.
+    expect(resolveMarkTarget("shown-snapshot", commits)).toBe("shown-snapshot");
+    // With no snapshot captured, the newest loaded commit is the fallback.
+    expect(resolveMarkTarget(null, commits)).toBe("live-head");
+    expect(resolveMarkTarget(undefined, commits)).toBe("live-head");
+    // Nothing loaded and nothing captured: no target (caller must refuse).
+    expect(resolveMarkTarget(null, [])).toBeNull();
   });
 });

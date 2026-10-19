@@ -7,8 +7,6 @@
   // missing: repo, marker..HEAD range, counts, +/−, and Mark reviewed / Undo.
   import { onDestroy } from "svelte";
   import type { CommitSummary, FileChange, RepoEntry, RepoStatus } from "../../types";
-  import * as api from "../../api";
-  import { loadRepos } from "../../stores/repos";
   import {
     addToast,
     activeDialog,
@@ -18,6 +16,7 @@
     shortcutsHelpOpen,
   } from "../../stores/ui";
   import { matchShortcut } from "../../keys";
+  import { applyReviewMarker, reviewEndShas } from "../../stores/review";
   import Icon from "../common/Icon.svelte";
   import {
     commitCountLabel,
@@ -25,6 +24,7 @@
     effectiveMarkerState,
     fileCountLabel,
     rangeDisplay,
+    resolveMarkTarget,
     shaCommitsAgo,
     shortSha,
     totalsFromFiles,
@@ -40,8 +40,6 @@
     scopeFiles: FileChange[];
     selectedCommit: CommitSummary | null;
     isRangeSelected: boolean;
-    /** HEAD SHA captured when the review opened; the marker target. */
-    reviewEndSha: string | null;
     /** Notify the pane so it can refresh its captured snapshot after a mark. */
     onmarked?: () => void;
   }
@@ -54,7 +52,6 @@
     scopeFiles,
     selectedCommit,
     isRangeSelected,
-    reviewEndSha,
     onmarked,
   }: Props = $props();
 
@@ -68,7 +65,10 @@
   let isCaughtUp = $derived(markerState === "ok" && newCommitCount === 0);
   let hasReview = $derived(markerState === "ok" && newCommitCount > 0);
 
-  let markTarget = $derived(reviewEndSha ?? commits[0]?.sha ?? null);
+  // Snapshot end comes from the shared store so the palette and the header can
+  // never disagree about what the user was shown (ALPH-146 follow-up).
+  let reviewEndSha = $derived(repo ? ($reviewEndShas[repo.id] ?? null) : null);
+  let markTarget = $derived(resolveMarkTarget(reviewEndSha, commits));
   let arrived = $derived(countArrivedSinceOpen(commits, reviewEndSha));
 
   let totals = $derived.by(() => {
@@ -122,10 +122,9 @@
 
   async function applyMarker(target: string, message: string) {
     if (!repo || saving) return;
-    const before = repo.marker?.sha ?? null;
     saving = true;
     try {
-      await api.markerSet(repo.id, target);
+      const { before } = await applyReviewMarker(repo.id, target);
       lastUndo = { before, at: target };
       scheduleUndoClear();
       addToast({
@@ -134,7 +133,6 @@
         actionLabel: before ? "Undo" : undefined,
         action: before ? () => void handleUndo() : undefined,
       });
-      await loadRepos();
       onmarked?.();
     } catch (e: any) {
       addToast({ message: e.message || "Failed to update the reviewed marker", kind: "error" });
@@ -165,14 +163,13 @@
     if (!repo || !before) return;
     saving = true;
     try {
-      await api.markerSet(repo.id, before);
+      await applyReviewMarker(repo.id, before);
       lastUndo = null;
       if (undoTimer) {
         clearTimeout(undoTimer);
         undoTimer = null;
       }
       addToast({ message: "Marker restored", kind: "success" });
-      await loadRepos();
       onmarked?.();
     } catch (e: any) {
       addToast({ message: e.message || "Failed to restore the marker", kind: "error" });
