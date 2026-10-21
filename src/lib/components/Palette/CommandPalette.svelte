@@ -15,7 +15,6 @@
     toggleTerminalInPane,
   } from "../../stores/panes";
   import { settings, updateSettings } from "../../stores/settings";
-  import { applyReviewMarker, getReviewEndSha } from "../../stores/review";
   import { SHORTCUTS, formatKey } from "../../keys";
   import { fuzzyScore } from "../../fuzzy";
   import { formatRelativeTime } from "../../format";
@@ -128,54 +127,6 @@
             }
           } catch (e: any) {
             addToast({ message: e.message || "Failed to add repository", kind: "error" });
-          }
-        },
-      },
-      {
-        id: "cmd_mark_reviewed",
-        title: "Mark as reviewed",
-        shortcut: "r",
-        action: async () => {
-          $paletteOpen = false;
-          const repoId = focusedRepoId;
-          if (!repoId) {
-            addToast({ message: "No focused repository to mark reviewed", kind: "info" });
-            return;
-          }
-          // Same snapshot semantics as the range header: mark up to the END SHA
-          // of the history the user was actually shown. We never fall back to a
-          // live HEAD here, because that would silently mark unreviewed commits.
-          const endSha = getReviewEndSha(repoId);
-          if (!endSha) {
-            addToast({
-              message:
-                "Open this repository's history before marking it reviewed — Vantage marks up to the commits you were shown.",
-              kind: "info",
-            });
-            return;
-          }
-          try {
-            const { before } = await applyReviewMarker(repoId, endSha);
-            addToast({
-              message: "Marked as reviewed",
-              kind: "success",
-              actionLabel: before ? "Undo" : undefined,
-              action: before
-                ? async () => {
-                    try {
-                      await applyReviewMarker(repoId, before);
-                      addToast({ message: "Marker restored", kind: "success" });
-                    } catch (e: any) {
-                      addToast({
-                        message: e.message || "Failed to restore the marker",
-                        kind: "error",
-                      });
-                    }
-                  }
-                : undefined,
-            });
-          } catch (e: any) {
-            addToast({ message: e.message || "Failed to mark as reviewed", kind: "error" });
           }
         },
       },

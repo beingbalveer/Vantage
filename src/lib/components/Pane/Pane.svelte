@@ -4,12 +4,10 @@
   import * as api from "../../api";
   import { settings } from "../../stores/settings";
   import { panes, focusedPaneIndex, focusPane } from "../../stores/panes";
-  import { captureReviewEnd } from "../../stores/review";
   import { addToast } from "../../stores/ui";
   import { navigationTarget, navigateTo } from "../../stores/navigation";
   import UncommittedRow from "./UncommittedRow.svelte";
   import CommitRow from "./CommitRow.svelte";
-  import PaneHeader from "./PaneHeader.svelte";
   import CommitHeader from "./CommitHeader.svelte";
   import FileList from "./FileList.svelte";
   import CommitBox from "./CommitBox.svelte";
@@ -76,7 +74,6 @@
   let commits = $state<CommitSummary[]>([]);
   let selectedCommitSha = $state<string | null>(null);
   let isUncommittedSelected = $state(false);
-  let isRangeSelected = $state(false);
   let currentScope = $state<DiffScope>({ type: "working" });
 
   let selectedCommit = $derived(
@@ -146,7 +143,6 @@
           selectedCommitSha = null;
           selectedFilePath = null;
           isUncommittedSelected = false;
-          isRangeSelected = false;
         }
       });
     }
@@ -227,15 +223,9 @@
       commits = log;
 
       if (!preserveSelection) {
-        // A fresh review opens here: freeze the snapshot end at the current
-        // HEAD (shared store) so "Mark reviewed" never sweeps up commits that
-        // arrive later.
-        captureReviewEnd(repo.id, log);
-        // Select default view
+        // Select default view: uncommitted changes if dirty, else latest commit
         if (status?.dirtyCount && status.dirtyCount > 0) {
           selectUncommitted();
-        } else if (status?.newCommitCount && status.newCommitCount > 0 && repo.marker) {
-          selectRange();
         } else if (log.length > 0) {
           selectCommit(log[0].sha);
         }
@@ -243,8 +233,6 @@
         // If current selection is commit, reload files; if uncommitted, reload files
         if (isUncommittedSelected) {
           loadScopeFiles({ type: "working" }, true);
-        } else if (isRangeSelected && repo.marker) {
-          loadScopeFiles({ type: "range", from: repo.marker.sha, to: "HEAD" }, true);
         } else if (selectedCommitSha) {
           loadScopeFiles({ type: "commit", sha: selectedCommitSha }, true);
         }
@@ -256,7 +244,6 @@
 
   function selectUncommitted() {
     isUncommittedSelected = true;
-    isRangeSelected = false;
     selectedCommitSha = null;
     currentScope = { type: "working" };
     commitMode = false;
@@ -267,19 +254,7 @@
   function selectCommit(sha: string) {
     selectedCommitSha = sha;
     isUncommittedSelected = false;
-    isRangeSelected = false;
     currentScope = { type: "commit", sha };
-    commitMode = false;
-    showCommitDetails = false;
-    loadScopeFiles(currentScope);
-  }
-
-  function selectRange() {
-    if (!repo?.marker) return;
-    isRangeSelected = true;
-    isUncommittedSelected = false;
-    selectedCommitSha = null;
-    currentScope = { type: "range", from: repo.marker.sha, to: "HEAD" };
     commitMode = false;
     showCommitDetails = false;
     loadScopeFiles(currentScope);
@@ -370,19 +345,6 @@
     {:else if currentPane.tab === "files"}
       <FilesTab repoId={repo.id} rev={repo.branch || "HEAD"} />
     {:else}
-      <!-- Persistent "needs review" header: repo, marker..HEAD range, counts,
-           and Mark reviewed / Undo (ALPH-146). -->
-      <PaneHeader
-        {repo}
-        {status}
-        {isFocused}
-        {commits}
-        scopeFiles={scopeFilesList}
-        {selectedCommit}
-        {isRangeSelected}
-        onmarked={() => queueMicrotask(() => loadHistory())}
-      />
-
       <!-- History Tab 3-Column Layout -->
       <div class="history-layout">
         <!-- Commits Column -->
