@@ -9,6 +9,7 @@
   import UncommittedRow from "./UncommittedRow.svelte";
   import CommitRow from "./CommitRow.svelte";
   import CommitHeader from "./CommitHeader.svelte";
+  import BranchDropdown from "./BranchDropdown.svelte";
   import FileList from "./FileList.svelte";
   import CommitBox from "./CommitBox.svelte";
   import DiffView from "../Diff/DiffView.svelte";
@@ -350,6 +351,11 @@
         <!-- Commits Column -->
         {#if !focusDiff}
           <div class="commits-col" style="width: {commitsColWidth}px;">
+            <!-- Branch Selector Header -->
+            <div class="commits-header">
+              <BranchDropdown {repo} {status} />
+            </div>
+
             <!-- Commits List -->
             <div class="commits-scroll">
               <UncommittedRow
@@ -543,6 +549,16 @@
     flex-shrink: 1;
     min-width: 180px;
     border-right: 1px solid var(--border);
+  }
+
+  .commits-header {
+    flex-shrink: 0;
+    height: 40px;
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    align-items: center;
+    padding: 0 8px;
+    background-color: var(--bg);
   }
 
   .commits-scroll {
