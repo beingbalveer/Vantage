@@ -5,7 +5,6 @@
   import { settings } from "../../stores/settings";
   import { panes, focusedPaneIndex, focusPane, setPaneTab } from "../../stores/panes";
   import { addToast, openDialog, activeDialog, paletteOpen, settingsOpen, shortcutsHelpOpen, addRepoDialogOpen, scanFolderDialogOpen } from "../../stores/ui";
-  import { refreshSingleStatus } from "../../stores/repos";
   import { navigationTarget, navigateTo } from "../../stores/navigation";
   import {
     HISTORY_PAGE_SIZE,
@@ -14,12 +13,6 @@
     isEditableTarget,
   } from "../../history";
   import { findFlaggedCommitIndex, matchShortcut } from "../../keys";
-  import {
-    normalizeError,
-    createDelayedToggle,
-    emptyFileListMessage,
-    type NormalizedError,
-  } from "../../asyncState";
   import type { MenuItem } from "../../menu";
   import ContextMenu from "../common/ContextMenu.svelte";
   import UncommittedRow from "./UncommittedRow.svelte";
@@ -32,9 +25,6 @@
   import FilesTab from "./FilesTab.svelte";
   import TerminalDrawer from "../Terminal/TerminalDrawer.svelte";
   import Icon from "../common/Icon.svelte";
-  import Skeleton from "../common/Skeleton.svelte";
-  import EmptyState from "../common/EmptyState.svelte";
-  import Banner from "../common/Banner.svelte";
   import { viewportPaneWidths, savedPaneWidth } from "../../layout";
   import {
     createHorizontalResizer,
@@ -209,154 +199,6 @@
 
   let lastLoadedRepoId = "";
 
-  // ---- Loading / empty / error state (ALPH-150) -------------------------
-  // Each async read keeps its own pending flag and normalized error so the UI
-  // can show a skeleton, a calm empty state, or a persistent error with retry
-  // instead of leaving stale content on screen.
-  let historyLoading = $state(false);
-  let historyError = $state<NormalizedError | null>(null);
-  let historyFailureCount = 0;
-
-  let scopeLoading = $state(false);
-  let scopeError = $state<NormalizedError | null>(null);
-  let scopeFailureCount = 0;
-
-  let diffLoading = $state(false);
-  let diffError = $state<NormalizedError | null>(null);
-  let diffFailureCount = 0;
-
-  const historyPending = createDelayedToggle(150, (v) => (historyLoading = v));
-  const scopePending = createDelayedToggle(150, (v) => (scopeLoading = v));
-  const diffPending = createDelayedToggle(150, (v) => (diffLoading = v));
-
-  // Immediate request counters so the columns can stay quiet (rather than flash
-  // an empty state) during the first 150ms of a fetch, when the delayed
-  // skeleton has not been revealed yet.
-  let historyRequests = $state(0);
-  let scopeRequests = $state(0);
-  let diffRequests = $state(0);
-  let historyInFlight = $derived(historyRequests > 0);
-  let scopeInFlight = $derived(scopeRequests > 0);
-  let diffInFlight = $derived(diffRequests > 0);
-
-  function beginHistoryRequest() {
-    historyRequests += 1;
-    historyPending.begin();
-  }
-  function endHistoryRequest() {
-    historyRequests = Math.max(0, historyRequests - 1);
-    historyPending.end();
-  }
-  function beginScopeRequest() {
-    scopeRequests += 1;
-    scopePending.begin();
-  }
-  function endScopeRequest() {
-    scopeRequests = Math.max(0, scopeRequests - 1);
-    scopePending.end();
-  }
-  function beginDiffRequest() {
-    diffRequests += 1;
-    diffPending.begin();
-  }
-  function endDiffRequest() {
-    diffRequests = Math.max(0, diffRequests - 1);
-    diffPending.end();
-  }
-
-  // A repo whose path vanished or isn't a repo reports the failure through the
-  // status store; surface it as a first-class pane state.
-  let repoError = $derived(status?.error ? normalizeError(status.error) : null);
-
-  let fileEmptyCopy = $derived(
-    emptyFileListMessage(currentScope.type, status?.dirtyCount || 0)
-  );
-
-  function resetWorkspaceContent() {
-    // Invalidate any in-flight request for the previous repository. The
-    // requests still call `end()` on their pending toggle, so the counters stay
-    // accurate; the generation guards stop their results from landing (R11).
-    historyGen++;
-    scopeGen++;
-    diffGen++;
-
-    commits = [];
-    scopeFilesList = [];
-    currentDiffFile = null;
-    selectedCommitSha = null;
-    selectedFilePath = null;
-    isUncommittedSelected = false;
-    isRangeSelected = false;
-    historyError = null;
-    scopeError = null;
-    diffError = null;
-    historyFailureCount = 0;
-    scopeFailureCount = 0;
-    diffFailureCount = 0;
-  }
-
-  /** First failure of a surface gets a toast; every failure keeps the inline
-   *  banner so a dismissed toast never hides the problem. */
-  function reportHistoryError(e: unknown) {
-    historyError = normalizeError(e);
-    historyFailureCount += 1;
-    if (historyFailureCount === 1) {
-      addToast({
-        message: historyError.message,
-        kind: "error",
-        details: historyError.stderr || undefined,
-      });
-    }
-  }
-
-  function reportScopeError(e: unknown) {
-    scopeError = normalizeError(e);
-    scopeFailureCount += 1;
-    if (scopeFailureCount === 1) {
-      addToast({
-        message: scopeError.message,
-        kind: "error",
-        details: scopeError.stderr || undefined,
-      });
-    }
-  }
-
-  function reportDiffError(e: unknown) {
-    diffError = normalizeError(e);
-    diffFailureCount += 1;
-    if (diffFailureCount === 1) {
-      addToast({
-        message: diffError.message,
-        kind: "error",
-        details: diffError.stderr || undefined,
-      });
-    }
-  }
-
-  function retryHistory() {
-    historyError = null;
-    historyFailureCount = 0;
-    loadHistory(commits.length > 0);
-  }
-
-  function retryScope() {
-    scopeError = null;
-    scopeFailureCount = 0;
-    loadScopeFiles(currentScope, true);
-  }
-
-  function retryDiff() {
-    diffError = null;
-    diffFailureCount = 0;
-    if (selectedFilePath) selectFile(selectedFilePath);
-  }
-
-  function retryRepo() {
-    if (repo) {
-      refreshSingleStatus(repo.id).then(() => loadHistory());
-    }
-  }
-
   // Watch repo changes
   $effect(() => {
     const currentId = repo?.id || "";
@@ -364,9 +206,6 @@
       lastLoadedRepoId = currentId;
       flagsBySha = {};
       untrack(() => {
-        // Drop the previous repository's content immediately so nothing stale
-        // is shown while the new repo's history loads (ALPH-150 / R11).
-        resetWorkspaceContent();
         if (currentId) {
           historyFilter = "";
           historyFilterApplied = "";
@@ -453,17 +292,12 @@
       window.removeEventListener("keydown", handleFlagKey);
       unlistenHead?.();
       unlistenStatus?.();
-      historyPending.cancel();
-      scopePending.cancel();
-      diffPending.cancel();
     };
   });
 
   async function loadHistory(preserveSelection = false) {
     if (!repo) return;
     const gen = ++historyGen;
-    beginHistoryRequest();
-    historyError = null;
     historyLoading = true;
     historyLoadingMore = false;
     const query = historyFilterApplied;
@@ -474,7 +308,6 @@
       historyTotal = page.total;
       historyCapped = page.capped;
       historyLoading = false;
-      historyFailureCount = 0;
 
       // Batch-request triage flags for the loaded page. Failures are ignored
       // per-SHA (the backend omits SHAs it could not evaluate) so the list
@@ -506,9 +339,6 @@
       if (gen !== historyGen) return;
       historyLoading = false;
       console.error("Failed to load history:", e);
-      reportHistoryError(e);
-    } finally {
-      endHistoryRequest();
     }
   }
 
@@ -712,29 +542,12 @@
   async function loadScopeFiles(scope: DiffScope, preserveFile = false) {
     if (!repo) return;
     const gen = ++scopeGen;
-    beginScopeRequest();
-    scopeError = null;
-
-    // A scope/selection change must never leave the previous scope's files or
-    // diff on screen. Clear them up front; a preserved refresh keeps content
-    // and is shown dimmed instead (ALPH-150 / R11).
-    if (!preserveFile) {
-      scopeFilesList = [];
-      selectedFilePath = null;
-      currentDiffFile = null;
-      // Invalidate any diff request for the previous scope so its late result
-      // cannot repopulate the cleared diff column.
-      diffGen++;
-      diffError = null;
-    }
-
     try {
       const files = await api.scopeFiles(repo.id, scope, $settings.ignoreWhitespace);
       if (gen !== scopeGen) return;
 
       scopeFilesList = files;
       checkedPaths = files.map((f) => f.path);
-      scopeFailureCount = 0;
 
       if (files.length > 0) {
         const fileToSelect =
@@ -749,9 +562,7 @@
     } catch (e: any) {
       if (gen !== scopeGen) return;
       console.error("Failed to load scope files:", e);
-      reportScopeError(e);
-    } finally {
-      endScopeRequest();
+      addToast({ message: e.message || "Failed to load files for commit", kind: "error" });
     }
   }
 
@@ -760,12 +571,6 @@
     const gen = ++diffGen;
     selectedFilePath = path;
     const activeScope = scope || currentScope;
-
-    // Clear the previous file's diff so a new selection never shows stale
-    // hunks; the skeleton covers the fetch (ALPH-150 / R11).
-    currentDiffFile = null;
-    diffError = null;
-    beginDiffRequest();
 
     try {
       const diff = await api.scopeFileDiff(
@@ -778,13 +583,10 @@
       );
       if (gen !== diffGen) return;
       currentDiffFile = diff;
-      diffFailureCount = 0;
     } catch (e: any) {
       if (gen !== diffGen) return;
       console.error("Failed to load file diff:", e);
-      reportDiffError(e);
-    } finally {
-      endDiffRequest();
+      addToast({ message: e.message || "Failed to load diff", kind: "error" });
     }
   }
 
@@ -963,22 +765,6 @@
         <span class="text-strong">No repository selected</span>
         <span class="text-sm text-muted">Select a repository from the sidebar or press Mod+O to add one.</span>
       </div>
-    {:else if repoError}
-      <div class="pane-error-state">
-        <div class="pane-error-card">
-          <Banner
-            kind={repoError.kind === "git-missing" ||
-            repoError.kind === "not-a-repo" ||
-            repoError.kind === "path-missing"
-              ? "error"
-              : "warning"}
-            message={repoError.message}
-            error={repoError}
-            retryLabel="Retry"
-            onretry={retryRepo}
-          />
-        </div>
-      </div>
     {:else if currentPane.tab === "files"}
       <FilesTab
         repoId={repo.id}
@@ -1021,18 +807,6 @@
               </div>
             </div>
 
-            {#if historyError}
-              <div class="col-banner">
-                <Banner
-                  kind="error"
-                  message={historyError.message}
-                  error={historyError}
-                  retryLabel="Retry"
-                  onretry={retryHistory}
-                />
-              </div>
-            {/if}
-
             <!-- History filter (F3): matches message, author or touched path -->
             <div class="history-filter">
               <span class="filter-icon" aria-hidden="true">
@@ -1061,12 +835,7 @@
             </div>
 
             <!-- Commits List -->
-            <div
-              class="commits-scroll"
-              class:pending={historyLoading && commits.length > 0}
-              aria-busy={historyLoading || historyInFlight}
-              bind:this={commitsScrollEl}
-            >
+            <div class="commits-scroll" bind:this={commitsScrollEl}>
               {#if !historyFilterActive}
                 <UncommittedRow
                   dirtyCount={status?.dirtyCount || 0}
@@ -1076,9 +845,7 @@
               {/if}
 
               {#if historyLoading && commits.length === 0}
-                <div style="padding: 12px;">
-                  <Skeleton rows={6} height={60} shape="commit" label="Loading commits" />
-                </div>
+                <div class="history-status text-sm text-muted">Loading history…</div>
               {:else if commits.length === 0 && historyFilterActive}
                 <div class="history-empty">
                   <span class="text-sm text-muted">
@@ -1088,12 +855,8 @@
                     Clear filter
                   </button>
                 </div>
-              {:else if commits.length === 0 && !historyInFlight && !historyError}
-                <EmptyState
-                  icon="commit"
-                  title="No commits yet"
-                  description="Make your first commit from the terminal or the Uncommitted changes row."
-                />
+              {:else if commits.length === 0}
+                <div class="empty-commits text-sm text-muted">No commits yet</div>
               {/if}
 
               {#each commits as commit (commit.sha)}
@@ -1165,12 +928,6 @@
                 {focusDiff}
                 hasCommitDetails={!!selectedCommit && !isUncommittedSelected}
                 {showCommitDetails}
-                loading={scopeLoading}
-                pending={scopeInFlight}
-                error={scopeError}
-                emptyTitle={fileEmptyCopy.title}
-                emptyDescription={fileEmptyCopy.description}
-                onretry={retryScope}
                 menuOpenPath={openMenuFilePath}
                 ontogglecommitdetails={() => (showCommitDetails = !showCommitDetails)}
                 ontogglefocusdiff={() => (focusDiff = !focusDiff)}
@@ -1222,10 +979,6 @@
                 ignoreWhitespace={$settings.ignoreWhitespace}
                 repoId={repo.id}
                 rev={selectedCommitSha || repo.branch || "HEAD"}
-                loading={diffLoading}
-                pending={diffInFlight}
-                error={diffError}
-                onretry={retryDiff}
                 onviewfile={(path) => {
                   navigateTo({
                     repoId: repo.id,
@@ -1416,30 +1169,6 @@
     flex: 1;
     overflow-y: auto;
     overflow-x: hidden;
-    transition: opacity 120ms ease;
-  }
-  .commits-scroll.pending {
-    opacity: 0.6;
-  }
-
-  .col-banner {
-    flex-shrink: 0;
-  }
-
-  .pane-error-state {
-    display: flex;
-    align-items: flex-start;
-    justify-content: center;
-    height: 100%;
-    padding: 40px 24px;
-  }
-  .pane-error-card {
-    width: 100%;
-    max-width: 460px;
-    background-color: var(--bg);
-    border: 1px solid var(--border);
-    border-radius: var(--r-md);
-    overflow: hidden;
   }
 
   /* History filter (F3). 28px control, quiet until focused. */
