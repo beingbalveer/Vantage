@@ -137,7 +137,7 @@
 <svelte:window onkeydown={handleGlobalKeydown} />
 
 <div class="app-layout">
-  <!-- Top Header (single 50px header) -->
+  <!-- Single window header; height is owned by TopHeader. -->
   <TopHeader />
 
   <!-- Workspace: Resizable Sidebar + Single Full-width Main Pane -->

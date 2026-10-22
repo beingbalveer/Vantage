@@ -331,8 +331,10 @@
 
 <style>
   .top-header {
-    height: 50px;
-    min-height: 50px;
+    /* 26px center line; Tauri's native titlebar inset is 28 (not CSS top). */
+    --header-height: 52px;
+    height: var(--header-height);
+    min-height: var(--header-height);
     flex-shrink: 0;
     padding: 0 16px 0 20px;
     display: flex;
