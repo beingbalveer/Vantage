@@ -4,11 +4,11 @@
   import { addRepoDialogOpen, addRepoInitialTab, addToast } from "../../stores/ui";
   import { loadRepos, activeRepoId } from "../../stores/repos";
   import { openRepoInFocusedPane } from "../../stores/panes";
-  import { appIcons, saveRepoIcon, readIconFile, type RepoIcon } from "../../stores/repoIcons";
+  import { saveRepoIcon, type RepoIcon } from "../../stores/repoIcons";
   import { isSafeFolderName, suggestFolderName } from "../../clone";
   import * as api from "../../api";
   import { Modal, Icon } from "../common";
-  import RepoIconView from "../Sidebar/RepoIcon.svelte";
+  import RepoIconPicker from "./RepoIconPicker.svelte";
 
   let tab = $state<"existing" | "clone">("existing");
 
@@ -16,7 +16,6 @@
   let path = $state("");
   let branch = $state("");
   let choice = $state<RepoIcon>({ kind: "app", value: "code" });
-  let uploadName = $state("");
   let isAdding = $state(false);
 
   // ---- Clone ----
@@ -24,6 +23,7 @@
   let cloneDest = $state("");
   let cloneName = $state("");
   let cloneBranch = $state("");
+  let cloneChoice = $state<RepoIcon>({ kind: "app", value: "code" });
   let cloneNameTouched = $state(false);
   let isCloning = $state(false);
   let cloneProgress = $state("");
@@ -53,6 +53,17 @@
     return `${dest}/${name}`;
   });
 
+  let effectiveExistingName = $derived.by(() => {
+    const p = path.trim().replace(/[\\/]+$/, "");
+    if (!p) return "R";
+    const segments = p.split(/[\\/]/);
+    return segments[segments.length - 1] || "R";
+  });
+
+  let effectiveCloneName = $derived.by(() => {
+    return cloneName.trim() || cloneSuggestedName || "R";
+  });
+
   // Auto-fill the folder name from the URL until the user edits it.
   $effect(() => {
     if (!cloneNameTouched) {
@@ -79,7 +90,6 @@
     path = "";
     branch = "";
     choice = { kind: "app", value: "code" };
-    uploadName = "";
   }
 
   function resetClone() {
@@ -87,6 +97,7 @@
     cloneDest = "";
     cloneName = "";
     cloneBranch = "";
+    cloneChoice = { kind: "app", value: "code" };
     cloneNameTouched = false;
     cloneProgress = "";
     cloneError = null;
@@ -117,29 +128,6 @@
     } finally {
       isBrowsing = false;
     }
-  }
-
-  async function handleUpload(e: Event) {
-    const input = e.target as HTMLInputElement;
-    const file = input.files?.[0];
-    if (!file) return;
-    try {
-      // Read as a data URL and render it through <img> only — SVG is never
-      // injected as raw HTML (RELAY-UI · UI-07).
-      const data = await readIconFile(file);
-      choice = { kind: "image", value: data };
-      uploadName = file.name;
-    } catch (err: any) {
-      addToast({ message: err?.message || "Could not read that image.", kind: "error" });
-    } finally {
-      // Allow re-selecting the same file.
-      input.value = "";
-    }
-  }
-
-  function selectPreset(value: (typeof appIcons)[number]) {
-    choice = { kind: "app", value };
-    uploadName = "";
   }
 
   async function handleSubmit(e: SubmitEvent) {
@@ -190,6 +178,10 @@
         cloneBranch.trim() || undefined
       );
 
+      if (!saveRepoIcon(entry.id, cloneChoice)) {
+        addToast({ message: "Repository cloned, but its icon could not be saved.", kind: "error" });
+      }
+
       addToast({ message: `Cloned ${entry.name} into ${entry.path}`, kind: "success" });
       await loadRepos();
       activeRepoId.set(entry.id);
@@ -210,10 +202,10 @@
 </script>
 
 {#if $addRepoDialogOpen}
-  <Modal
+    <Modal
     open={$addRepoDialogOpen}
     title="Add repository"
-    width="390px"
+    width="480px"
     showCloseButton={!isBusy}
     closeOnEscape={!isBusy}
     closeOnOutsideClick={!isBusy}
@@ -281,41 +273,12 @@
           autocomplete="off"
         />
 
-        <div class="picker-label">Icon</div>
-        <div class="icon-picker" role="group" aria-label="Repository icon">
-          {#each appIcons as value (value)}
-            <button
-              type="button"
-              class="preset"
-              class:selected={choice.kind === "app" && choice.value === value}
-              aria-label="{value} icon"
-              aria-pressed={choice.kind === "app" && choice.value === value}
-              disabled={isAdding}
-              onclick={() => selectPreset(value)}
-            >
-              <RepoIconView choice={{ kind: "app", value }} size={20} />
-            </button>
-          {/each}
-        </div>
-
-        <label class="upload-icon">
-          <Icon name="plus" size={15} />
-          Upload icon
-          <input
-            type="file"
-            accept="image/png,image/jpeg,image/gif,image/webp,image/svg+xml,image/x-icon"
-            onchange={handleUpload}
-            disabled={isAdding}
-            hidden
-          />
-        </label>
-
-        {#if uploadName && choice.kind === "image"}
-          <div class="upload-preview">
-            <RepoIconView {choice} size={20} />
-            <span class="upload-name">{uploadName}</span>
-          </div>
-        {/if}
+        <div class="picker-label">Repository Icon</div>
+        <RepoIconPicker
+          value={choice}
+          defaultLetter={effectiveExistingName}
+          onchange={(newIcon) => (choice = newIcon)}
+        />
 
         <div class="add-actions">
           <button type="button" class="cancel-btn" onclick={close} disabled={isBusy}>
@@ -395,6 +358,13 @@
         {#if resolvedDest}
           <p class="clone-resolved">Will clone into <code>{resolvedDest}</code></p>
         {/if}
+
+        <div class="picker-label">Repository Icon</div>
+        <RepoIconPicker
+          value={cloneChoice}
+          defaultLetter={effectiveCloneName}
+          onchange={(newIcon) => (cloneChoice = newIcon)}
+        />
 
         {#if isCloning}
           <div class="clone-progress" role="status" aria-live="polite">
@@ -501,61 +471,6 @@
 
   .picker-label {
     margin: 15px 0 7px;
-  }
-
-  .icon-picker {
-    display: flex;
-    gap: 6px;
-  }
-  .preset {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    width: 32px;
-    height: 32px;
-    background: #f7f7f8;
-    border: 0;
-    border-radius: 7px;
-    cursor: pointer;
-  }
-  .preset:hover:not(:disabled) {
-    background: #eef0f2;
-  }
-  .preset.selected {
-    background: #e5e9ee;
-    box-shadow: inset 0 0 0 1px #aeb9c6;
-  }
-  .preset:disabled {
-    opacity: 0.6;
-    cursor: default;
-  }
-
-  .upload-icon {
-    display: flex;
-    align-items: center;
-    gap: 7px;
-    margin-top: 10px;
-    font-size: 11px;
-    color: #737c86;
-    cursor: pointer;
-  }
-  .upload-icon:hover {
-    color: #454b53;
-  }
-
-  .upload-preview {
-    display: flex;
-    align-items: center;
-    gap: 9px;
-    margin-top: 10px;
-    font-size: 11px;
-    color: #777;
-    overflow: hidden;
-  }
-  .upload-name {
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
   }
 
   .add-actions {
