@@ -5,7 +5,7 @@ use std::collections::{HashMap, HashSet};
 use std::path::Path;
 
 /// Machine-readable log format: record sep `\x1e`, field sep `\x1f`.
-const LOG_FORMAT: &str = "%x1e%H%x1f%an%x1f%ae%x1f%aI%x1f%P%x1f%s%x1f%b";
+const LOG_FORMAT: &str = "--format=%x1e%H%x1f%an%x1f%ae%x1f%aI%x1f%P%x1f%s%x1f%b";
 
 /// Upper bound on the number of commits collected for a filtered search so a
 /// broad query ("a", "e") cannot force us to walk an entire 100k-commit repo.
