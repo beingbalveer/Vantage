@@ -10,6 +10,7 @@
   } from "../../stores/panes";
   import { paletteOpen, settingsOpen, shortcutsHelpOpen, sidebarCollapsed, addToast } from "../../stores/ui";
   import { setOperationRunning, setOperationSuccess, setOperationError } from "../../stores/operation";
+  import { formatRelativeTime } from "../../format";
   import * as api from "../../api";
   import Icon from "../common/Icon.svelte";
 
@@ -24,9 +25,85 @@
 
   let showMore = $state(false);
 
-  // Busy state per remote operation so each button reports its own progress.
+  // Busy state per remote operation so button reports its own progress.
   let busyOp = $state<null | "fetch" | "pull" | "push">(null);
   let isSyncing = $derived(busyOp !== null);
+
+  // Timestamps of last successful fetch per repo ID
+  let lastFetchedMap = $state<Record<string, number>>({});
+  let clockNow = $state(Date.now());
+
+  $effect(() => {
+    const timer = setInterval(() => {
+      clockNow = Date.now();
+    }, 30000);
+    return () => clearInterval(timer);
+  });
+
+  // Calculate the primary action according to git state (GitHub Desktop style)
+  let actionType = $derived.by<"pull" | "push" | "fetch">(() => {
+    if (!activeStatus) return "fetch";
+    if (activeStatus.behind > 0) return "pull";
+    if (activeStatus.ahead > 0 || !activeStatus.upstream) return "push";
+    return "fetch";
+  });
+
+  let hasUpstream = $derived(!!activeStatus?.upstream);
+
+  let syncLabel = $derived.by(() => {
+    if (busyOp === "fetch") return "Fetching…";
+    if (busyOp === "pull") return "Pulling…";
+    if (busyOp === "push") return hasUpstream ? "Pushing…" : "Publishing…";
+
+    if (actionType === "pull") return "Pull";
+    if (actionType === "push") return hasUpstream ? "Push" : "Publish";
+    return "Fetch";
+  });
+
+  let syncIconName = $derived.by<"refresh" | "arrow-down" | "arrow-up">(() => {
+    if (busyOp || actionType === "fetch") return "refresh";
+    if (actionType === "pull") return "arrow-down";
+    return "arrow-up";
+  });
+
+  let syncCount = $derived.by(() => {
+    if (busyOp) return 0;
+    if (actionType === "pull") return activeStatus?.behind || 0;
+    if (actionType === "push" && hasUpstream) return activeStatus?.ahead || 0;
+    return 0;
+  });
+
+  let syncTooltip = $derived.by(() => {
+    void clockNow;
+    if (busyOp === "fetch") return "Fetching from origin…";
+    if (busyOp === "pull") return "Pulling from origin…";
+    if (busyOp === "push") return hasUpstream ? "Pushing to origin…" : "Publishing branch to origin…";
+
+    if (actionType === "pull") {
+      const behind = activeStatus?.behind || 0;
+      const ahead = activeStatus?.ahead || 0;
+      if (ahead > 0) {
+        return `Pull ${behind} commit${behind === 1 ? "" : "s"}, push ${ahead} commit${ahead === 1 ? "" : "s"}`;
+      }
+      return `Pull ${behind} commit${behind === 1 ? "" : "s"} from origin`;
+    }
+
+    if (actionType === "push") {
+      if (!hasUpstream) return "Publish this branch to origin";
+      const ahead = activeStatus?.ahead || 0;
+      return `Push ${ahead} commit${ahead === 1 ? "" : "s"} to origin`;
+    }
+
+    const lastTime = activeRepo ? lastFetchedMap[activeRepo.id] : null;
+    if (lastTime) {
+      const rel = formatRelativeTime(new Date(lastTime).toISOString());
+      return rel === "just now" ? "Fetch from origin · Last fetched just now" : `Fetch from origin · Last fetched ${rel}`;
+    }
+    if (activeStatus?.lastActivityAt) {
+      return `Fetch from origin · Active ${formatRelativeTime(activeStatus.lastActivityAt)}`;
+    }
+    return "Fetch from origin";
+  });
 
   function handleToggleTerminal() {
     toggleTerminalInPane($focusedPaneIndex);
@@ -52,12 +129,15 @@
     try {
       if (operation === "fetch") {
         await api.syncFetch(target.id);
+        lastFetchedMap[target.id] = Date.now();
         setOperationSuccess(`Fetched ${target.name}`);
       } else if (operation === "pull") {
         await api.syncPull(target.id);
+        lastFetchedMap[target.id] = Date.now();
         setOperationSuccess(`Pulled ${target.name}`);
       } else {
         await api.syncPush(target.id, !target.hasUpstream);
+        lastFetchedMap[target.id] = Date.now();
         setOperationSuccess(target.hasUpstream ? `Pushed ${target.name}` : `Published ${target.branch}`);
       }
       await refreshSingleStatus(target.id);
@@ -83,62 +163,49 @@
 <svelte:window onkeydown={handleWindowKeydown} />
 
 <header class="top-header" data-tauri-drag-region>
-  <div class="traffic-lights-spacer" data-tauri-drag-region></div>
+  <div class="header-left">
+    <div class="traffic-lights-spacer" data-tauri-drag-region></div>
 
-  <button
-    class="icon-button"
-    onclick={handleToggleSidebar}
-    title="Toggle repositories (⌘B)"
-    aria-label="Toggle repositories"
-    aria-expanded={!$sidebarCollapsed}
-  >
-    <Icon name="sidebar" size={18} />
-  </button>
+    <button
+      class="icon-button"
+      onclick={handleToggleSidebar}
+      title="Toggle repositories (⌘B)"
+      aria-label="Toggle repositories"
+      aria-expanded={!$sidebarCollapsed}
+    >
+      <Icon name="sidebar" size={18} />
+    </button>
 
-  {#if activeRepo}
-    <div class="header-context">
-      <span class="repo-heading" title={activeRepo.path}>{activeRepo.name}</span>
-    </div>
-  {/if}
+    {#if activeRepo}
+      <div class="header-context">
+        <span class="repo-heading" title={activeRepo.path}>{activeRepo.name}</span>
+      </div>
 
-  <div class="operations">
-    {#each ["Fetch", "Pull", "Push"] as operation}
-      {@const key = operation.toLowerCase() as "fetch" | "pull" | "push"}
-      {@const isBusy = busyOp === key}
+      <span class="operation-divider"></span>
+
+      <!-- Combined GitHub Desktop-style button matching original fetch button style -->
       <button
         class="operation"
-        class:is-busy={isBusy}
-        disabled={!activeRepo || isSyncing || (key !== "fetch" && isInactiveView)}
-        onclick={() => runGit(key)}
-        title={key === "fetch"
-          ? (isBusy ? "Fetching from origin…" : "Fetch from origin")
-          : key === "pull"
-            ? (isBusy ? "Pulling from origin…" : "Pull from origin")
-            : (isBusy ? "Pushing to origin…" : "Push to origin")}
+        class:is-busy={isSyncing}
+        disabled={!activeRepo || isSyncing || (actionType !== "fetch" && isInactiveView)}
+        onclick={() => runGit(actionType)}
+        title={syncTooltip}
+        aria-label={syncLabel}
       >
-        <span class="op-icon" class:spinning={isBusy && key === "fetch"}>
-          <Icon
-            name={key === "fetch" ? "refresh" : key === "pull" ? "arrow-down" : "arrow-up"}
-            size={16}
-          />
+        <span class="op-icon" class:spinning={isSyncing}>
+          <Icon name={syncIconName} size={16} />
         </span>
-        <span class="label">
-          {isBusy ? (key === "fetch" ? "Fetching…" : key === "pull" ? "Pulling…" : "Pushing…") : operation}
-        </span>
-        {#if key === "pull" && activeStatus?.behind && activeStatus.behind > 0}
-          <span class="op-count" title="{activeStatus.behind} commit{activeStatus.behind === 1 ? '' : 's'} on server to pull">
-            {activeStatus.behind}
-          </span>
-        {:else if key === "push" && activeStatus?.ahead && activeStatus.ahead > 0}
-          <span class="op-count" title="{activeStatus.ahead} unpushed commit{activeStatus.ahead === 1 ? '' : 's'}">
-            {activeStatus.ahead}
-          </span>
+        <span class="label">{syncLabel}</span>
+        {#if syncCount > 0}
+          <span class="op-count">{syncCount}</span>
         {/if}
       </button>
-    {/each}
+    {/if}
+  </div>
 
-    <span class="operation-divider"></span>
+  <div class="drag-spacer" data-tauri-drag-region></div>
 
+  <div class="header-right">
     <button
       class="icon-button"
       onclick={handleToggleTerminal}
@@ -149,9 +216,9 @@
     >
       <Icon name="terminal" size={17} />
     </button>
-  </div>
 
-  <div class="right">
+    <span class="operation-divider"></span>
+
     <button
       class="icon-button"
       onclick={() => {
@@ -176,6 +243,51 @@
     {#if showMore}
       <div class="header-menu-backdrop" role="presentation" onclick={() => (showMore = false)}></div>
       <div class="more-menu" role="menu" aria-label="More commands" tabindex="-1">
+        {#if activeRepo}
+          <button
+            class="more-option"
+            role="menuitem"
+            disabled={isSyncing}
+            onclick={() => {
+              showMore = false;
+              runGit("fetch");
+            }}
+          >
+            <Icon name="refresh" size={14} />
+            <span>Fetch from origin</span>
+          </button>
+          <button
+            class="more-option"
+            role="menuitem"
+            disabled={isSyncing || isInactiveView}
+            onclick={() => {
+              showMore = false;
+              runGit("pull");
+            }}
+          >
+            <Icon name="arrow-down" size={14} />
+            <span>Pull from origin</span>
+            {#if activeStatus?.behind && activeStatus.behind > 0}
+              <span class="menu-shortcut">{activeStatus.behind}</span>
+            {/if}
+          </button>
+          <button
+            class="more-option"
+            role="menuitem"
+            disabled={isSyncing || isInactiveView}
+            onclick={() => {
+              showMore = false;
+              runGit("push");
+            }}
+          >
+            <Icon name="arrow-up" size={14} />
+            <span>{hasUpstream ? "Push to origin" : "Publish branch"}</span>
+            {#if activeStatus?.ahead && activeStatus.ahead > 0}
+              <span class="menu-shortcut">{activeStatus.ahead}</span>
+            {/if}
+          </button>
+          <div class="menu-divider"></div>
+        {/if}
         <button
           class="more-option"
           role="menuitem"
@@ -221,23 +333,28 @@
   </div>
 </header>
 
-
-
 <style>
   .top-header {
     height: 50px;
     min-height: 50px;
     flex-shrink: 0;
-    padding: 0 20px;
+    padding: 0 16px 0 20px;
     display: flex;
     align-items: center;
-    gap: 13px;
     background: var(--chrome);
     border: 0;
     position: relative;
     color: #353a40;
     z-index: 40;
     user-select: none;
+  }
+
+  .header-left {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    min-width: 0;
+    flex-shrink: 0;
   }
 
   .traffic-lights-spacer {
@@ -263,6 +380,13 @@
     background: #e1e3e5;
     color: #171d24;
   }
+  :global([data-theme="dark"]) .icon-button {
+    color: #c9d1d9;
+  }
+  :global([data-theme="dark"]) .icon-button:hover:not(:disabled) {
+    background: rgba(255, 255, 255, 0.1);
+    color: #f0f6fc;
+  }
   .icon-button:disabled {
     opacity: 0.4;
     cursor: default;
@@ -271,29 +395,22 @@
   .header-context {
     display: flex;
     align-items: center;
-    gap: 12px;
     min-width: 0;
-    margin-left: 8px;
+    margin-left: 2px;
   }
 
   .repo-heading {
-    font-size: 16px;
-    font-weight: 550;
-    letter-spacing: -0.16px;
+    font-size: 15px;
+    font-weight: 600;
+    letter-spacing: -0.15px;
     color: #20252a;
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
-    max-width: 320px;
+    max-width: 260px;
   }
-
-
-  .operations {
-    margin-left: auto;
-    display: flex;
-    align-items: center;
-    gap: 3px;
-    flex-shrink: 0;
+  :global([data-theme="dark"]) .repo-heading {
+    color: #e6edf3;
   }
 
   .operation {
@@ -375,16 +492,24 @@
     height: 16px;
     width: 1px;
     background: #cfd3d7;
-    margin: 0 8px;
+    margin: 0 4px;
+    flex-shrink: 0;
+  }
+  :global([data-theme="dark"]) .operation-divider {
+    background: #3d444d;
   }
 
-  .right {
+  .drag-spacer {
+    flex: 1;
+    height: 100%;
+    min-width: 20px;
+  }
+
+  .header-right {
     display: flex;
     align-items: center;
-    gap: 2px;
-    margin-left: 2px;
-    padding-left: 8px;
-    border-left: 1px solid #cfd3d7;
+    gap: 4px;
+    flex-shrink: 0;
     position: relative;
   }
 
@@ -409,12 +534,21 @@
     overflow: auto;
   }
 
+  .menu-divider {
+    height: 1px;
+    background: var(--border-subtle, #e1e4e8);
+    margin: 4px 6px;
+  }
+  :global([data-theme="dark"]) .menu-divider {
+    background: var(--border-subtle, #2f353d);
+  }
+
   .more-option {
     display: flex;
     width: 100%;
     align-items: center;
     gap: 9px;
-    padding: 9px 10px;
+    padding: 8px 10px;
     border: 0;
     background: none;
     border-radius: 6px;
@@ -425,10 +559,21 @@
     white-space: nowrap;
     cursor: pointer;
   }
-  .more-option:hover,
-  .more-option:focus-visible {
+  :global([data-theme="dark"]) .more-option {
+    color: #c9d1d9;
+  }
+  .more-option:hover:not(:disabled),
+  .more-option:focus-visible:not(:disabled) {
     background: #e9ebed;
     outline: none;
+  }
+  :global([data-theme="dark"]) .more-option:hover:not(:disabled),
+  :global([data-theme="dark"]) .more-option:focus-visible:not(:disabled) {
+    background: rgba(255, 255, 255, 0.08);
+  }
+  .more-option:disabled {
+    opacity: 0.45;
+    cursor: default;
   }
   .more-option :global(svg) {
     width: 15px;
@@ -447,21 +592,17 @@
   }
 
   @media (max-width: 1100px) {
-    .operation > .label {
-      display: none;
-    }
-    .operation {
-      padding: 0 7px;
-    }
     .repo-heading {
       max-width: 180px;
     }
     .top-header {
-      gap: 8px;
-      padding-right: 12px;
+      padding: 0 12px;
     }
-    .header-context {
-      gap: 8px;
+  }
+
+  @media (max-width: 900px) {
+    .repo-heading {
+      max-width: 130px;
     }
   }
 </style>
