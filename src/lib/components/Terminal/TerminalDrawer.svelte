@@ -12,11 +12,10 @@
     repoName: string;
     repoPath: string;
     height: number;
-    onresize?: (newHeight: number) => void;
     onclose?: () => void;
   }
 
-  let { repoId, repoName, repoPath, height, onresize, onclose }: Props = $props();
+  let { repoId, repoName, repoPath, height, onclose }: Props = $props();
 
   let termContainer: HTMLDivElement;
   let term: Terminal | null = null;
@@ -27,7 +26,6 @@
   let themeObserver: MutationObserver | null = null;
   let isExited = $state(false);
   let isRestarting = $state(false);
-  let isDragging = $state(false);
 
   let displayPath = $derived.by(() => {
     return repoPath.replace(/^\/Users\/[^/]+/, "~");
@@ -235,89 +233,6 @@
     }
     onclose?.();
   }
-
-  function startResize(e: PointerEvent) {
-    if (e.button !== 0 || !onresize) return;
-    e.preventDefault();
-    e.stopPropagation();
-
-    const handle = e.currentTarget as HTMLElement | null;
-    const pointerId = e.pointerId;
-
-    if (handle && typeof handle.setPointerCapture === "function") {
-      try {
-        handle.setPointerCapture(pointerId);
-      } catch {}
-    }
-
-    isDragging = true;
-    const startY = e.clientY;
-    const startH = height;
-
-    document.body.style.cursor = "row-resize";
-    document.body.style.userSelect = "none";
-
-    function onpointermove(ev: PointerEvent) {
-      ev.preventDefault();
-      const delta = startY - ev.clientY; // dragging upward increases terminal height
-      const minH = 80;
-      const maxH = Math.max(minH, window.innerHeight - 100);
-      const nextH = Math.max(minH, Math.min(maxH, Math.round(startH + delta)));
-      onresize?.(nextH);
-      try {
-        localStorage.setItem("vantage_terminal_height", String(nextH));
-      } catch {}
-    }
-
-    function onpointerup() {
-      isDragging = false;
-      document.body.style.cursor = "";
-      document.body.style.userSelect = "";
-
-      if (handle && typeof handle.releasePointerCapture === "function") {
-        try {
-          if (handle.hasPointerCapture(pointerId)) {
-            handle.releasePointerCapture(pointerId);
-          }
-        } catch {}
-      }
-
-      window.removeEventListener("pointermove", onpointermove);
-      window.removeEventListener("pointerup", onpointerup);
-      window.removeEventListener("pointercancel", onpointerup);
-    }
-
-    window.addEventListener("pointermove", onpointermove);
-    window.addEventListener("pointerup", onpointerup);
-    window.addEventListener("pointercancel", onpointerup);
-  }
-
-  function resetResize() {
-    onresize?.(240);
-    try {
-      localStorage.setItem("vantage_terminal_height", "240");
-    } catch {}
-  }
-
-  function handleKeyResize(e: KeyboardEvent) {
-    if (!onresize) return;
-    const step = e.shiftKey ? 50 : 20;
-    if (e.key === "ArrowUp") {
-      e.preventDefault();
-      const next = Math.min(window.innerHeight - 100, height + step);
-      onresize(next);
-      try {
-        localStorage.setItem("vantage_terminal_height", String(next));
-      } catch {}
-    } else if (e.key === "ArrowDown") {
-      e.preventDefault();
-      const next = Math.max(80, height - step);
-      onresize(next);
-      try {
-        localStorage.setItem("vantage_terminal_height", String(next));
-      } catch {}
-    }
-  }
 </script>
 
 <!-- svelte-ignore a11y_click_events_have_key_events -->
@@ -329,25 +244,6 @@
   role="region"
   aria-label="Terminal drawer"
 >
-  {#if onresize}
-    <!-- svelte-ignore a11y_no_noninteractive_tabindex -->
-    <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
-    <div
-      class="term-sash"
-      class:is-dragging={isDragging}
-      role="separator"
-      aria-orientation="horizontal"
-      aria-label="Resize terminal"
-      tabindex="0"
-      title="Drag to resize terminal (Double-click to reset)"
-      onpointerdown={startResize}
-      ondblclick={resetResize}
-      onkeydown={handleKeyResize}
-    >
-      <div class="sash-line"></div>
-    </div>
-  {/if}
-
   <!-- Header strip -->
   <div class="term-header">
     <div class="header-left">
@@ -412,39 +308,6 @@
     flex-shrink: 0;
     position: relative;
     box-sizing: border-box;
-  }
-
-  .term-sash {
-    position: absolute;
-    top: -5px;
-    left: 0;
-    right: 0;
-    height: 10px;
-    cursor: row-resize;
-    cursor: ns-resize;
-    z-index: 100;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    background: transparent;
-    user-select: none;
-    touch-action: none;
-  }
-  .sash-line {
-    position: absolute;
-    top: 4px;
-    left: 0;
-    right: 0;
-    height: 2px;
-    background: transparent;
-    transition: background-color 150ms ease, opacity 150ms ease;
-    pointer-events: none;
-  }
-  .term-sash:hover .sash-line,
-  .term-sash:focus-visible .sash-line,
-  .term-sash.is-dragging .sash-line {
-    background-color: var(--accent);
-    opacity: 0.85;
   }
 
   .term-header {

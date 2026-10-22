@@ -17,7 +17,12 @@
   import TerminalDrawer from "../Terminal/TerminalDrawer.svelte";
   import Icon from "../common/Icon.svelte";
   import { viewportPaneWidths, savedPaneWidth } from "../../layout";
-  import { createHorizontalResizer, createHorizontalResizerKeyboard } from "../../resizer";
+  import {
+    createHorizontalResizer,
+    createHorizontalResizerKeyboard,
+    createVerticalBottomResizer,
+    createVerticalBottomResizerKeyboard,
+  } from "../../resizer";
 
   interface Props {
     paneIndex: number;
@@ -69,6 +74,40 @@
     minWidth: 160,
     maxWidth: 600,
     storageKey: "vantage_files_col_width",
+  });
+
+  let terminalHeight = $state(savedPaneWidth("vantage_terminal_height", 240));
+
+  const startTerminalResize = createVerticalBottomResizer({
+    getHeight: () => terminalHeight,
+    setHeight: (h) => {
+      terminalHeight = h;
+      panes.update((list) => {
+        if (list[paneIndex]) {
+          list[paneIndex] = { ...list[paneIndex], terminalHeight: h };
+        }
+        return list;
+      });
+    },
+    minHeight: 80,
+    maxHeight: 1200,
+    storageKey: "vantage_terminal_height",
+  });
+
+  const nudgeTerminalResize = createVerticalBottomResizerKeyboard({
+    getHeight: () => terminalHeight,
+    setHeight: (h) => {
+      terminalHeight = h;
+      panes.update((list) => {
+        if (list[paneIndex]) {
+          list[paneIndex] = { ...list[paneIndex], terminalHeight: h };
+        }
+        return list;
+      });
+    },
+    minHeight: 80,
+    maxHeight: 1200,
+    storageKey: "vantage_terminal_height",
   });
 
   // Commits & Selection
@@ -487,17 +526,40 @@
 
   <!-- Terminal Drawer: keyed by repo.id so switching repositories recreates clean session (R13) -->
   {#if currentPane.terminalOpen && repo}
+    <!-- svelte-ignore a11y_no_noninteractive_tabindex -->
+    <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
+    <div
+      class="terminal-sash"
+      role="separator"
+      aria-orientation="horizontal"
+      aria-label="Resize terminal"
+      tabindex="0"
+      title="Drag to resize terminal (Double-click to reset)"
+      onpointerdown={startTerminalResize}
+      onkeydown={nudgeTerminalResize}
+      ondblclick={() => {
+        terminalHeight = 240;
+        panes.update((list) => {
+          if (list[paneIndex]) list[paneIndex] = { ...list[paneIndex], terminalHeight: 240 };
+          return list;
+        });
+        try { localStorage.setItem("vantage_terminal_height", "240"); } catch {}
+      }}
+    ></div>
+
     {#key repo.id}
       <TerminalDrawer
         repoId={repo.id}
         repoName={repo.name}
         repoPath={repo.path}
-        height={currentPane.terminalHeight}
-        onresize={(h) => {
-          $panes[paneIndex].terminalHeight = h;
-        }}
+        height={terminalHeight}
         onclose={() => {
-          $panes[paneIndex].terminalOpen = false;
+          panes.update((list) => {
+            if (list[paneIndex]) {
+              list[paneIndex] = { ...list[paneIndex], terminalOpen: false };
+            }
+            return list;
+          });
         }}
       />
     {/key}
@@ -645,5 +707,34 @@
   .split-handle:focus-visible::after {
     background-color: var(--accent);
     opacity: 0.35;
+  }
+
+  /* Horizontal sash for the bottom terminal drawer */
+  .terminal-sash {
+    flex: 0 0 auto;
+    height: 0;
+    width: 100%;
+    position: relative;
+    cursor: row-resize;
+    cursor: ns-resize;
+    background-color: transparent;
+    z-index: 25;
+  }
+  .terminal-sash::after {
+    content: "";
+    position: absolute;
+    left: 0;
+    right: 0;
+    top: -5px;
+    height: 10px;
+    background-color: transparent;
+    transition: background-color 120ms ease;
+    z-index: 25;
+  }
+  .terminal-sash:hover::after,
+  .terminal-sash:focus-visible::after,
+  :global(body.resizing-row) .terminal-sash::after {
+    background-color: var(--accent);
+    opacity: 0.6;
   }
 </style>
