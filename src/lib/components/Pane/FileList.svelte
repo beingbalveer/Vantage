@@ -186,21 +186,6 @@
     </span>
 
     <div class="header-actions">
-      {#if isUncommitted}
-        <!-- Visible discard affordance for the selected (checked) files. -->
-        <button
-          type="button"
-          class="files-discard"
-          disabled={checkedPaths.length === 0}
-          title={checkedPaths.length === 0
-            ? "Select files to discard"
-            : `Discard changes to ${checkedPaths.length} file${checkedPaths.length === 1 ? "" : "s"}`}
-          onclick={() => ondiscardrequest?.()}
-        >
-          Discard{checkedPaths.length > 0 ? ` ${checkedPaths.length}` : ""}
-        </button>
-      {/if}
-
       <button
         class="files-more"
         type="button"
@@ -208,13 +193,21 @@
         aria-haspopup="menu"
         aria-expanded={showOptions}
         title="File actions"
-        onclick={() => (showOptions = !showOptions)}
+        onclick={(e) => {
+          e.stopPropagation();
+          showOptions = !showOptions;
+        }}
       >
         <Icon name="more-horizontal" size={14} />
       </button>
     </div>
 
     {#if showOptions}
+      <div
+        class="options-backdrop"
+        role="presentation"
+        onclick={() => (showOptions = false)}
+      ></div>
       <div class="files-options" role="menu" tabindex="-1">
         {#if isUncommitted}
           <button
@@ -301,7 +294,7 @@
         tabindex="0"
         title="{file.path} ({file.status}{file.additions > 0 ? ', +' + file.additions : ''}{file.deletions > 0 ? ', −' + file.deletions : ''}){triage ? ' · ' + triage.label + ': ' + triage.detail : ''}"
       >
-        {#if showCommitControls}
+        {#if isUncommitted}
           <input
             type="checkbox"
             checked={isChecked}
@@ -419,6 +412,13 @@
   .files-more:focus-visible,
   .files-more[aria-expanded="true"] {
     opacity: 1;
+  }
+
+  .options-backdrop {
+    position: fixed;
+    inset: 0;
+    z-index: 25;
+    background: transparent;
   }
 
   .files-options {
