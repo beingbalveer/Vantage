@@ -23,7 +23,7 @@
 </script>
 
 <div
-  class="commit-item {isSelected ? 'active' : ''} {commit.isNew ? 'is-new' : 'is-reviewed'} {isMerge ? 'merge-commit' : ''} {isLocal ? 'is-local' : ''}"
+  class="commit-item {isSelected ? 'active' : ''} {isMerge ? 'merge-commit' : ''} {isLocal ? 'is-local' : ''}"
   onclick={handleTrigger}
   onkeydown={(e) => {
     if (e.key === "Enter" || e.key === " ") {
@@ -116,10 +116,6 @@
     border-radius: 50%;
     background: #fff;
     z-index: 1;
-  }
-  .is-new .commit-node {
-    background: var(--accent);
-    border-color: var(--accent);
   }
   .merge-commit .commit-node {
     border-radius: 2px;

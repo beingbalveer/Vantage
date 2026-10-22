@@ -97,30 +97,17 @@
 
   // ---- Attention signals (ALPH-145) ----
   let hasError = $derived(Boolean(status?.error));
-  let newCommits = $derived(status?.newCommitCount ?? 0);
   let dirtyCount = $derived(status?.dirtyCount ?? 0);
   let aheadCount = $derived(status?.ahead ?? 0);
   let behindCount = $derived(status?.behind ?? 0);
-  let markerProblem = $derived(
-    status?.markerState === "missing" || status?.markerState === "diverged"
-  );
 
-  let newCommitLabel = $derived(formatCount(newCommits, { prefix: "+" }));
   let aheadLabel = $derived(formatCount(aheadCount));
 
   let dirtyLabel = $derived(
     `${dirtyCount} ${pluralize(dirtyCount, "file")} changed`
   );
-  let newCommitTitle = $derived(
-    `${newCommits} new ${pluralize(newCommits, "commit")} to review`
-  );
   let aheadTitle = $derived(
     `${aheadCount} unpushed ${pluralize(aheadCount, "commit")}`
-  );
-  let markerTitle = $derived(
-    status?.markerState === "missing"
-      ? "Reviewed marker is missing — the marked commit is no longer in history"
-      : "History was rewritten since you last reviewed"
   );
 
   // Screen-reader summary for the row (DESIGN §11).
@@ -129,14 +116,10 @@
     if (hasError) {
       parts.push(`error: ${status?.error}`);
     } else {
-      if (newCommits > 0) {
-        parts.push(`${newCommits} new ${pluralize(newCommits, "commit")}`);
-      }
       if (dirtyCount > 0) parts.push("uncommitted changes");
       if (aheadCount > 0) {
         parts.push(`${aheadCount} unpushed ${pluralize(aheadCount, "commit")}`);
       }
-      if (markerProblem) parts.push(markerTitle);
     }
     return parts.join(", ");
   });
@@ -151,10 +134,8 @@
       lines.push(status?.error || "Repository error");
     } else {
       const attention: string[] = [];
-      if (newCommits > 0) attention.push(newCommitTitle);
       if (dirtyCount > 0) attention.push(dirtyLabel);
       if (aheadCount > 0) attention.push(aheadTitle);
-      if (markerProblem) attention.push(markerTitle);
       if (attention.length > 0) lines.push(attention.join(" · "));
     }
     return lines.join("\n");
@@ -163,9 +144,7 @@
   // Attention signal displayed as a badge on the repository icon (in all modes).
   let attentionSignal = $derived.by(() => {
     if (hasError) return { kind: "error" as const, text: "", label: status?.error || "Repository error" };
-    if (newCommits > 0) return { kind: "new" as const, text: newCommitLabel, label: newCommitTitle };
     if (dirtyCount > 0) return { kind: "dirty" as const, text: "", label: dirtyLabel };
-    if (markerProblem) return { kind: "marker" as const, text: "", label: markerTitle };
     if (aheadCount > 0) return { kind: "ahead" as const, text: "", label: aheadTitle };
     return null;
   });
@@ -311,7 +290,7 @@
         aria-label={attentionSignal.label}
         title={attentionSignal.label}
       >
-        {#if attentionSignal.kind === "error" || attentionSignal.kind === "marker"}
+        {#if attentionSignal.kind === "error"}
           <Icon name="alert" size={10} />
         {:else if attentionSignal.text}
           {attentionSignal.text}
@@ -364,12 +343,6 @@
           {status?.error}
         </div>
       {:else}
-        {#if newCommits > 0}
-          <div class="hover-line">
-            <Icon name="commit" size={16} />
-            {newCommitTitle}
-          </div>
-        {/if}
         {#if dirtyCount > 0}
           <div class="hover-line">
             <Icon name="changes" size={16} />
@@ -380,12 +353,6 @@
           <div class="hover-line">
             <Icon name="arrow-up" size={16} />
             {aheadTitle}
-          </div>
-        {/if}
-        {#if markerProblem}
-          <div class="hover-line marker-line">
-            <Icon name="alert" size={16} />
-            {markerTitle}
           </div>
         {/if}
       {/if}
@@ -645,8 +612,7 @@
   .repo-badge.ahead {
     background-color: var(--text-muted);
   }
-  .repo-badge.error,
-  .repo-badge.marker {
+  .repo-badge.error {
     background-color: var(--warning-bg);
     color: var(--warning);
     padding: 0;
@@ -795,12 +761,10 @@
   .hover-line.branch :global(svg) {
     color: #9b6bd1;
   }
-  .hover-line.error-line,
-  .hover-line.marker-line {
+  .hover-line.error-line {
     color: var(--warning);
   }
-  .hover-line.error-line :global(svg),
-  .hover-line.marker-line :global(svg) {
+  .hover-line.error-line :global(svg) {
     color: var(--warning);
   }
   .hover-path {
