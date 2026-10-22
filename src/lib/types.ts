@@ -182,6 +182,7 @@ export interface BranchInfo {
   name: string;
   upstream: string | null;
   isHead: boolean;
+  relativeDate?: string;
 }
 
 export interface BackupInfo {

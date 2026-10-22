@@ -304,6 +304,8 @@ pub struct BranchInfo {
     pub name: String,
     pub upstream: Option<String>,
     pub is_head: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub relative_date: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

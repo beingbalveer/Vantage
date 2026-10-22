@@ -12,7 +12,7 @@ pub async fn list_branches(
             repo_path,
             &[
                 "for-each-ref",
-                "--format=%(refname:short)\x1f%(upstream:short)\x1f%(HEAD)",
+                "--format=%(refname:short)\x1f%(upstream:short)\x1f%(HEAD)\x1f%(committerdate:relative)",
                 "refs/heads",
             ],
         )
@@ -36,11 +36,17 @@ pub async fn list_branches(
             None
         };
         let is_head = parts.len() > 2 && parts[2].trim() == "*";
+        let relative_date = if parts.len() > 3 && !parts[3].trim().is_empty() {
+            Some(parts[3].trim().to_string())
+        } else {
+            None
+        };
 
         branches.push(BranchInfo {
             name,
             upstream,
             is_head,
+            relative_date,
         });
     }
 
