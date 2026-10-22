@@ -86,9 +86,6 @@
         {/if}
       </span>
     {/if}
-    {#if isMerge}
-      <span class="merge-badge">merge</span>
-    {/if}
     {#if isLocal}
       <span class="unpushed-icon" title="Unpushed commit (local)" aria-label="Unpushed commit">
         <svg
@@ -253,14 +250,6 @@
     line-height: 16px;
     color: var(--text-muted);
     font-variant-numeric: tabular-nums;
-  }
-  .merge-badge {
-    flex-shrink: 0;
-    padding: 3px 6px;
-    border-radius: 5px;
-    background: #edf0f3;
-    color: #929aa3;
-    font-size: 10px;
   }
   .unpushed-icon {
     display: inline-flex;
