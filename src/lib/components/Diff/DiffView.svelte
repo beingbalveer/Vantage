@@ -1,5 +1,7 @@
 <script lang="ts">
   import type { DiffFile, DiffMode, Hunk, DiffLine, NoteSide } from "../../types";
+  import type { NormalizedError } from "../../asyncState";
+  import { emptyDiffMessage } from "../../asyncState";
   import { getLanguageFromPath, highlightCodeLines } from "../../highlight";
   import * as api from "../../api";
   import { repos, activeRepoId } from "../../stores/repos";
@@ -7,6 +9,9 @@
   import { addToast } from "../../stores/ui";
   import { settings, updateSettings } from "../../stores/settings";
   import Icon from "../common/Icon.svelte";
+  import Skeleton from "../common/Skeleton.svelte";
+  import EmptyState from "../common/EmptyState.svelte";
+  import Banner from "../common/Banner.svelte";
 
   interface Props {
     diffFile: DiffFile | null;
@@ -14,6 +19,10 @@
     ignoreWhitespace?: boolean;
     repoId?: string;
     rev?: string;
+    loading?: boolean;
+    pending?: boolean;
+    error?: NormalizedError | null;
+    onretry?: () => void;
     onexpandcontext?: (oldStart: number, count: number) => void;
     onviewfile?: (path: string) => void;
     onloadforce?: () => void;
@@ -25,10 +34,18 @@
     ignoreWhitespace = false,
     repoId,
     rev = "HEAD",
+    loading = false,
+    pending = false,
+    error = null,
+    onretry,
     onexpandcontext,
     onviewfile,
     onloadforce,
   }: Props = $props();
+
+  // Distinct copy for a genuinely empty diff vs a binary file (the binary
+  // *rendering* is owned elsewhere; this only names the state). (ALPH-150)
+  let emptyCopy = $derived(emptyDiffMessage(Boolean(diffFile?.change.binary)));
 
   // Active repo ID resolution
   let effectiveRepoId = $derived(
@@ -373,7 +390,19 @@
 <svelte:window onkeydown={handleKeydown} />
 
 <div class="diff-view-container">
-  {#if !diffFile}
+  {#if loading}
+    <div class="diff-loading">
+      <Skeleton rows={10} height={25} shape="line" label="Loading diff" />
+    </div>
+  {:else if error}
+    <Banner kind="error" message={error.message} {error} retryLabel="Retry" {onretry} />
+    <div class="diff-state-fill">
+      <span class="text-sm text-muted">Couldn't load this diff.</span>
+    </div>
+  {:else if !diffFile && pending}
+    <!-- A file is selected but its diff has not arrived yet; stay blank rather
+         than flashing "Select a file". -->
+  {:else if !diffFile}
     <div class="empty-diff">
       <span class="text-muted">Select a file to view changes</span>
     </div>
@@ -407,9 +436,11 @@
     <!-- Hunks Body -->
     <div class="diff-body">
         {#if localHunks.length === 0}
-          <div class="empty-diff">
-            <span class="text-muted">No changes in this file</span>
-          </div>
+          <EmptyState
+            icon={diffFile.change.binary ? "binary" : "check"}
+            title={emptyCopy.title}
+            description={emptyCopy.description}
+          />
         {:else}
           {#each localHunks as hunk, hIdx (hIdx)}
             <!-- Gap above hunk -->
@@ -551,6 +582,20 @@
     align-items: center;
     justify-content: center;
     height: 200px;
+  }
+
+  .diff-loading {
+    flex: 1;
+    overflow: hidden;
+    padding-top: 43px;
+  }
+
+  .diff-state-fill {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex: 1;
+    padding: 24px;
   }
 
   .truncated-card {

@@ -1,6 +1,6 @@
 <script lang="ts">
-  import { onMount } from "svelte";
   import * as api from "../../api";
+  import { normalizeError, createDelayedToggle, type NormalizedError } from "../../asyncState";
   import type { RepoEntry, RepoStatus } from "../../types";
   import { setPaneTab } from "../../stores/panes";
   import CodeViewer from "../Viewer/CodeViewer.svelte";
@@ -8,6 +8,8 @@
   import BranchDropdown from "./BranchDropdown.svelte";
   import { createHorizontalResizer } from "../../resizer";
   import Icon from "../common/Icon.svelte";
+  import Skeleton from "../common/Skeleton.svelte";
+  import Banner from "../common/Banner.svelte";
   import { navigationTarget } from "../../stores/navigation";
   import { addToast } from "../../stores/ui";
   import { matchShortcut } from "../../keys";
@@ -37,6 +39,52 @@
   let activeTargetLine = $state<number | null>(null);
   let fileTreeRef = $state<any>(null);
 
+  // Tree load state (ALPH-150): a failed tree request must be visible and
+  // retryable rather than silently swallowed.
+  let treeLoading = $state(false);
+  let treeError = $state<NormalizedError | null>(null);
+  let treeGen = 0;
+  let treeRequests = $state(0);
+  let treeInFlight = $derived(treeRequests > 0);
+  const treePending = createDelayedToggle(150, (v) => (treeLoading = v));
+
+  async function loadTree() {
+    if (!repoId) return;
+    const gen = ++treeGen;
+    treeRequests += 1;
+    treePending.begin();
+    treeError = null;
+    try {
+      const files = await api.treeList(repoId, rev || "HEAD");
+      if (gen !== treeGen) return;
+      fileList = files;
+      if (files.length > 0 && (!selectedFile || !files.includes(selectedFile))) {
+        selectedFile = files[0];
+      }
+    } catch (e) {
+      if (gen !== treeGen) return;
+      console.error("Failed to load file tree:", e);
+      treeError = normalizeError(e);
+    } finally {
+      treeRequests = Math.max(0, treeRequests - 1);
+      treePending.end();
+    }
+  }
+
+  $effect(() => {
+    // Track identity so a repo/rev switch clears the previous tree.
+    if (!repoId) return;
+    fileList = [];
+    selectedFile = null;
+    treeError = null;
+    loadTree();
+    return () => {
+      // Only invalidate the in-flight request; the pending toggle is left to
+      // its own begin/end balance so overlapping loads stay tracked.
+      treeGen++;
+    };
+  });
+
   $effect(() => {
     if (targetFile) selectedFile = targetFile;
     if (initialTargetLine) activeTargetLine = initialTargetLine;
@@ -54,20 +102,6 @@
     minWidth: 180,
     maxWidth: 700,
     storageKey: "vantage_files_tree_width",
-  });
-
-  $effect(() => {
-    const targetRev = rev || "HEAD";
-    if (repoId) {
-      api.treeList(repoId, targetRev).then((files) => {
-        fileList = files;
-        if (files.length > 0 && (!selectedFile || !files.includes(selectedFile))) {
-          selectedFile = files[0];
-        }
-      }).catch(() => {
-        fileList = [];
-      });
-    }
   });
 
   $effect(() => {
@@ -149,16 +183,26 @@
 
     <!-- Tree Body -->
     <div class="tree-body">
-      <FileTree
-        bind:this={fileTreeRef}
-        files={fileList}
-        {selectedFile}
-        {repoId}
-        onselectfile={(path) => {
-          selectedFile = path;
-          activeTargetLine = null;
-        }}
-      />
+      {#if treeLoading && fileList.length === 0}
+        <div style="padding: 12px;">
+          <Skeleton rows={8} height={26} shape="file" label="Loading files" />
+        </div>
+      {:else if treeError}
+        <div style="padding: 12px;">
+          <Banner kind="error" message={treeError.message} error={treeError} retryLabel="Retry" onretry={loadTree} />
+        </div>
+      {:else}
+        <FileTree
+          bind:this={fileTreeRef}
+          files={fileList}
+          {selectedFile}
+          {repoId}
+          onselectfile={(path) => {
+            selectedFile = path;
+            activeTargetLine = null;
+          }}
+        />
+      {/if}
     </div>
   </div>
 

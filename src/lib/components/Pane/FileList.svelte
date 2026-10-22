@@ -1,7 +1,11 @@
 <script lang="ts">
   import type { FileChange } from "../../types";
+  import type { NormalizedError } from "../../asyncState";
   import { splitPath } from "../../format";
   import Icon from "../common/Icon.svelte";
+  import Skeleton from "../common/Skeleton.svelte";
+  import EmptyState from "../common/EmptyState.svelte";
+  import Banner from "../common/Banner.svelte";
 
   interface Props {
     files: FileChange[];
@@ -12,6 +16,12 @@
     focusDiff?: boolean;
     hasCommitDetails?: boolean;
     showCommitDetails?: boolean;
+    loading?: boolean;
+    pending?: boolean;
+    error?: NormalizedError | null;
+    emptyTitle?: string;
+    emptyDescription?: string;
+    onretry?: () => void;
     menuOpenPath?: string | null;
     onbrowseall?: () => void;
     oncommitrequest?: () => void;
@@ -33,6 +43,12 @@
     focusDiff = false,
     hasCommitDetails = false,
     showCommitDetails = false,
+    loading = false,
+    pending = false,
+    error = null,
+    emptyTitle = "No changed files",
+    emptyDescription = "",
+    onretry,
     menuOpenPath = null,
     ontogglefocusdiff,
     onselectfile,
@@ -51,6 +67,14 @@
 
   let someChecked = $derived(
     files.length > 0 && !allChecked && files.some((f) => checkedPaths.includes(f.path))
+  );
+
+  // Keep the count honest: an empty list that is still loading (or failed) is
+  // not "0 changed files". (ALPH-150)
+  let headerTitle = $derived(
+    files.length === 0 && (loading || pending || error)
+      ? ""
+      : `${files.length} changed ${files.length === 1 ? "file" : "files"}`
   );
 
   interface FileTriage {
@@ -201,7 +225,7 @@
     {/if}
 
     <span class="header-title">
-      {files.length} changed {files.length === 1 ? "file" : "files"}
+      {headerTitle}
     </span>
 
     <div class="header-actions">
@@ -293,9 +317,17 @@
     {/if}
   </div>
 
-  <div class="file-rows">
-    {#if files.length === 0}
-      <div class="empty-files text-sm text-muted">No changed files</div>
+  {#if error}
+    <div class="file-banner">
+      <Banner kind="error" message={error.message} {error} retryLabel="Retry" {onretry} />
+    </div>
+  {/if}
+
+  <div class="file-rows" class:pending={loading && files.length > 0} aria-busy={loading || pending}>
+    {#if loading && files.length === 0}
+      <Skeleton rows={6} height={36} shape="file" label="Loading changed files" />
+    {:else if files.length === 0 && !pending && !error}
+      <EmptyState title={emptyTitle} description={emptyDescription} />
     {/if}
 
     {#each files as file (file.path + "-" + file.status + "-" + file.additions + "-" + file.deletions)}
@@ -486,17 +518,20 @@
     cursor: default;
   }
 
+  .file-banner {
+    flex-shrink: 0;
+  }
+
   .file-rows {
     flex: 1;
     overflow-y: auto;
     overflow-x: hidden;
     min-height: 0;
     background-color: var(--bg);
+    transition: opacity 120ms ease;
   }
-
-  .empty-files {
-    padding: 24px 16px;
-    text-align: center;
+  .file-rows.pending {
+    opacity: 0.6;
   }
 
   .file-row {
