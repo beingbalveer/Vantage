@@ -27,12 +27,23 @@
     commit: CommitSummary;
     isSelected: boolean;
     isLocal?: boolean;
+    isMenuOpen?: boolean;
     flags?: TriageFlag[];
     onselect?: () => void;
     onclick?: () => void;
+    onmenu?: (pos: { x: number; y: number }) => void;
   }
 
-  let { commit, isSelected, isLocal = false, flags = [], onselect, onclick }: Props = $props();
+  let {
+    commit,
+    isSelected,
+    isLocal = false,
+    isMenuOpen = false,
+    flags = [],
+    onselect,
+    onclick,
+    onmenu,
+  }: Props = $props();
 
   let isMerge = $derived(commit.parents && commit.parents.length > 1);
 
@@ -48,17 +59,46 @@
     if (onselect) onselect();
     else if (onclick) onclick();
   }
-</script>
 
-<div
-  class="commit-item {isSelected ? 'active' : ''} {isMerge ? 'merge-commit' : ''} {isLocal ? 'is-local' : ''}"
-  onclick={handleTrigger}
-  onkeydown={(e) => {
+  function openMenuAt(x: number, y: number) {
+    onmenu?.({ x, y });
+  }
+
+  function handleRowKeydown(e: KeyboardEvent) {
+    // Keyboard-accessible alternative to right-click (Shift+F10 / Menu key).
+    if (onmenu && (e.key === "ContextMenu" || (e.shiftKey && e.key === "F10"))) {
+      e.preventDefault();
+      e.stopPropagation();
+      const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
+      openMenuAt(rect.left + 16, rect.top + 16);
+      return;
+    }
     if (e.key === "Enter" || e.key === " ") {
       e.preventDefault();
       handleTrigger(e);
     }
-  }}
+  }
+
+  function handleContextMenu(e: MouseEvent) {
+    if (!onmenu) return;
+    e.preventDefault();
+    e.stopPropagation();
+    openMenuAt(e.clientX, e.clientY);
+  }
+
+  function handleMenuButton(e: MouseEvent) {
+    e.preventDefault();
+    e.stopPropagation();
+    const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
+    openMenuAt(rect.left, rect.bottom + 4);
+  }
+</script>
+
+<div
+  class="commit-item {isSelected ? 'active' : ''} {commit.isNew ? 'is-new' : 'is-reviewed'} {isMerge ? 'merge-commit' : ''} {isLocal ? 'is-local' : ''} {isMenuOpen ? 'menu-open' : ''}"
+  onclick={handleTrigger}
+  onkeydown={handleRowKeydown}
+  oncontextmenu={handleContextMenu}
   role="button"
   aria-pressed={isSelected}
   tabindex="0"
@@ -103,6 +143,20 @@
           <path d="M5 1V10" />
         </svg>
       </span>
+    {/if}
+    {#if onmenu}
+      <button
+        type="button"
+        class="row-menu-btn"
+        aria-label="Commit actions"
+        aria-haspopup="menu"
+        aria-expanded={isMenuOpen}
+        title="Commit actions"
+        onclick={handleMenuButton}
+        onkeydown={(e) => e.stopPropagation()}
+      >
+        <Icon name="more-horizontal" size={15} />
+      </button>
     {/if}
   </div>
 </div>
@@ -273,6 +327,41 @@
   :global([data-theme="dark"]) .commit-item.active .unpushed-icon {
     background: #3d444d;
     color: #f0f6fc;
+  }
+
+  /* Ghost "⋯" action button, revealed on hover/focus (DESIGN.md §5.3). */
+  .row-menu-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 22px;
+    height: 22px;
+    padding: 0;
+    border: none;
+    border-radius: var(--r-sm, 4px);
+    background: transparent;
+    color: #636b74;
+    cursor: pointer;
+    flex-shrink: 0;
+    opacity: 0;
+    transition: opacity 100ms ease, background-color 100ms ease;
+  }
+  :global([data-theme="dark"]) .row-menu-btn {
+    color: #8b949e;
+  }
+  .commit-item:hover .row-menu-btn,
+  .commit-item.active .row-menu-btn,
+  .commit-item.menu-open .row-menu-btn,
+  .row-menu-btn:focus-visible {
+    opacity: 1;
+  }
+  .row-menu-btn:hover {
+    background: rgba(0, 0, 0, 0.08);
+    color: #1a1c1f;
+  }
+  :global([data-theme="dark"]) .row-menu-btn:hover {
+    background: rgba(255, 255, 255, 0.1);
+    color: var(--text);
   }
 
   /* Prototype compact override (approved-prototype.html · @media max-width:1400px). */

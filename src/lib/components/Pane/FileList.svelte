@@ -12,13 +12,16 @@
     focusDiff?: boolean;
     hasCommitDetails?: boolean;
     showCommitDetails?: boolean;
+    menuOpenPath?: string | null;
     onbrowseall?: () => void;
     oncommitrequest?: () => void;
+    ondiscardrequest?: () => void;
     ontogglecommitdetails?: () => void;
     ontogglefocusdiff?: () => void;
     onselectfile?: (path: string) => void;
     ontogglepath?: (path: string) => void;
     ontoggleall?: (select: boolean) => void;
+    onfilemenu?: (file: FileChange, pos: { x: number; y: number }) => void;
   }
 
   let {
@@ -30,17 +33,24 @@
     focusDiff = false,
     hasCommitDetails = false,
     showCommitDetails = false,
+    menuOpenPath = null,
     ontogglefocusdiff,
     onselectfile,
     ontogglepath,
     ontoggleall,
     onbrowseall,
     oncommitrequest,
+    ondiscardrequest,
     ontogglecommitdetails,
+    onfilemenu,
   }: Props = $props();
 
   let allChecked = $derived(
     files.length > 0 && files.every((f) => checkedPaths.includes(f.path))
+  );
+
+  let someChecked = $derived(
+    files.length > 0 && !allChecked && files.some((f) => checkedPaths.includes(f.path))
   );
 
   interface FileTriage {
@@ -138,28 +148,85 @@
   }
 
   let showOptions = $state(false);
+
+  function openFileMenu(file: FileChange, x: number, y: number) {
+    onfilemenu?.(file, { x, y });
+  }
+
+  function handleRowKeydown(e: KeyboardEvent, file: FileChange) {
+    // Keyboard-accessible alternative to right-click (Shift+F10 / Menu key).
+    if (onfilemenu && (e.key === "ContextMenu" || (e.shiftKey && e.key === "F10"))) {
+      e.preventDefault();
+      e.stopPropagation();
+      const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
+      openFileMenu(file, rect.left + 16, rect.top + 16);
+      return;
+    }
+    if (e.key === "Enter" || e.key === " ") {
+      e.preventDefault();
+      onselectfile?.(file.path);
+    }
+  }
+
+  function handleRowContextMenu(e: MouseEvent, file: FileChange) {
+    if (!onfilemenu) return;
+    e.preventDefault();
+    e.stopPropagation();
+    openFileMenu(file, e.clientX, e.clientY);
+  }
+
+  function handleFileMenuButton(e: MouseEvent, file: FileChange) {
+    e.preventDefault();
+    e.stopPropagation();
+    const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
+    openFileMenu(file, rect.left, rect.bottom + 4);
+  }
 </script>
 
 <div class="file-list-container">
   <div class="file-list-header">
+    {#if isUncommitted && files.length > 0}
+      <input
+        type="checkbox"
+        checked={allChecked}
+        indeterminate={someChecked}
+        aria-label="{allChecked ? 'Deselect' : 'Select'} all files for commit"
+        title="{allChecked ? 'Deselect' : 'Select'} all files"
+        class="header-cb"
+        onchange={(e) => {
+          const target = e.currentTarget as HTMLInputElement;
+          ontoggleall?.(target.checked);
+        }}
+      />
+    {/if}
+
     <span class="header-title">
       {files.length} changed {files.length === 1 ? "file" : "files"}
     </span>
 
-
-    <button
-      class="files-more"
-      type="button"
-      aria-label="File actions"
-      aria-haspopup="menu"
-      aria-expanded={showOptions}
-      title="File actions"
-      onclick={() => (showOptions = !showOptions)}
-    >
-      <Icon name="more-horizontal" size={14} />
-    </button>
+    <div class="header-actions">
+      <button
+        class="files-more"
+        type="button"
+        aria-label="File actions"
+        aria-haspopup="menu"
+        aria-expanded={showOptions}
+        title="File actions"
+        onclick={(e) => {
+          e.stopPropagation();
+          showOptions = !showOptions;
+        }}
+      >
+        <Icon name="more-horizontal" size={14} />
+      </button>
+    </div>
 
     {#if showOptions}
+      <div
+        class="options-backdrop"
+        role="presentation"
+        onclick={() => (showOptions = false)}
+      ></div>
       <div class="files-options" role="menu" tabindex="-1">
         {#if isUncommitted}
           <button
@@ -179,6 +246,17 @@
             }}
           >
             Commit selected files…
+          </button>
+          <button
+            role="menuitem"
+            class="danger"
+            disabled={checkedPaths.length === 0}
+            onclick={() => {
+              ondiscardrequest?.();
+              showOptions = false;
+            }}
+          >
+            Discard selected changes…
           </button>
         {:else if hasCommitDetails}
           <button
@@ -227,19 +305,15 @@
       {@const triage = getFileTriage(file)}
 
       <div
-        class="file-row {isSelected ? 'selected' : ''}"
+        class="file-row {isSelected ? 'selected' : ''} {menuOpenPath === file.path ? 'menu-open' : ''}"
         onclick={() => onselectfile?.(file.path)}
-        onkeydown={(e) => {
-          if (e.key === "Enter" || e.key === " ") {
-            e.preventDefault();
-            onselectfile?.(file.path);
-          }
-        }}
+        onkeydown={(e) => handleRowKeydown(e, file)}
+        oncontextmenu={(e) => handleRowContextMenu(e, file)}
         role="button"
         tabindex="0"
         title="{file.path} ({file.status}{file.additions > 0 ? ', +' + file.additions : ''}{file.deletions > 0 ? ', −' + file.deletions : ''}){triage ? ' · ' + triage.label + ': ' + triage.detail : ''}"
       >
-        {#if showCommitControls}
+        {#if isUncommitted}
           <input
             type="checkbox"
             checked={isChecked}
@@ -258,6 +332,20 @@
         </div>
 
         <div class="row-right">
+          {#if onfilemenu}
+            <button
+              type="button"
+              class="row-menu-btn"
+              aria-label="File actions"
+              aria-haspopup="menu"
+              aria-expanded={menuOpenPath === file.path}
+              title="File actions"
+              onclick={(e) => handleFileMenuButton(e, file)}
+              onkeydown={(e) => e.stopPropagation()}
+            >
+              <Icon name="more-horizontal" size={14} />
+            </button>
+          {/if}
           <span class="status-badge {file.status}" aria-label={file.status} title={file.status}>
             {statusGlyph(file.status)}
           </span>
@@ -291,6 +379,14 @@
     flex-shrink: 0;
   }
 
+  .header-cb {
+    cursor: pointer;
+    width: 14px;
+    height: 14px;
+    margin: 0;
+    flex-shrink: 0;
+  }
+
   .header-title {
     font-size: 12px;
     color: #444a51;
@@ -299,8 +395,35 @@
     text-overflow: ellipsis;
   }
 
-  .files-more {
+  .header-actions {
     margin-left: auto;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    flex-shrink: 0;
+  }
+
+  .files-discard {
+    height: 22px;
+    padding: 0 8px;
+    border: 1px solid var(--danger);
+    border-radius: var(--r-sm);
+    background: transparent;
+    color: var(--danger);
+    font-size: 11px;
+    font-weight: 600;
+    cursor: pointer;
+    white-space: nowrap;
+  }
+  .files-discard:hover:not(:disabled) {
+    background: var(--danger-bg);
+  }
+  .files-discard:disabled {
+    opacity: 0.45;
+    cursor: default;
+  }
+
+  .files-more {
     display: flex;
     align-items: center;
     justify-content: center;
@@ -316,6 +439,13 @@
   .files-more:focus-visible,
   .files-more[aria-expanded="true"] {
     opacity: 1;
+  }
+
+  .options-backdrop {
+    position: fixed;
+    inset: 0;
+    z-index: 25;
+    background: transparent;
   }
 
   .files-options {
@@ -344,6 +474,16 @@
   }
   .files-options button:hover {
     background: var(--bg-muted);
+  }
+  .files-options button.danger {
+    color: var(--danger);
+  }
+  .files-options button.danger:hover:not(:disabled) {
+    background: var(--danger-bg);
+  }
+  .files-options button:disabled {
+    opacity: 0.45;
+    cursor: default;
   }
 
   .file-rows {
@@ -417,6 +557,41 @@
     align-items: center;
     gap: 6px;
     flex-shrink: 0;
+  }
+
+  /* Ghost "⋯" action button, revealed on hover/focus/selection. */
+  .row-menu-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 20px;
+    height: 20px;
+    padding: 0;
+    border: none;
+    border-radius: var(--r-sm, 4px);
+    background: transparent;
+    color: #636b74;
+    cursor: pointer;
+    flex-shrink: 0;
+    opacity: 0;
+    transition: opacity 100ms ease, background-color 100ms ease;
+  }
+  :global([data-theme="dark"]) .row-menu-btn {
+    color: #8b949e;
+  }
+  .file-row:hover .row-menu-btn,
+  .file-row.selected .row-menu-btn,
+  .file-row.menu-open .row-menu-btn,
+  .row-menu-btn:focus-visible {
+    opacity: 1;
+  }
+  .row-menu-btn:hover {
+    background: rgba(0, 0, 0, 0.08);
+    color: #1a1c1f;
+  }
+  :global([data-theme="dark"]) .row-menu-btn:hover {
+    background: rgba(255, 255, 255, 0.1);
+    color: var(--text);
   }
 
   .status-badge {

@@ -4,7 +4,7 @@
   import * as api from "../../api";
   import { settings } from "../../stores/settings";
   import { panes, focusedPaneIndex, focusPane, setPaneTab } from "../../stores/panes";
-  import { addToast, activeDialog, paletteOpen, settingsOpen, shortcutsHelpOpen, addRepoDialogOpen, scanFolderDialogOpen } from "../../stores/ui";
+  import { addToast, openDialog, activeDialog, paletteOpen, settingsOpen, shortcutsHelpOpen, addRepoDialogOpen, scanFolderDialogOpen } from "../../stores/ui";
   import { navigationTarget, navigateTo } from "../../stores/navigation";
   import {
     HISTORY_PAGE_SIZE,
@@ -13,6 +13,8 @@
     isEditableTarget,
   } from "../../history";
   import { findFlaggedCommitIndex, matchShortcut } from "../../keys";
+  import type { MenuItem } from "../../menu";
+  import ContextMenu from "../common/ContextMenu.svelte";
   import UncommittedRow from "./UncommittedRow.svelte";
   import CommitRow from "./CommitRow.svelte";
   import CommitHeader from "./CommitHeader.svelte";
@@ -603,6 +605,148 @@
       checkedPaths = [];
     }
   }
+
+  // ---- Row context menus (commit + changed file) ----
+  type MenuTarget =
+    | { kind: "commit"; commit: CommitSummary }
+    | { kind: "file"; file: FileChange };
+
+  let contextMenu = $state<{ x: number; y: number; target: MenuTarget } | null>(null);
+
+  function openCommitMenu(commit: CommitSummary, pos: { x: number; y: number }) {
+    contextMenu = { x: pos.x, y: pos.y, target: { kind: "commit", commit } };
+  }
+
+  function openFileMenu(file: FileChange, pos: { x: number; y: number }) {
+    contextMenu = { x: pos.x, y: pos.y, target: { kind: "file", file } };
+  }
+
+  function closeContextMenu() {
+    contextMenu = null;
+  }
+
+  async function copyCommitSha(sha: string) {
+    try {
+      await navigator.clipboard.writeText(sha);
+      addToast({ message: "Commit SHA copied to clipboard", kind: "success" });
+    } catch {
+      addToast({ message: "Failed to copy SHA", kind: "error" });
+    }
+  }
+
+  async function copyFilePath(path: string) {
+    try {
+      await navigator.clipboard.writeText(path);
+      addToast({ message: "File path copied to clipboard", kind: "success" });
+    } catch {
+      addToast({ message: "Failed to copy path", kind: "error" });
+    }
+  }
+
+  async function revealFilePath(path: string) {
+    if (!repo) return;
+    try {
+      await api.revealInFileManager(`${repo.path}/${path}`);
+    } catch (e: any) {
+      addToast({ message: e.message || "Failed to reveal in file manager", kind: "error" });
+    }
+  }
+
+  function openRevertDialog(commit: CommitSummary) {
+    if (!repo) return;
+    openDialog({ type: "revert", repoId: repo.id, data: { sha: commit.sha, commit } });
+  }
+
+  function openResetDialog(commit: CommitSummary) {
+    if (!repo) return;
+    const index = commits.findIndex((c) => c.sha === commit.sha);
+    const dropped = index > 0 ? commits.slice(0, index) : [];
+    openDialog({
+      type: "reset",
+      repoId: repo.id,
+      data: {
+        targetSha: commit.sha,
+        targetLabel: "this commit",
+        commits: dropped,
+      },
+    });
+  }
+
+  function openDiscardDialog(paths: string[]) {
+    if (!repo || paths.length === 0) return;
+    openDialog({ type: "discard", repoId: repo.id, data: { paths: [...paths] } });
+  }
+
+  function discardSelected() {
+    openDiscardDialog(checkedPaths);
+  }
+
+  let menuItems = $derived.by<MenuItem[]>(() => {
+    const menu = contextMenu;
+    if (!menu || !repo) return [];
+
+    if (menu.target.kind === "commit") {
+      const commit = menu.target.commit;
+      const index = commits.findIndex((c) => c.sha === commit.sha);
+      // "Reset to here" needs at least one commit above the target to drop.
+      const canReset = index > 0;
+      return [
+        {
+          id: "revert",
+          label: "Revert commit…",
+          onselect: () => openRevertDialog(commit),
+        },
+        {
+          id: "reset",
+          label: "Reset to here…",
+          danger: true,
+          disabled: !canReset,
+          onselect: () => openResetDialog(commit),
+        },
+        {
+          id: "copy-sha",
+          label: "Copy SHA",
+          shortcut: "c",
+          onselect: () => void copyCommitSha(commit.sha),
+        },
+        {
+          id: "view-diff",
+          label: "View diff",
+          onselect: () => selectCommit(commit.sha),
+        },
+      ];
+    }
+
+    const file = menu.target.file;
+    const items: MenuItem[] = [];
+    if (isUncommittedSelected) {
+      items.push({
+        id: "discard-file",
+        label: "Discard changes…",
+        danger: true,
+        onselect: () => openDiscardDialog([file.path]),
+      });
+    }
+    items.push({
+      id: "copy-path",
+      label: "Copy path",
+      onselect: () => void copyFilePath(file.path),
+    });
+    items.push({
+      id: "reveal",
+      label: "Show in file manager",
+      onselect: () => void revealFilePath(file.path),
+    });
+    return items;
+  });
+
+  function isCommitMenuOpen(sha: string): boolean {
+    return contextMenu?.target.kind === "commit" && contextMenu.target.commit.sha === sha;
+  }
+
+  let openMenuFilePath = $derived(
+    contextMenu?.target.kind === "file" ? contextMenu.target.file.path : null
+  );
 </script>
 
 <svelte:window onkeydown={handlePaneKeydown} />
@@ -720,8 +864,10 @@
                   {commit}
                   isSelected={selectedCommitSha === commit.sha}
                   isLocal={unpushedShas.has(commit.sha)}
+                  isMenuOpen={isCommitMenuOpen(commit.sha)}
                   flags={flagsBySha[commit.sha] ?? []}
                   onselect={() => selectCommit(commit.sha)}
+                  onmenu={(pos) => openCommitMenu(commit, pos)}
                 />
               {/each}
 
@@ -782,12 +928,15 @@
                 {focusDiff}
                 hasCommitDetails={!!selectedCommit && !isUncommittedSelected}
                 {showCommitDetails}
+                menuOpenPath={openMenuFilePath}
                 ontogglecommitdetails={() => (showCommitDetails = !showCommitDetails)}
                 ontogglefocusdiff={() => (focusDiff = !focusDiff)}
                 onselectfile={(path) => selectFile(path)}
                 ontogglepath={toggleCheckedPath}
                 ontoggleall={toggleAllChecked}
                 oncommitrequest={() => (commitMode = true)}
+                ondiscardrequest={discardSelected}
+                onfilemenu={openFileMenu}
                 onbrowseall={() => ($panes[paneIndex].tab = "files")}
               />
 
@@ -885,6 +1034,20 @@
             return list;
           });
         }}
+      />
+    {/key}
+  {/if}
+
+  <!-- Row context menu (commit / changed file). Recreated per open so it
+       re-measures and re-positions itself. -->
+  {#if contextMenu}
+    {#key contextMenu}
+      <ContextMenu
+        x={contextMenu.x}
+        y={contextMenu.y}
+        items={menuItems}
+        label={contextMenu.target.kind === "commit" ? "Commit actions" : "File actions"}
+        onclose={closeContextMenu}
       />
     {/key}
   {/if}
