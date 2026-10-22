@@ -25,6 +25,11 @@
           {toast.actionLabel}
         </button>
       {/if}
+      {#if toast.linkLabel && toast.linkAction}
+        <button type="button" class="toast-link" onclick={toast.linkAction}>
+          {toast.linkLabel}
+        </button>
+      {/if}
       <button
         type="button"
         class="toast-close"
@@ -90,6 +95,23 @@
     padding: 0 4px;
   }
   .toast-action:hover {
+    text-decoration: underline;
+  }
+
+  .toast-link {
+    background: none;
+    border: none;
+    border-left: 1px solid currentColor;
+    color: var(--bg);
+    opacity: 0.85;
+    font-weight: 600;
+    font-size: 13px;
+    cursor: pointer;
+    padding: 0 4px 0 10px;
+    margin-left: 2px;
+  }
+  .toast-link:hover {
+    opacity: 1;
     text-decoration: underline;
   }
 

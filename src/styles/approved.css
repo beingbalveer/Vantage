@@ -63,18 +63,21 @@ body,
 /* Syntax highlighting uses the prototype's restrained palette. Values come
  * from the --syn-* tokens so dark mode stays usable (RELAY-UI · UI-01/UI-06). */
 .hljs-keyword,
-.hljs-built_in,
-.hljs-type,
 .hljs-literal,
 .hljs-symbol {
   color: var(--syn-keyword);
 }
+.hljs-built_in,
+.hljs-type,
+.hljs-class {
+  color: var(--syn-type);
+}
 .hljs-string,
-.hljs-regexp,
-.hljs-attr,
-.hljs-attribute,
 .hljs-addition {
   color: var(--syn-string);
+}
+.hljs-regexp {
+  color: var(--syn-regexp, var(--syn-string));
 }
 .hljs-number {
   color: var(--syn-number);
@@ -82,21 +85,32 @@ body,
 .hljs-comment,
 .hljs-quote {
   color: var(--syn-comment);
+  font-style: italic;
 }
 .hljs-title,
 .hljs-title.class_,
+.hljs-title.function_,
 .hljs-function,
-.hljs-section,
-.hljs-name {
+.hljs-section {
   color: var(--syn-function);
 }
-.hljs-meta,
-.hljs-doctag,
-.hljs-tag {
-  color: var(--syn-meta);
+.hljs-tag,
+.hljs-name {
+  color: var(--syn-tag, var(--syn-keyword));
+}
+.hljs-attr,
+.hljs-attribute {
+  color: var(--syn-attr, var(--syn-variable));
 }
 .hljs-variable,
 .hljs-params,
+.hljs-property {
+  color: var(--syn-variable, inherit);
+}
+.hljs-meta,
+.hljs-doctag {
+  color: var(--syn-meta);
+}
 .hljs-punctuation {
   color: inherit;
 }

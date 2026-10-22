@@ -10,6 +10,10 @@ import css from "highlight.js/lib/languages/css";
 import markdown from "highlight.js/lib/languages/markdown";
 import bash from "highlight.js/lib/languages/bash";
 import yaml from "highlight.js/lib/languages/yaml";
+import ini from "highlight.js/lib/languages/ini";
+import sql from "highlight.js/lib/languages/sql";
+import c from "highlight.js/lib/languages/c";
+import cpp from "highlight.js/lib/languages/cpp";
 
 // Register languages
 hljs.registerLanguage("javascript", javascript);
@@ -24,6 +28,7 @@ hljs.registerLanguage("go", go);
 hljs.registerLanguage("json", json);
 hljs.registerLanguage("xml", xml);
 hljs.registerLanguage("html", xml);
+hljs.registerLanguage("svelte", xml);
 hljs.registerLanguage("css", css);
 hljs.registerLanguage("markdown", markdown);
 hljs.registerLanguage("md", markdown);
@@ -31,6 +36,11 @@ hljs.registerLanguage("bash", bash);
 hljs.registerLanguage("sh", bash);
 hljs.registerLanguage("yaml", yaml);
 hljs.registerLanguage("yml", yaml);
+hljs.registerLanguage("ini", ini);
+hljs.registerLanguage("toml", ini);
+hljs.registerLanguage("sql", sql);
+hljs.registerLanguage("c", c);
+hljs.registerLanguage("cpp", cpp);
 
 export function getLanguageFromPath(path: string): string | null {
   const ext = path.split(".").pop()?.toLowerCase();
@@ -43,7 +53,10 @@ export function getLanguageFromPath(path: string): string | null {
     case "ts":
     case "tsx":
     case "mts":
+    case "cts":
       return "typescript";
+    case "svelte":
+      return "xml";
     case "rs":
       return "rust";
     case "py":
@@ -69,6 +82,19 @@ export function getLanguageFromPath(path: string): string | null {
     case "yaml":
     case "yml":
       return "yaml";
+    case "toml":
+    case "ini":
+      return "ini";
+    case "sql":
+      return "sql";
+    case "c":
+    case "h":
+      return "c";
+    case "cpp":
+    case "hpp":
+    case "cc":
+    case "cxx":
+      return "cpp";
     default:
       return null;
   }

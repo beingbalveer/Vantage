@@ -18,7 +18,7 @@
   import { SHORTCUTS, formatKey } from "../../keys";
   import { fuzzyScore } from "../../fuzzy";
   import { formatRelativeTime } from "../../format";
-  import { addRepoDialogOpen, settingsOpen, shortcutsHelpOpen, addToast, sidebarCollapsed, openDialog } from "../../stores/ui";
+  import { addRepoDialogOpen, shortcutsHelpOpen, addToast, sidebarCollapsed, openDialog, openSettingsAt } from "../../stores/ui";
   import type { Layout, CommitSummary } from "../../types";
   import * as api from "../../api";
   import Icon from "../common/Icon.svelte";
@@ -127,25 +127,6 @@
             }
           } catch (e: any) {
             addToast({ message: e.message || "Failed to add repository", kind: "error" });
-          }
-        },
-      },
-      {
-        id: "cmd_mark_reviewed",
-        title: "Mark as reviewed",
-        shortcut: "r",
-        action: async () => {
-          $paletteOpen = false;
-          if (!focusedRepoId) {
-            addToast({ message: "No focused repository to mark reviewed", kind: "info" });
-            return;
-          }
-          try {
-            await api.markerSetToHead(focusedRepoId);
-            addToast({ message: "Marked as reviewed", kind: "success" });
-            await refreshSingleStatus(focusedRepoId);
-          } catch (e: any) {
-            addToast({ message: e.message || "Failed to mark as reviewed", kind: "error" });
           }
         },
       },
@@ -433,7 +414,7 @@
         shortcut: "Mod+,",
         action: () => {
           $paletteOpen = false;
-          $settingsOpen = true;
+          openSettingsAt("general");
         },
       },
       {
@@ -441,7 +422,7 @@
         title: "Recovery (Backups)",
         action: () => {
           $paletteOpen = false;
-          $settingsOpen = true;
+          openSettingsAt("recovery");
         },
       },
       {

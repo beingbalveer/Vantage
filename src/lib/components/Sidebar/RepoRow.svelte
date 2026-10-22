@@ -14,6 +14,7 @@
   import { get } from "svelte/store";
   import Icon from "../common/Icon.svelte";
   import RepoIcon from "./RepoIcon.svelte";
+  import { formatCount, pluralize } from "../../format";
 
   interface Props {
     repo: RepoEntry;
@@ -93,6 +94,60 @@
   let isOpenInFocused = $derived(paneIndicators.some((p) => p.isFocused));
 
   let displayBranch = $derived(repo.branch || status?.branch || "");
+
+  // ---- Attention signals (ALPH-145) ----
+  let hasError = $derived(Boolean(status?.error));
+  let dirtyCount = $derived(status?.dirtyCount ?? 0);
+  let aheadCount = $derived(status?.ahead ?? 0);
+  let behindCount = $derived(status?.behind ?? 0);
+
+  let aheadLabel = $derived(formatCount(aheadCount));
+
+  let dirtyLabel = $derived(
+    `${dirtyCount} ${pluralize(dirtyCount, "file")} changed`
+  );
+  let aheadTitle = $derived(
+    `${aheadCount} unpushed ${pluralize(aheadCount, "commit")}`
+  );
+
+  // Screen-reader summary for the row (DESIGN §11).
+  let rowAriaLabel = $derived.by(() => {
+    const parts = [`${repo.name}, branch ${displayBranch || "HEAD"}`];
+    if (hasError) {
+      parts.push(`error: ${status?.error}`);
+    } else {
+      if (dirtyCount > 0) parts.push("uncommitted changes");
+      if (aheadCount > 0) {
+        parts.push(`${aheadCount} unpushed ${pluralize(aheadCount, "commit")}`);
+      }
+    }
+    return parts.join(", ");
+  });
+
+  // Native hover tooltip: identity + sync + attention (DESIGN §4.4).
+  let rowTitle = $derived.by(() => {
+    const sync = `${displayBranch || "HEAD"}${aheadCount ? ` ↑${aheadCount}` : ""}${
+      behindCount ? ` ↓${behindCount}` : ""
+    }`;
+    const lines = [`${repo.name} · ${sync}`, repo.path];
+    if (hasError) {
+      lines.push(status?.error || "Repository error");
+    } else {
+      const attention: string[] = [];
+      if (dirtyCount > 0) attention.push(dirtyLabel);
+      if (aheadCount > 0) attention.push(aheadTitle);
+      if (attention.length > 0) lines.push(attention.join(" · "));
+    }
+    return lines.join("\n");
+  });
+
+  // Attention signal displayed as a badge on the repository icon (in all modes).
+  let attentionSignal = $derived.by(() => {
+    if (hasError) return { kind: "error" as const, text: "", label: status?.error || "Repository error" };
+    if (dirtyCount > 0) return { kind: "dirty" as const, text: "", label: dirtyLabel };
+    if (aheadCount > 0) return { kind: "ahead" as const, text: "", label: aheadTitle };
+    return null;
+  });
 
   function handleContextMenu(e: MouseEvent) {
     e.preventDefault();
@@ -205,6 +260,7 @@
 
 <div
   class="repo-row {isOpenInFocused ? 'active' : ''} {$sidebarCollapsed ? 'collapsed' : ''}"
+  class:error={hasError}
   onclick={handleClick}
   onpointerenter={startHover}
   onpointerleave={stopHover}
@@ -219,21 +275,42 @@
   }}
   role="button"
   tabindex="0"
-  aria-label="{repo.name} · {displayBranch || 'HEAD'}"
+  aria-label={rowAriaLabel}
+  title={rowTitle}
 >
-  <div class="repo-icon-box">
-    <RepoIcon id={repo.id} repoName={repo.name} repoPath={repo.path} size={22} />
+  <div class="repo-icon-wrapper">
+    <div class="repo-icon-box">
+      <RepoIcon id={repo.id} repoName={repo.name} repoPath={repo.path} size={22} />
+    </div>
+
+    {#if attentionSignal}
+      <span
+        class="repo-badge {attentionSignal.kind}"
+        role="img"
+        aria-label={attentionSignal.label}
+        title={attentionSignal.label}
+      >
+        {#if attentionSignal.kind === "error"}
+          <Icon name="alert" size={10} />
+        {:else if attentionSignal.text}
+          {attentionSignal.text}
+        {/if}
+      </span>
+    {/if}
   </div>
 
   {#if !$sidebarCollapsed}
     <div class="info">
-      <span class="repo-name">{repo.name}</span>
+      <div class="row-top">
+        <span class="repo-name">{repo.name}</span>
+      </div>
       <span class="branch-name">{displayBranch || "HEAD"}</span>
     </div>
 
     <button
       type="button"
       class="row-menu-btn"
+      class:menu-open={showMenu}
       title="Repository options"
       onclick={handleMenuBtnClick}
       aria-label="Repository options"
@@ -261,6 +338,25 @@
         <Icon name="git-branch" size={16} />
         {displayBranch || "HEAD"}
       </div>
+      {#if hasError}
+        <div class="hover-line error-line">
+          <Icon name="alert" size={16} />
+          {status?.error}
+        </div>
+      {:else}
+        {#if dirtyCount > 0}
+          <div class="hover-line">
+            <Icon name="changes" size={16} />
+            {dirtyLabel}
+          </div>
+        {/if}
+        {#if aheadCount > 0}
+          <div class="hover-line">
+            <Icon name="arrow-up" size={16} />
+            {aheadTitle}
+          </div>
+        {/if}
+      {/if}
       <div class="hover-path">{repo.path}</div>
     </div>
   {/if}
@@ -442,6 +538,14 @@
     margin: 0;
   }
 
+  .repo-icon-wrapper {
+    position: relative;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+  }
+
   .repo-icon-box {
     width: 36px;
     height: 36px;
@@ -464,6 +568,59 @@
     box-shadow: 0 1px 2px rgba(0, 0, 0, 0.3);
   }
 
+  /* Attention badge on repository icon (shown in all modes) */
+  .repo-badge {
+    position: absolute;
+    top: -3px;
+    right: -4px;
+    min-width: 14px;
+    height: 14px;
+    padding: 0 4px;
+    border-radius: 7px;
+    box-sizing: border-box;
+    background-color: var(--accent);
+    color: var(--accent-fg);
+    font-size: 9px;
+    font-weight: 700;
+    line-height: 1;
+    font-variant-numeric: tabular-nums;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    pointer-events: none;
+    border: 1.5px solid var(--chrome, #f3f4f6);
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.1);
+    z-index: 2;
+  }
+  :global([data-theme="dark"]) .repo-badge,
+  :global(:root[data-theme="dark"]) .repo-badge {
+    border-color: #1b1f24;
+  }
+
+  .repo-badge.dirty,
+  .repo-badge.ahead {
+    padding: 0;
+    min-width: 10px;
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    top: -1px;
+    right: -2px;
+  }
+  .repo-badge.dirty {
+    background-color: var(--warning);
+  }
+  .repo-badge.ahead {
+    background-color: var(--text-muted);
+  }
+  .repo-badge.error {
+    background-color: var(--warning-bg);
+    color: var(--warning);
+    padding: 0;
+    width: 14px;
+    height: 14px;
+  }
+
   .info {
     flex: 1;
     min-width: 0;
@@ -473,10 +630,24 @@
     gap: 2px;
   }
 
+  .row-top {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    min-width: 0;
+  }
+
+  .repo-row.error .repo-name,
+  .repo-row.error .branch-name {
+    color: var(--text-faint);
+  }
+
   .repo-name {
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+    flex: 1 1 auto;
+    min-width: 0;
     color: #1a1c1f;
     font-size: 14px;
     font-weight: 500;
@@ -519,15 +690,17 @@
     justify-content: center;
     cursor: pointer;
     flex-shrink: 0;
-    opacity: 0.65;
+    opacity: 0;
     transition: opacity 120ms ease, background-color 120ms ease;
   }
   .repo-row:hover .row-menu-btn,
   .row-menu-btn:focus,
-  .repo-row.active .row-menu-btn {
-    opacity: 0.9;
+  .row-menu-btn:focus-visible,
+  .row-menu-btn.menu-open {
+    opacity: 0.8;
   }
-  .row-menu-btn:hover {
+  .row-menu-btn:hover,
+  .row-menu-btn.menu-open {
     opacity: 1 !important;
     background-color: rgba(0, 0, 0, 0.08);
     color: #1a1c1f;
@@ -535,7 +708,8 @@
   :global([data-theme="dark"]) .row-menu-btn {
     color: var(--text-muted);
   }
-  :global([data-theme="dark"]) .row-menu-btn:hover {
+  :global([data-theme="dark"]) .row-menu-btn:hover,
+  :global([data-theme="dark"]) .row-menu-btn.menu-open {
     background-color: rgba(255, 255, 255, 0.1);
     color: var(--text);
   }
@@ -590,6 +764,12 @@
   }
   .hover-line.branch :global(svg) {
     color: #9b6bd1;
+  }
+  .hover-line.error-line {
+    color: var(--warning);
+  }
+  .hover-line.error-line :global(svg) {
+    color: var(--warning);
   }
   .hover-path {
     font-size: 11px;

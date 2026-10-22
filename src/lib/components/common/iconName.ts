@@ -44,4 +44,7 @@ export type IconName =
   | "grid"
   | "worktree"
   | "changes"
-  | "file";
+  | "alert"
+  | "wrap"
+  | "file"
+  | "files";

@@ -2,7 +2,7 @@ use crate::error::AppError;
 use crate::git::blob::{get_blob_lines, get_blob_text, get_tree_list, BlobTextResult};
 use crate::git::diff::{get_scope_file_diff, get_scope_files};
 use crate::git::grep::{blame_line as git_blame_line, grep_definitions};
-use crate::git::log::get_log_page;
+use crate::git::log::{get_history_page, get_log_page};
 use crate::git::ops::{
     check_pushed as git_check_pushed, commit as git_commit, discard as git_discard, list_backups,
     reset_to as git_reset_to, restore_backup, revert as git_revert,
@@ -412,6 +412,41 @@ pub async fn log_page(
     };
 
     get_log_page(
+        &state.runner,
+        &repo_path,
+        target_branch.as_deref(),
+        skip,
+        limit,
+        query.as_deref(),
+        marker_sha.as_deref(),
+    )
+    .await
+}
+
+/// Paged history with a total count and an optional message/author/path filter.
+#[tauri::command]
+pub async fn history_page(
+    state: State<'_, AppState>,
+    id: String,
+    skip: u32,
+    limit: u32,
+    query: Option<String>,
+) -> Result<HistoryPage, AppError> {
+    let (repo_path, marker_sha, target_branch) = {
+        let data = state.data.lock().await;
+        let entry = data
+            .repos
+            .iter()
+            .find(|r| r.id == id)
+            .ok_or_else(|| AppError::not_found("Repository not found"))?;
+        (
+            PathBuf::from(&entry.path),
+            entry.marker.as_ref().map(|m| m.sha.clone()),
+            entry.branch.clone(),
+        )
+    };
+
+    get_history_page(
         &state.runner,
         &repo_path,
         target_branch.as_deref(),
