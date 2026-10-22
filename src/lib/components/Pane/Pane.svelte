@@ -493,6 +493,9 @@
         repoName={repo.name}
         repoPath={repo.path}
         height={currentPane.terminalHeight}
+        onresize={(h) => {
+          $panes[paneIndex].terminalHeight = h;
+        }}
         onclose={() => {
           $panes[paneIndex].terminalOpen = false;
         }}
