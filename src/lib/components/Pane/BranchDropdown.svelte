@@ -21,24 +21,14 @@
   let showModal = $state(false);
   let branchFilter = $state("");
   let isCheckingOut = $state(false);
-  let activeTab = $state<"branches" | "pull-requests">("branches");
 
   let triggerEl = $state<HTMLButtonElement | null>(null);
   let menuEl = $state<HTMLDivElement | null>(null);
-  let searchInputEl = $state<HTMLInputElement | null>(null);
 
   let filteredBranches = $derived(
     branches.filter(
       (b) => !branchFilter || b.name.toLowerCase().includes(branchFilter.toLowerCase())
     )
-  );
-
-  let defaultBranch = $derived(
-    branches.find((b) => b.name === "main" || b.name === "master")
-  );
-
-  let otherBranches = $derived(
-    filteredBranches.filter((b) => b.name !== currentBranch && (!defaultBranch || b.name !== defaultBranch.name))
   );
 
   let siblingViews = $derived(
@@ -78,7 +68,14 @@
       showMenu = true;
       branchFilter = "";
       queueMicrotask(() => {
-        searchInputEl?.focus();
+        if (!menuEl) return;
+        const selected = menuEl.querySelector<HTMLElement>(".branch-option.selected");
+        if (selected) {
+          selected.focus();
+        } else {
+          const first = menuEl.querySelector<HTMLElement>(".branch-option");
+          first?.focus();
+        }
       });
     }
   }
@@ -104,14 +101,9 @@
     if (e.key === "ArrowDown" || e.key === "ArrowUp") {
       e.preventDefault();
       if (!menuEl) return;
-      const items = Array.from(menuEl.querySelectorAll<HTMLElement>(".gh-branch-row"));
-      if (items.length === 0) return;
+      const items = Array.from(menuEl.querySelectorAll<HTMLElement>(".branch-option"));
       const i = items.indexOf(document.activeElement as HTMLElement);
-      if (i === -1) {
-        items[0]?.focus();
-      } else {
-        items[(i + (e.key === "ArrowDown" ? 1 : -1) + items.length) % items.length]?.focus();
-      }
+      items[(i + (e.key === "ArrowDown" ? 1 : -1) + items.length) % items.length]?.focus();
     }
   }
 
@@ -173,7 +165,6 @@
 </script>
 
 <div class="branch-dropdown-wrapper">
-  <!-- GitHub Desktop Styled Current Branch Header / Trigger -->
   <button
     bind:this={triggerEl}
     type="button"
@@ -184,17 +175,12 @@
     onkeydown={handleTriggerKeydown}
     title={`Current branch: ${currentBranch}${isInactiveView ? " (not checked out)" : ""}`}
   >
-    <div class="trigger-icon-wrap">
-      <Icon name="git-branch" size={16} class="branch-icon" />
-    </div>
-    <div class="trigger-content">
-      <span class="trigger-sublabel">Current Branch</span>
-      <span class="trigger-name font-mono">{currentBranch}</span>
-    </div>
+    <Icon name="git-branch" size={14} class="branch-icon" />
+    <span class="branch-label font-mono">{currentBranch}</span>
     {#if isInactiveView}
       <span class="inactive-dot" title="Read-only view (not checked out on disk)"></span>
     {/if}
-    <Icon name="chevron-down" size={14} class="chevron-icon" />
+    <Icon name="chevron-down" size={13} class="chevron-icon" />
   </button>
 
   {#if showMenu}
@@ -206,176 +192,81 @@
 
     <div
       bind:this={menuEl}
-      class="gh-dropdown-popover"
+      class="branch-menu"
       role="menu"
       aria-label="Branches"
       tabindex="-1"
       onkeydown={handleMenuKeydown}
     >
-      <!-- Top Segmented Tabs: Branches / Pull Requests -->
-      <div class="gh-tab-bar">
-        <button
-          type="button"
-          class="gh-tab"
-          class:active={activeTab === "branches"}
-          onclick={() => (activeTab = "branches")}
-        >
-          Branches
-        </button>
-        <button
-          type="button"
-          class="gh-tab"
-          class:active={activeTab === "pull-requests"}
-          onclick={() => (activeTab = "pull-requests")}
-        >
-          Pull Requests
-        </button>
+      <div class="branch-menu-header">
+        <span class="menu-title">Switch branch</span>
       </div>
 
-      {#if activeTab === "branches"}
-        <!-- Search filter input and 'New Branch' button -->
-        <div class="gh-filter-bar">
-          <div class="gh-input-wrapper">
-            <Icon name="search" size={13} class="gh-search-icon" />
-            <input
-              bind:this={searchInputEl}
-              type="text"
-              placeholder="Filter"
-              bind:value={branchFilter}
-              class="gh-filter-input"
-              onkeydown={(e) => {
-                if (e.key === "Escape") {
-                  closeMenu();
-                  triggerEl?.focus();
-                } else {
-                  e.stopPropagation();
-                }
-              }}
-            />
-          </div>
-          <button
-            type="button"
-            class="gh-new-branch-btn"
-            onclick={() => {
-              showMenu = false;
-              branchFilter = "";
-              showModal = true;
-            }}
-          >
-            New Branch
-          </button>
-        </div>
-
-        <div class="gh-branch-list-scroll">
-          <!-- Default branch (if matches and filter isn't active or matches) -->
-          {#if defaultBranch && (!branchFilter || defaultBranch.name.toLowerCase().includes(branchFilter.toLowerCase()))}
-            <div class="gh-section-header">Default Branch</div>
-            <button
-              type="button"
-              class="gh-branch-row"
-              class:selected={currentBranch === defaultBranch.name}
-              role="menuitemradio"
-              aria-checked={currentBranch === defaultBranch.name}
-              onclick={() => selectBranch(defaultBranch!.name)}
-            >
-              <div class="gh-row-left">
-                <Icon name="git-branch" size={14} class="gh-row-icon" />
-                <span class="gh-branch-title font-mono">{defaultBranch.name}</span>
-                {#if defaultBranch.isHead}
-                  <span class="gh-head-badge">HEAD</span>
-                {/if}
-              </div>
-              <div class="gh-row-right">
-                {#if defaultBranch.relativeDate}
-                  <span class="gh-date">{defaultBranch.relativeDate}</span>
-                {/if}
-                {#if currentBranch === defaultBranch.name}
-                  <span class="gh-check">✓</span>
-                {/if}
-              </div>
-            </button>
-          {/if}
-
-          <!-- Current Branch Section if not default -->
-          {#if (!defaultBranch || defaultBranch.name !== currentBranch) && (!branchFilter || currentBranch.toLowerCase().includes(branchFilter.toLowerCase()))}
-            <div class="gh-section-header">Current Branch</div>
-            <button
-              type="button"
-              class="gh-branch-row selected"
-              role="menuitemradio"
-              aria-checked={true}
-              onclick={() => selectBranch(currentBranch)}
-            >
-              <div class="gh-row-left">
-                <Icon name="git-branch" size={14} class="gh-row-icon" />
-                <span class="gh-branch-title font-mono">{currentBranch}</span>
-                <span class="gh-head-badge">CURRENT</span>
-              </div>
-              <div class="gh-row-right">
-                <span class="gh-check">✓</span>
-              </div>
-            </button>
-          {/if}
-
-          <!-- Other branches -->
-          {#if otherBranches.length > 0}
-            <div class="gh-section-header">Other Branches</div>
-            {#each otherBranches as b (b.name)}
-              <button
-                type="button"
-                class="gh-branch-row"
-                class:selected={currentBranch === b.name}
-                role="menuitemradio"
-                aria-checked={currentBranch === b.name}
-                onclick={() => selectBranch(b.name)}
-              >
-                <div class="gh-row-left">
-                  <Icon name="git-branch" size={14} class="gh-row-icon" />
-                  <span class="gh-branch-title font-mono">{b.name}</span>
-                  {#if b.isHead}
-                    <span class="gh-head-badge">HEAD</span>
-                  {/if}
-                </div>
-                <div class="gh-row-right">
-                  {#if b.relativeDate}
-                    <span class="gh-date">{b.relativeDate}</span>
-                  {/if}
-                  {#if currentBranch === b.name}
-                    <span class="gh-check">✓</span>
-                  {/if}
-                </div>
-              </button>
-            {/each}
-          {/if}
-
-          {#if filteredBranches.length === 0}
-            <div class="gh-empty-list">
-              <span>No branches match "{branchFilter}"</span>
-            </div>
-          {/if}
-        </div>
-
-        {#if isInactiveView}
-          <div class="gh-footer-bar">
-            <button
-              type="button"
-              class="gh-checkout-btn"
-              disabled={isCheckingOut}
-              onclick={checkoutCurrentBranch}
-            >
-              <Icon name="check" size={13} />
-              <span>{isCheckingOut ? "Checking out…" : "Check out this branch"}</span>
-            </button>
-          </div>
-        {/if}
-      {:else}
-        <!-- Pull Requests Placeholder Tab -->
-        <div class="gh-pr-empty-view">
-          <Icon name="git-branch" size={28} class="pr-icon" />
-          <span class="pr-empty-title">No Pull Requests</span>
-          <span class="pr-empty-subtitle">Connect your GitHub account or repository remote to view pull requests.</span>
+      {#if branches.length > 5}
+        <div class="menu-search">
+          <input
+            type="text"
+            placeholder="Filter branches…"
+            bind:value={branchFilter}
+            class="branch-filter-input"
+            onkeydown={(e) => e.stopPropagation()}
+          />
         </div>
       {/if}
+
+      <div class="branch-list">
+        {#each filteredBranches as b (b.name)}
+          <button
+            type="button"
+            class="branch-option"
+            class:selected={currentBranch === b.name}
+            role="menuitemradio"
+            aria-checked={currentBranch === b.name}
+            tabindex={currentBranch === b.name ? 0 : -1}
+            onclick={() => selectBranch(b.name)}
+          >
+            <Icon name="git-branch" size={13} />
+            <span class="branch-option-name font-mono">{b.name}</span>
+            {#if b.isHead}
+              <span class="head-pill">HEAD</span>
+            {/if}
+            <span class="branch-check">{currentBranch === b.name ? "✓" : ""}</span>
+          </button>
+        {/each}
+
+        {#if filteredBranches.length === 0}
+          <div class="empty-notice">No branches found</div>
+        {/if}
+      </div>
+
+      {#if isInactiveView}
+        <div class="menu-divider"></div>
+        <button
+          type="button"
+          class="branch-option checkout-action"
+          role="menuitem"
+          disabled={isCheckingOut}
+          onclick={checkoutCurrentBranch}
+        >
+          <Icon name="check" size={13} />
+          <span>{isCheckingOut ? "Checking out…" : "Check out this branch"}</span>
+        </button>
+      {/if}
+
+      <div class="menu-divider"></div>
+      <button
+        type="button"
+        class="branch-option add-view-action"
+        role="menuitem"
+        onclick={() => {
+          showMenu = false;
+          branchFilter = "";
+          showModal = true;
+        }}
+      >
+        <Icon name="plus" size={13} />
+        <span>Add branch view…</span>
+      </button>
     </div>
   {/if}
 </div>
@@ -472,18 +363,19 @@
     align-items: center;
   }
 
-  /* GitHub Desktop Style Trigger Button */
   .branch-trigger-btn {
     display: flex;
     align-items: center;
-    gap: 8px;
+    gap: 6px;
     width: 100%;
-    height: 38px;
-    padding: 2px 8px;
+    height: 28px;
+    padding: 0 8px;
     border-radius: var(--r-sm, 6px);
     background-color: var(--bg);
     border: 1px solid var(--border);
     color: var(--text);
+    font-size: 12px;
+    font-weight: 500;
     cursor: pointer;
     transition: background-color 0.15s, border-color 0.15s;
     user-select: none;
@@ -493,7 +385,7 @@
   .branch-trigger-btn:hover,
   .branch-trigger-btn[aria-expanded="true"] {
     background-color: var(--bg-muted);
-    border-color: var(--border-subtle, var(--border));
+    border-color: var(--border);
   }
 
   .branch-trigger-btn:focus-visible {
@@ -502,37 +394,18 @@
     border-color: var(--accent);
   }
 
-  .trigger-icon-wrap {
-    display: flex;
-    align-items: center;
-    justify-content: center;
+  .branch-trigger-btn :global(.branch-icon) {
     color: var(--accent);
     flex-shrink: 0;
   }
 
-  .trigger-content {
-    display: flex;
-    flex-direction: column;
-    justify-content: center;
+  .branch-label {
     flex: 1;
     min-width: 0;
-    line-height: 1.15;
-  }
-
-  .trigger-sublabel {
-    font-size: 10px;
-    font-weight: 500;
-    color: var(--text-muted);
-    letter-spacing: 0.02em;
-  }
-
-  .trigger-name {
-    font-size: 12.5px;
-    font-weight: 600;
-    color: var(--text);
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+    letter-spacing: -0.01em;
   }
 
   .inactive-dot {
@@ -544,7 +417,7 @@
   }
 
   .branch-trigger-btn :global(.chevron-icon) {
-    color: var(--text-muted);
+    color: var(--text-faint);
     flex-shrink: 0;
     transition: transform 0.15s ease;
   }
@@ -553,7 +426,6 @@
     transform: rotate(180deg);
   }
 
-  /* Backdrop */
   .menu-backdrop {
     position: fixed;
     inset: 0;
@@ -561,281 +433,152 @@
     background: transparent;
   }
 
-  /* GitHub Desktop Popover Dropdown */
-  .gh-dropdown-popover {
+  .branch-menu {
     position: absolute;
-    top: calc(100% + 4px);
+    top: calc(100% + 6px);
     left: 0;
     z-index: 101;
-    width: 380px;
-    max-width: 90vw;
+    width: 280px;
+    min-width: 240px;
+    max-width: 360px;
+    max-height: 420px;
     display: flex;
     flex-direction: column;
     background-color: var(--bg);
     border: 1px solid var(--border);
-    border-radius: 8px;
-    box-shadow: 0 12px 32px rgba(0, 0, 0, 0.24), 0 0 0 1px rgba(0, 0, 0, 0.06);
+    border-radius: var(--r-md, 8px);
+    box-shadow: 0 10px 30px rgba(0, 0, 0, 0.22), 0 0 0 1px rgba(0, 0, 0, 0.08);
+    padding: 6px;
     overflow: hidden;
   }
-
-  :global([data-theme="dark"]) .gh-dropdown-popover {
-    box-shadow: 0 16px 40px rgba(0, 0, 0, 0.65), 0 0 0 1px rgba(255, 255, 255, 0.1);
+  :global([data-theme="dark"]) .branch-menu {
+    box-shadow: 0 12px 36px rgba(0, 0, 0, 0.6), 0 0 0 1px rgba(255, 255, 255, 0.1);
   }
 
-  /* GitHub Desktop Tabs (Branches / Pull Requests) */
-  .gh-tab-bar {
-    display: flex;
-    border-bottom: 1px solid var(--border);
-    background-color: var(--bg);
+  .branch-menu-header {
+    padding: 6px 10px 6px;
   }
 
-  .gh-tab {
-    flex: 1;
-    padding: 10px 0;
-    font-size: 12px;
-    font-weight: 600;
+  .menu-title {
+    font-size: 11px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
     color: var(--text-muted);
-    background: transparent;
-    border: none;
-    border-bottom: 2px solid transparent;
-    cursor: pointer;
-    text-align: center;
-    transition: color 0.15s ease;
   }
 
-  .gh-tab:hover {
-    color: var(--text);
+  .menu-search {
+    padding: 4px 6px 6px;
   }
 
-  .gh-tab.active {
-    color: var(--text);
-    border-bottom-color: var(--accent);
-  }
-
-  /* Filter bar with Search input and 'New Branch' button */
-  .gh-filter-bar {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    padding: 10px 12px;
-    border-bottom: 1px solid var(--border-subtle, var(--border));
-    background-color: var(--bg);
-  }
-
-  .gh-input-wrapper {
-    position: relative;
-    flex: 1;
-    display: flex;
-    align-items: center;
-  }
-
-  .gh-input-wrapper :global(.gh-search-icon) {
-    position: absolute;
-    left: 8px;
-    color: var(--text-muted);
-    pointer-events: none;
-  }
-
-  .gh-filter-input {
+  .branch-filter-input {
     width: 100%;
-    height: 28px;
-    padding: 0 8px 0 28px;
-    font-size: 12px;
+    height: 30px;
+    padding: 0 10px;
+    font-size: 12.5px;
     background-color: var(--bg-subtle);
     border: 1px solid var(--border);
-    border-radius: 5px;
+    border-radius: var(--r-sm, 6px);
     color: var(--text);
-    transition: border-color 0.15s, box-shadow 0.15s;
   }
 
-  .gh-filter-input:focus {
+  .branch-filter-input:focus {
     outline: none;
     border-color: var(--accent);
     background-color: var(--bg);
     box-shadow: 0 0 0 2px rgba(24, 115, 213, 0.2);
   }
 
-  .gh-new-branch-btn {
-    height: 28px;
-    padding: 0 10px;
-    font-size: 11.5px;
-    font-weight: 500;
-    color: var(--text);
-    background-color: var(--bg-subtle);
-    border: 1px solid var(--border);
-    border-radius: 5px;
-    cursor: pointer;
-    white-space: nowrap;
-    transition: background-color 0.15s, border-color 0.15s;
-  }
-
-  .gh-new-branch-btn:hover {
-    background-color: var(--bg-muted);
-    border-color: var(--border);
-  }
-
-  /* Scrollable branch list */
-  .gh-branch-list-scroll {
-    max-height: 380px;
+  .branch-list {
+    flex: 1;
     overflow-y: auto;
-    padding: 6px 0;
+    max-height: 260px;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
   }
 
-  .gh-section-header {
-    padding: 6px 14px 4px;
-    font-size: 11px;
-    font-weight: 700;
-    color: var(--text);
-    letter-spacing: -0.01em;
-  }
-
-  .gh-branch-row {
+  .branch-option {
     display: flex;
     align-items: center;
-    justify-content: space-between;
+    gap: 8px;
     width: 100%;
-    padding: 6px 14px;
+    padding: 7px 10px;
     border: none;
     background: transparent;
     color: var(--text);
     font-size: 12.5px;
+    font-weight: 500;
+    border-radius: var(--r-sm, 6px);
     cursor: pointer;
     text-align: left;
-    transition: background-color 0.12s;
+    transition: background-color 0.12s ease, color 0.12s ease;
   }
 
-  .gh-branch-row:hover,
-  .gh-branch-row:focus-visible {
+  .branch-option:hover,
+  .branch-option:focus-visible {
     background-color: var(--bg-muted);
+    color: var(--text);
     outline: none;
   }
 
-  .gh-branch-row.selected {
+  .branch-option.selected {
+    color: var(--accent);
+    font-weight: 600;
     background-color: var(--accent-bg, rgba(24, 115, 213, 0.08));
   }
 
-  .gh-row-left {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    min-width: 0;
+  .branch-option-name {
     flex: 1;
-  }
-
-  .gh-row-left :global(.gh-row-icon) {
-    color: var(--text-muted);
-    flex-shrink: 0;
-  }
-
-  .gh-branch-row:hover :global(.gh-row-icon),
-  .gh-branch-row.selected :global(.gh-row-icon) {
-    color: var(--accent);
-  }
-
-  .gh-branch-title {
+    min-width: 0;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
     font-size: 12.5px;
-    color: var(--text);
+    line-height: 1.3;
   }
 
-  .gh-branch-row.selected .gh-branch-title {
-    font-weight: 600;
-    color: var(--accent);
-  }
-
-  .gh-head-badge {
-    font-size: 9px;
-    font-weight: 700;
+  .head-pill {
+    font-size: 9.5px;
     text-transform: uppercase;
-    padding: 1px 4px;
-    border-radius: 3px;
-    background-color: rgba(125, 125, 125, 0.16);
-    color: var(--text-muted);
-    flex-shrink: 0;
+    font-weight: 700;
+    padding: 2px 5px;
+    background-color: rgba(125, 125, 125, 0.18);
+    color: var(--text);
+    border-radius: 4px;
+    letter-spacing: 0.04em;
   }
 
-  .gh-row-right {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    flex-shrink: 0;
-    margin-left: 8px;
-  }
-
-  .gh-date {
-    font-size: 11.5px;
-    color: var(--text-muted);
-  }
-
-  .gh-check {
-    font-size: 12.5px;
+  .branch-check {
+    font-size: 13px;
     font-weight: 700;
     color: var(--accent);
+    width: 16px;
+    text-align: right;
   }
 
-  .gh-empty-list {
-    padding: 24px 16px;
+  .empty-notice {
+    padding: 14px 8px;
     text-align: center;
     font-size: 12px;
     color: var(--text-muted);
   }
 
-  /* Inactive / Checkout footer */
-  .gh-footer-bar {
-    padding: 8px 12px;
-    border-top: 1px solid var(--border);
-    background-color: var(--bg-subtle);
+  .menu-divider {
+    height: 1px;
+    background-color: var(--border);
+    margin: 6px 0;
+    flex-shrink: 0;
   }
 
-  .gh-checkout-btn {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    gap: 6px;
-    width: 100%;
-    height: 28px;
-    border: 1px solid var(--border);
-    border-radius: 5px;
-    background-color: var(--bg);
+  .checkout-action {
     color: var(--text);
-    font-size: 12px;
     font-weight: 500;
-    cursor: pointer;
   }
 
-  .gh-checkout-btn:hover {
-    background-color: var(--bg-muted);
-  }
-
-  /* PR placeholder */
-  .gh-pr-empty-view {
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    justify-content: center;
-    padding: 36px 20px;
-    text-align: center;
-    gap: 6px;
-  }
-
-  .gh-pr-empty-view :global(.pr-icon) {
-    color: var(--text-muted);
-    margin-bottom: 4px;
-  }
-
-  .pr-empty-title {
-    font-size: 13px;
-    font-weight: 600;
-    color: var(--text);
-  }
-
-  .pr-empty-subtitle {
-    font-size: 11.5px;
-    color: var(--text-muted);
-    max-width: 260px;
-    line-height: 1.4;
+  .add-view-action {
+    color: var(--accent);
+    font-weight: 500;
   }
 
   /* Modal Styles */
