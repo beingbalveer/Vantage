@@ -177,10 +177,6 @@
     </button>
 
     {#if activeRepo}
-      <div class="header-context">
-        <span class="repo-heading" title={activeRepo.path}>{activeRepo.name}</span>
-      </div>
-
       <span class="operation-divider"></span>
 
       <!-- Combined GitHub Desktop-style button matching original fetch button style -->
@@ -392,27 +388,6 @@
     cursor: default;
   }
 
-  .header-context {
-    display: flex;
-    align-items: center;
-    min-width: 0;
-    margin-left: 2px;
-  }
-
-  .repo-heading {
-    font-size: 15px;
-    font-weight: 600;
-    letter-spacing: -0.15px;
-    color: #20252a;
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    max-width: 260px;
-  }
-  :global([data-theme="dark"]) .repo-heading {
-    color: #e6edf3;
-  }
-
   .operation {
     display: inline-flex;
     align-items: center;
@@ -592,17 +567,8 @@
   }
 
   @media (max-width: 1100px) {
-    .repo-heading {
-      max-width: 180px;
-    }
     .top-header {
       padding: 0 12px;
-    }
-  }
-
-  @media (max-width: 900px) {
-    .repo-heading {
-      max-width: 130px;
     }
   }
 </style>
