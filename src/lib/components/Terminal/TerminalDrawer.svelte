@@ -190,21 +190,29 @@
     if (term) term.dispose();
   });
 
-  function handleClear() {
+  function handleClear(e?: MouseEvent) {
+    if (e) {
+      e.preventDefault();
+      e.stopPropagation();
+    }
     term?.clear();
     // Send form feed (Ctrl+L) to shell so prompt resets cleanly at top
-    api.termInput(repoId, "\x0c");
+    api.termInput(repoId, "\x0c").catch(() => {});
     term?.focus();
   }
 
-  async function handleRestart() {
+  async function handleRestart(e?: MouseEvent) {
+    if (e) {
+      e.preventDefault();
+      e.stopPropagation();
+    }
     if (isRestarting) return;
     isRestarting = true;
     isExited = false;
     term?.reset();
     try {
       const res = await api.termRestart(repoId);
-      if (res.replay) {
+      if (res && res.replay) {
         term?.write(res.replay);
       }
       fitAddon?.fit();
@@ -217,6 +225,14 @@
     } finally {
       isRestarting = false;
     }
+  }
+
+  function handleClose(e?: MouseEvent) {
+    if (e) {
+      e.preventDefault();
+      e.stopPropagation();
+    }
+    onclose?.();
   }
 
   function startResize(e: PointerEvent) {
@@ -300,42 +316,33 @@
         </span>
       {/if}
       <button
-        class="term-btn"
-        onclick={(e) => {
-          e.stopPropagation();
-          handleClear();
-        }}
-        title="Clear terminal (⌘K)"
-        aria-label="Clear terminal"
+        type="button"
+        class="term-icon-btn"
+        onclick={handleClear}
+        title="Clear Terminal (⌘K)"
+        aria-label="Clear Terminal"
       >
-        <Icon name="trash" size={12} />
-        <span>Clear</span>
+        <Icon name="trash" size={14} />
       </button>
       <button
-        class="term-btn"
+        type="button"
+        class="term-icon-btn"
         class:is-loading={isRestarting}
         disabled={isRestarting}
-        onclick={(e) => {
-          e.stopPropagation();
-          handleRestart();
-        }}
-        title="Restart shell session"
-        aria-label="Restart shell session"
+        onclick={handleRestart}
+        title="Restart Terminal"
+        aria-label="Restart Terminal"
       >
-        <Icon name="refresh" size={12} class={isRestarting ? 'spin' : ''} />
-        <span>Restart</span>
+        <Icon name="refresh" size={14} class={isRestarting ? 'spin' : ''} />
       </button>
       <button
-        class="term-btn hide-btn"
-        onclick={(e) => {
-          e.stopPropagation();
-          onclose?.();
-        }}
-        title="Hide terminal (⌘`)"
-        aria-label="Hide terminal"
+        type="button"
+        class="term-icon-btn"
+        onclick={handleClose}
+        title="Hide Terminal (⌘`)"
+        aria-label="Hide Terminal"
       >
-        <Icon name="chevron-down" size={13} />
-        <span>Hide</span>
+        <Icon name="chevron-down" size={14} />
       </button>
     </div>
   </div>
@@ -466,47 +473,47 @@
     background-color: currentColor;
   }
 
-  .term-btn {
+  .term-icon-btn {
     display: inline-flex;
     align-items: center;
-    gap: 4px;
-    height: 22px;
-    padding: 0 8px;
-    font-size: 11px;
-    font-weight: 500;
-    font-family: var(--font-ui);
+    justify-content: center;
+    width: 24px;
+    height: 24px;
+    padding: 0;
+    border: none;
+    background: transparent;
+    border-radius: 4px;
     color: var(--text-muted);
-    background-color: rgba(0, 0, 0, 0.04);
-    border: 1px solid rgba(0, 0, 0, 0.08);
-    border-radius: 5px;
     cursor: pointer;
     user-select: none;
-    transition: background-color 100ms ease, color 100ms ease, border-color 100ms ease;
+    transition: background-color 100ms ease, color 100ms ease;
   }
-  .term-btn:hover:not(:disabled) {
+  .term-icon-btn:hover:not(:disabled) {
     background-color: rgba(0, 0, 0, 0.08);
     color: var(--text);
-    border-color: rgba(0, 0, 0, 0.14);
   }
-  .term-btn:active:not(:disabled) {
-    background-color: rgba(0, 0, 0, 0.12);
-  }
-  .term-btn:disabled {
-    opacity: 0.6;
-    cursor: not-allowed;
-  }
-  :global([data-theme="dark"]) .term-btn {
-    background-color: rgba(255, 255, 255, 0.06);
-    border-color: rgba(255, 255, 255, 0.1);
-    color: var(--text-muted);
-  }
-  :global([data-theme="dark"]) .term-btn:hover:not(:disabled) {
-    background-color: rgba(255, 255, 255, 0.12);
-    border-color: rgba(255, 255, 255, 0.18);
+  .term-icon-btn:active:not(:disabled) {
+    background-color: rgba(0, 0, 0, 0.14);
     color: var(--text);
   }
-  :global([data-theme="dark"]) .term-btn:active:not(:disabled) {
+  .term-icon-btn:focus-visible {
+    outline: 1px solid var(--accent);
+    outline-offset: -1px;
+  }
+  .term-icon-btn:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+  }
+  :global([data-theme="dark"]) .term-icon-btn {
+    color: var(--text-muted);
+  }
+  :global([data-theme="dark"]) .term-icon-btn:hover:not(:disabled) {
+    background-color: rgba(255, 255, 255, 0.1);
+    color: var(--text);
+  }
+  :global([data-theme="dark"]) .term-icon-btn:active:not(:disabled) {
     background-color: rgba(255, 255, 255, 0.16);
+    color: var(--text);
   }
 
   :global(.spin) {
