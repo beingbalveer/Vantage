@@ -310,6 +310,7 @@
     <button
       type="button"
       class="row-menu-btn"
+      class:menu-open={showMenu}
       title="Repository options"
       onclick={handleMenuBtnClick}
       aria-label="Repository options"
@@ -689,15 +690,17 @@
     justify-content: center;
     cursor: pointer;
     flex-shrink: 0;
-    opacity: 0.65;
+    opacity: 0;
     transition: opacity 120ms ease, background-color 120ms ease;
   }
   .repo-row:hover .row-menu-btn,
   .row-menu-btn:focus,
-  .repo-row.active .row-menu-btn {
-    opacity: 0.9;
+  .row-menu-btn:focus-visible,
+  .row-menu-btn.menu-open {
+    opacity: 0.8;
   }
-  .row-menu-btn:hover {
+  .row-menu-btn:hover,
+  .row-menu-btn.menu-open {
     opacity: 1 !important;
     background-color: rgba(0, 0, 0, 0.08);
     color: #1a1c1f;
@@ -705,7 +708,8 @@
   :global([data-theme="dark"]) .row-menu-btn {
     color: var(--text-muted);
   }
-  :global([data-theme="dark"]) .row-menu-btn:hover {
+  :global([data-theme="dark"]) .row-menu-btn:hover,
+  :global([data-theme="dark"]) .row-menu-btn.menu-open {
     background-color: rgba(255, 255, 255, 0.1);
     color: var(--text);
   }
