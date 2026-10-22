@@ -370,8 +370,8 @@
     width: 100%;
     height: 28px;
     padding: 0 8px;
-    border-radius: var(--radius-sm);
-    background-color: var(--bg-surface);
+    border-radius: var(--r-sm, 6px);
+    background-color: var(--bg);
     border: 1px solid var(--border);
     color: var(--text);
     font-size: 12px;
@@ -384,13 +384,13 @@
 
   .branch-trigger-btn:hover,
   .branch-trigger-btn[aria-expanded="true"] {
-    background-color: var(--bg-hover);
-    border-color: var(--border-focus);
+    background-color: var(--bg-muted);
+    border-color: var(--border);
   }
 
   .branch-trigger-btn:focus-visible {
     outline: none;
-    box-shadow: 0 0 0 2px var(--accent-alpha);
+    box-shadow: 0 0 0 2px rgba(24, 115, 213, 0.25);
     border-color: var(--accent);
   }
 
@@ -437,17 +437,17 @@
     position: absolute;
     top: calc(100% + 4px);
     left: 0;
-    right: 0;
     z-index: 101;
-    min-width: 200px;
+    width: 260px;
+    min-width: 220px;
     max-width: 320px;
     max-height: 380px;
     display: flex;
     flex-direction: column;
-    background-color: var(--bg-elevated);
+    background-color: var(--bg);
     border: 1px solid var(--border);
-    border-radius: var(--radius-md);
-    box-shadow: var(--shadow-lg, 0 10px 25px -5px rgba(0, 0, 0, 0.4));
+    border-radius: var(--r-md, 8px);
+    box-shadow: var(--shadow-pop, 0 8px 24px rgba(0, 0, 0, 0.25));
     padding: 4px;
     overflow: hidden;
   }
@@ -470,18 +470,19 @@
 
   .branch-filter-input {
     width: 100%;
-    height: 24px;
-    padding: 0 6px;
-    font-size: 11px;
-    background-color: var(--bg-surface);
+    height: 26px;
+    padding: 0 8px;
+    font-size: 11.5px;
+    background-color: var(--bg-subtle);
     border: 1px solid var(--border);
-    border-radius: var(--radius-sm);
+    border-radius: var(--r-sm, 6px);
     color: var(--text);
   }
 
   .branch-filter-input:focus {
     outline: none;
     border-color: var(--accent);
+    background-color: var(--bg);
   }
 
   .branch-list {
@@ -503,7 +504,7 @@
     background: transparent;
     color: var(--text-muted);
     font-size: 12px;
-    border-radius: var(--radius-sm);
+    border-radius: var(--r-sm, 6px);
     cursor: pointer;
     text-align: left;
     transition: background-color 0.1s, color 0.1s;
@@ -511,7 +512,7 @@
 
   .branch-option:hover,
   .branch-option:focus-visible {
-    background-color: var(--bg-hover);
+    background-color: var(--bg-muted);
     color: var(--text);
     outline: none;
   }
@@ -535,9 +536,9 @@
     text-transform: uppercase;
     font-weight: 600;
     padding: 1px 4px;
-    background-color: var(--bg-active);
+    background-color: var(--bg-muted);
     color: var(--text-muted);
-    border-radius: var(--radius-xs, 3px);
+    border-radius: 3px;
   }
 
   .branch-check {
@@ -557,7 +558,7 @@
 
   .menu-divider {
     height: 1px;
-    background-color: var(--border);
+    background-color: var(--border-subtle, var(--border));
     margin: 4px 0;
     flex-shrink: 0;
   }
@@ -585,10 +586,10 @@
   .branch-dialog {
     width: 480px;
     max-height: 80vh;
-    background-color: var(--bg-elevated);
+    background-color: var(--bg);
     border: 1px solid var(--border);
-    border-radius: var(--radius-lg);
-    box-shadow: var(--shadow-xl);
+    border-radius: var(--r-lg, 10px);
+    box-shadow: var(--shadow-pop, 0 16px 36px rgba(0, 0, 0, 0.35));
     display: flex;
     flex-direction: column;
     overflow: hidden;
@@ -608,13 +609,13 @@
     background: transparent;
     color: var(--text-muted);
     cursor: pointer;
-    border-radius: var(--radius-sm);
+    border-radius: var(--r-sm, 6px);
     padding: 4px;
   }
 
   .dialog-close-btn:hover {
     color: var(--text);
-    background-color: var(--bg-hover);
+    background-color: var(--bg-muted);
   }
 
   .dialog-desc {
@@ -632,9 +633,9 @@
     flex: 1;
     height: 32px;
     padding: 0 10px;
-    background-color: var(--bg-surface);
+    background-color: var(--bg-subtle);
     border: 1px solid var(--border);
-    border-radius: var(--radius-sm);
+    border-radius: var(--r-sm, 6px);
     color: var(--text);
     font-size: 12px;
   }
@@ -648,9 +649,9 @@
     height: 32px;
     padding: 0 12px;
     background-color: var(--accent);
-    color: var(--accent-contrast, #fff);
+    color: #fff;
     border: none;
-    border-radius: var(--radius-sm);
+    border-radius: var(--r-sm, 6px);
     font-size: 12px;
     font-weight: 500;
     cursor: pointer;
@@ -664,7 +665,7 @@
     flex-direction: column;
     gap: 2px;
     border: 1px solid var(--border);
-    border-radius: var(--radius-sm);
+    border-radius: var(--r-sm, 6px);
     padding: 4px;
     background-color: var(--bg);
   }
@@ -674,11 +675,11 @@
     align-items: center;
     justify-content: space-between;
     padding: 6px 8px;
-    border-radius: var(--radius-xs, 3px);
+    border-radius: 4px;
   }
 
   .branch-picker-item:hover {
-    background-color: var(--bg-hover);
+    background-color: var(--bg-muted);
   }
 
   .branch-picker-name {
@@ -691,16 +692,16 @@
   .pick-btn {
     font-size: 11px;
     padding: 2px 8px;
-    background-color: var(--bg-surface);
+    background-color: var(--bg-subtle);
     border: 1px solid var(--border);
-    border-radius: var(--radius-sm);
+    border-radius: var(--r-sm, 6px);
     color: var(--text);
     cursor: pointer;
   }
 
   .pick-btn:hover {
     background-color: var(--accent);
-    color: var(--accent-contrast, #fff);
+    color: #fff;
     border-color: var(--accent);
   }
 </style>
