@@ -97,6 +97,9 @@ export const settingsOpen = writable<boolean>(false);
 export const shortcutsHelpOpen = writable<boolean>(false);
 export const addRepoDialogOpen = writable<boolean>(false);
 export const scanFolderDialogOpen = writable<boolean>(false);
+// Which tab the Add-repository dialog should open on. Consumed once when the
+// dialog opens so the palette can deep-link straight to the clone form.
+export const addRepoInitialTab = writable<"existing" | "clone">("existing");
 
 // Which Settings section to reveal when the dialog opens, and which repo the
 // Recovery pane should pre-select. Reset on close so a plain "open settings"

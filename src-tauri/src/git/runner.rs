@@ -179,6 +179,128 @@ impl GitRunner {
         })
     }
 
+    /// Run a git command and invoke `on_line` for every stderr line as it is
+    /// produced, while still collecting the full stdout/stderr for the caller.
+    /// Used for long, progress-reporting commands such as `git clone --progress`.
+    /// `on_line` receives the raw line (without the trailing newline/CR).
+    pub async fn run_streaming_stderr<F>(
+        &self,
+        repo_path: Option<&Path>,
+        args: &[&str],
+        timeout_secs: u64,
+        mut on_line: F,
+    ) -> Result<GitOutput, AppError>
+    where
+        F: FnMut(&str) + Send,
+    {
+        let _permit = self
+            .semaphore
+            .acquire()
+            .await
+            .map_err(|e| AppError::other(format!("Semaphore error: {}", e)))?;
+
+        let mut cmd = Command::new("git");
+        cmd.kill_on_drop(true);
+        cmd.stdin(std::process::Stdio::null());
+        cmd.stdout(std::process::Stdio::piped());
+        cmd.stderr(std::process::Stdio::piped());
+        cmd.env("LC_ALL", "C")
+            .env("GIT_TERMINAL_PROMPT", "0")
+            .env("GIT_PAGER", "cat");
+        cmd.arg("-c").arg("core.quotepath=off");
+        cmd.arg("-c").arg("color.ui=never");
+
+        if let Some(path) = repo_path {
+            cmd.arg("-C").arg(path);
+        }
+        cmd.args(args);
+
+        let mut child = match cmd.spawn() {
+            Ok(c) => c,
+            Err(e) => {
+                if e.kind() == std::io::ErrorKind::NotFound {
+                    return Err(AppError::git_missing());
+                } else {
+                    return Err(AppError::io(e));
+                }
+            }
+        };
+
+        let stdout_pipe = child.stdout.take();
+        let stderr_pipe = child.stderr.take();
+
+        let wait_fut = async {
+            let mut stdout_buf = Vec::new();
+            let mut stderr_buf = Vec::new();
+
+            let read_out = async {
+                if let Some(mut s) = stdout_pipe {
+                    use tokio::io::AsyncReadExt;
+                    let _ = s.read_to_end(&mut stdout_buf).await;
+                }
+            };
+
+            // git progress uses `\r` between updates and `\n` at the end, so we
+            // split on either character rather than lines().
+            let read_err = async {
+                if let Some(mut s) = stderr_pipe {
+                    use tokio::io::AsyncReadExt;
+                    let mut buf = [0u8; 4096];
+                    let mut pending: Vec<u8> = Vec::new();
+                    loop {
+                        let n = match s.read(&mut buf).await {
+                            Ok(0) => break,
+                            Ok(n) => n,
+                            Err(_) => break,
+                        };
+                        for &b in &buf[..n] {
+                            if b == b'\n' || b == b'\r' {
+                                if !pending.is_empty() {
+                                    let line = String::from_utf8_lossy(&pending).to_string();
+                                    stderr_buf.extend_from_slice(&pending);
+                                    stderr_buf.push(b'\n');
+                                    on_line(&line);
+                                    pending.clear();
+                                }
+                            } else {
+                                pending.push(b);
+                            }
+                        }
+                    }
+                    if !pending.is_empty() {
+                        let line = String::from_utf8_lossy(&pending).to_string();
+                        stderr_buf.extend_from_slice(&pending);
+                        on_line(&line);
+                    }
+                }
+            };
+
+            let (status, _, _) = tokio::join!(child.wait(), read_out, read_err);
+            (status, stdout_buf, stderr_buf)
+        };
+
+        let (status_res, stdout_bytes, stderr_bytes) =
+            match tokio::time::timeout(Duration::from_secs(timeout_secs), wait_fut).await {
+                Ok(res) => res,
+                Err(_) => {
+                    let _ = child.start_kill();
+                    let _ = child.wait().await;
+                    return Err(AppError::timeout(format!(
+                        "Git command timed out after {}s: git {}",
+                        timeout_secs,
+                        args.join(" ")
+                    )));
+                }
+            };
+
+        let status = status_res.map_err(AppError::io)?;
+        Ok(GitOutput {
+            stdout: stdout_bytes,
+            stderr: String::from_utf8_lossy(&stderr_bytes).to_string(),
+            status,
+        })
+    }
+
     pub async fn run_read(&self, repo_path: &Path, args: &[&str]) -> Result<GitOutput, AppError> {
         self.run(Some(repo_path), args, 20, false).await
     }

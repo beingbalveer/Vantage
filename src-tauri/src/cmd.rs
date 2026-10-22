@@ -55,10 +55,13 @@ impl AppState {
 
 // ---------------- Repo Commands ----------------
 
-#[tauri::command]
-pub async fn repo_add(
-    state: State<'_, AppState>,
-    app_handle: AppHandle,
+/// Register a directory that is already on disk as a repo: verify it is a git
+/// work tree, canonicalize it, set the initial reviewed marker, persist, and
+/// start watching. Shared by "add existing", scan, and clone so the semantics
+/// stay identical.
+async fn register_repo(
+    state: &AppState,
+    app_handle: &AppHandle,
     path: String,
     branch: Option<String>,
     unreviewed_last_n: Option<u32>,
@@ -165,7 +168,7 @@ pub async fn repo_add(
     state
         .watcher_mgr
         .watch_repo(
-            app_handle,
+            app_handle.clone(),
             repo_id,
             top_canon,
             target_branch,
@@ -175,6 +178,43 @@ pub async fn repo_add(
         .await;
 
     Ok(entry)
+}
+
+#[tauri::command]
+pub async fn repo_add(
+    state: State<'_, AppState>,
+    app_handle: AppHandle,
+    path: String,
+    branch: Option<String>,
+    unreviewed_last_n: Option<u32>,
+) -> Result<RepoEntry, AppError> {
+    register_repo(state.inner(), &app_handle, path, branch, unreviewed_last_n).await
+}
+
+#[tauri::command]
+pub async fn repo_clone(
+    state: State<'_, AppState>,
+    app_handle: AppHandle,
+    clone_id: String,
+    url: String,
+    dest_parent: String,
+    name: Option<String>,
+    branch: Option<String>,
+) -> Result<RepoEntry, AppError> {
+    // Clone into the chosen destination, then register through the same path as
+    // "add existing" so marker/watch/duplicate semantics are identical.
+    let final_path = crate::git::clone::clone_repo(
+        &state.runner,
+        &app_handle,
+        &clone_id,
+        &url,
+        &dest_parent,
+        name.as_deref(),
+        branch.as_deref(),
+    )
+    .await?;
+
+    register_repo(state.inner(), &app_handle, final_path, branch, None).await
 }
 
 #[tauri::command]

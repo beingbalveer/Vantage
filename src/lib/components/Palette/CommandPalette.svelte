@@ -18,7 +18,16 @@
   import { SHORTCUTS, formatKey } from "../../keys";
   import { fuzzyScore } from "../../fuzzy";
   import { formatRelativeTime } from "../../format";
-  import { addRepoDialogOpen, shortcutsHelpOpen, addToast, sidebarCollapsed, openDialog, openSettingsAt } from "../../stores/ui";
+  import {
+    addRepoDialogOpen,
+    settingsOpen,
+    shortcutsHelpOpen,
+    addToast,
+    sidebarCollapsed,
+    openDialog,
+    addRepoInitialTab,
+    openSettingsAt,
+  } from "../../stores/ui";
   import type { Layout, CommitSummary } from "../../types";
   import * as api from "../../api";
   import Icon from "../common/Icon.svelte";
@@ -110,6 +119,15 @@
         shortcut: "Mod+O",
         action: () => {
           $paletteOpen = false;
+          $addRepoDialogOpen = true;
+        },
+      },
+      {
+        id: "cmd_clone_repo",
+        title: "Clone repository…",
+        action: () => {
+          $paletteOpen = false;
+          addRepoInitialTab.set("clone");
           $addRepoDialogOpen = true;
         },
       },
