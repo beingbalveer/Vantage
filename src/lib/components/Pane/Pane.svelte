@@ -955,7 +955,7 @@
   .branch-wrap {
     min-width: 0;
     flex: 1;
-    overflow: hidden;
+    position: relative;
   }
 
   .pane-view-tabs {
