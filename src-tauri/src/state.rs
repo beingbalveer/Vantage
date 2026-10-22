@@ -71,6 +71,17 @@ pub struct CommitSummary {
     pub is_new: bool,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HistoryPage {
+    pub commits: Vec<CommitSummary>,
+    /// Total commits reachable from the target ref, or the number of matching
+    /// commits when a search filter is active. Saturates at the search cap.
+    pub total: u32,
+    /// True when a filtered search stopped at the result cap (total is a floor).
+    pub capped: bool,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub enum FileStatus {

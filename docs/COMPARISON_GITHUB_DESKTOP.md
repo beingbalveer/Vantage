@@ -79,7 +79,7 @@ Legend: ✅ present and reachable · ⚠️ partially present (backend/dialog ex
 | | Telemetry | opt-out | ✅ none (advantage) |
 | | Linux support | ❌ (Win/macOS only) | ✅ (advantage) |
 | | Every advertised keyboard shortcut works | ✅ | ❌ Help lists `j/k`, `{`, `}`, `r`, `c`, `]`, `[`, `n`, `p`, `e`, `w`, `/`, pane keys; only `Mod+K/O/B/,/?` are wired |
-| | Loading / empty / error states | ✅ | ⚠️ mostly absent; failures log to console |
+| | Loading / empty / error states | ✅ | ✅ delayed skeletons for history/files/diff, distinct empty vs error copy with retry, persistent inline errors + status-bar Git state |
 | | Modal focus trap + Esc + restore focus | ✅ | ⚠️ Escape handled inconsistently |
 | **Branding** | Consistent product name in UI | — | ❌ UI still says "Relay" in several dialogs/menus |
 

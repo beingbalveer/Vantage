@@ -50,6 +50,12 @@ export interface CommitSummary {
   isNew: boolean;
 }
 
+export interface HistoryPage {
+  commits: CommitSummary[];
+  total: number;
+  capped: boolean;
+}
+
 export type FileStatus =
   | "added"
   | "modified"
