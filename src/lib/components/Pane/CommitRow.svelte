@@ -1,7 +1,6 @@
 <script lang="ts">
   import type { CommitSummary } from "../../types";
   import { formatRelativeTime } from "../../format";
-  import Icon from "../common/Icon.svelte";
 
   interface Props {
     commit: CommitSummary;
@@ -50,8 +49,21 @@
       <span class="merge-badge">merge</span>
     {/if}
     {#if isLocal}
-      <span class="unpushed-icon" title="Unpushed commit (local)">
-        <Icon name="arrow-up" size={13} strokeWidth={2.4} />
+      <span class="unpushed-icon" title="Unpushed commit (local)" aria-label="Unpushed commit">
+        <svg
+          width="10"
+          height="11"
+          viewBox="0 0 10 11"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="1.6"
+          stroke-linecap="round"
+          stroke-linejoin="round"
+          aria-hidden="true"
+        >
+          <path d="M1 5L5 1L9 5" />
+          <path d="M5 1V10" />
+        </svg>
       </span>
     {/if}
   </div>
@@ -174,18 +186,24 @@
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    width: 20px;
-    height: 20px;
-    border-radius: 4px;
-    color: #636b74;
-    background: transparent;
+    width: 26px;
+    height: 16px;
+    border-radius: 9999px;
+    color: #2f363e;
+    background: #e2e4e8;
     flex-shrink: 0;
   }
   :global([data-theme="dark"]) .unpushed-icon {
-    color: #8b949e;
+    color: #c9d1d9;
+    background: #30363d;
   }
   .commit-item.active .unpushed-icon {
-    color: var(--accent, #2563eb);
+    background: #d6d9de;
+    color: #1f2328;
+  }
+  :global([data-theme="dark"]) .commit-item.active .unpushed-icon {
+    background: #3d444d;
+    color: #f0f6fc;
   }
 
   /* Prototype compact override (approved-prototype.html · @media max-width:1400px). */
