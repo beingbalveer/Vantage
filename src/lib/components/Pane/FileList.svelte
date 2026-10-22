@@ -49,6 +49,10 @@
     files.length > 0 && files.every((f) => checkedPaths.includes(f.path))
   );
 
+  let someChecked = $derived(
+    files.length > 0 && !allChecked && files.some((f) => checkedPaths.includes(f.path))
+  );
+
   interface FileTriage {
     kind: "dependencies" | "config" | "testsRemoved" | "secrets" | "bigFile" | "binary";
     severity: "info" | "caution" | "warn";
@@ -181,6 +185,21 @@
 
 <div class="file-list-container">
   <div class="file-list-header">
+    {#if isUncommitted && files.length > 0}
+      <input
+        type="checkbox"
+        checked={allChecked}
+        indeterminate={someChecked}
+        aria-label="{allChecked ? 'Deselect' : 'Select'} all files for commit"
+        title="{allChecked ? 'Deselect' : 'Select'} all files"
+        class="header-cb"
+        onchange={(e) => {
+          const target = e.currentTarget as HTMLInputElement;
+          ontoggleall?.(target.checked);
+        }}
+      />
+    {/if}
+
     <span class="header-title">
       {files.length} changed {files.length === 1 ? "file" : "files"}
     </span>
@@ -357,6 +376,14 @@
     padding: 0 12px;
     background-color: var(--bg);
     border-bottom: 1px solid #dcdfe3;
+    flex-shrink: 0;
+  }
+
+  .header-cb {
+    cursor: pointer;
+    width: 14px;
+    height: 14px;
+    margin: 0;
     flex-shrink: 0;
   }
 
