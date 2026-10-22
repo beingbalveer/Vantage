@@ -435,44 +435,47 @@
 
   .branch-menu {
     position: absolute;
-    top: calc(100% + 4px);
+    top: calc(100% + 6px);
     left: 0;
     z-index: 101;
-    width: 260px;
-    min-width: 220px;
-    max-width: 320px;
-    max-height: 380px;
+    width: 280px;
+    min-width: 240px;
+    max-width: 360px;
+    max-height: 420px;
     display: flex;
     flex-direction: column;
     background-color: var(--bg);
     border: 1px solid var(--border);
     border-radius: var(--r-md, 8px);
-    box-shadow: var(--shadow-pop, 0 8px 24px rgba(0, 0, 0, 0.25));
-    padding: 4px;
+    box-shadow: 0 10px 30px rgba(0, 0, 0, 0.22), 0 0 0 1px rgba(0, 0, 0, 0.08);
+    padding: 6px;
     overflow: hidden;
+  }
+  :global([data-theme="dark"]) .branch-menu {
+    box-shadow: 0 12px 36px rgba(0, 0, 0, 0.6), 0 0 0 1px rgba(255, 255, 255, 0.1);
   }
 
   .branch-menu-header {
-    padding: 6px 8px 4px;
+    padding: 6px 10px 6px;
   }
 
   .menu-title {
     font-size: 11px;
-    font-weight: 600;
+    font-weight: 700;
     text-transform: uppercase;
-    letter-spacing: 0.05em;
-    color: var(--text-faint);
+    letter-spacing: 0.06em;
+    color: var(--text-muted);
   }
 
   .menu-search {
-    padding: 4px 6px;
+    padding: 4px 6px 6px;
   }
 
   .branch-filter-input {
     width: 100%;
-    height: 26px;
-    padding: 0 8px;
-    font-size: 11.5px;
+    height: 30px;
+    padding: 0 10px;
+    font-size: 12.5px;
     background-color: var(--bg-subtle);
     border: 1px solid var(--border);
     border-radius: var(--r-sm, 6px);
@@ -483,31 +486,33 @@
     outline: none;
     border-color: var(--accent);
     background-color: var(--bg);
+    box-shadow: 0 0 0 2px rgba(24, 115, 213, 0.2);
   }
 
   .branch-list {
     flex: 1;
     overflow-y: auto;
-    max-height: 240px;
+    max-height: 260px;
     display: flex;
     flex-direction: column;
-    gap: 1px;
+    gap: 2px;
   }
 
   .branch-option {
     display: flex;
     align-items: center;
-    gap: 6px;
+    gap: 8px;
     width: 100%;
-    padding: 6px 8px;
+    padding: 7px 10px;
     border: none;
     background: transparent;
-    color: var(--text-muted);
-    font-size: 12px;
+    color: var(--text);
+    font-size: 12.5px;
+    font-weight: 500;
     border-radius: var(--r-sm, 6px);
     cursor: pointer;
     text-align: left;
-    transition: background-color 0.1s, color 0.1s;
+    transition: background-color 0.12s ease, color 0.12s ease;
   }
 
   .branch-option:hover,
@@ -519,7 +524,8 @@
 
   .branch-option.selected {
     color: var(--accent);
-    font-weight: 500;
+    font-weight: 600;
+    background-color: var(--accent-bg, rgba(24, 115, 213, 0.08));
   }
 
   .branch-option-name {
@@ -528,47 +534,51 @@
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
-    font-size: 11px;
+    font-size: 12.5px;
+    line-height: 1.3;
   }
 
   .head-pill {
-    font-size: 9px;
+    font-size: 9.5px;
     text-transform: uppercase;
-    font-weight: 600;
-    padding: 1px 4px;
-    background-color: var(--bg-muted);
-    color: var(--text-muted);
-    border-radius: 3px;
+    font-weight: 700;
+    padding: 2px 5px;
+    background-color: rgba(125, 125, 125, 0.18);
+    color: var(--text);
+    border-radius: 4px;
+    letter-spacing: 0.04em;
   }
 
   .branch-check {
-    font-size: 12px;
+    font-size: 13px;
     font-weight: 700;
     color: var(--accent);
-    width: 14px;
+    width: 16px;
     text-align: right;
   }
 
   .empty-notice {
-    padding: 12px 8px;
+    padding: 14px 8px;
     text-align: center;
-    font-size: 11px;
-    color: var(--text-faint);
+    font-size: 12px;
+    color: var(--text-muted);
   }
 
   .menu-divider {
     height: 1px;
-    background-color: var(--border-subtle, var(--border));
-    margin: 4px 0;
+    background-color: var(--border);
+    margin: 6px 0;
     flex-shrink: 0;
   }
 
   .checkout-action {
     color: var(--text);
+    font-weight: 500;
   }
 
   .add-view-action {
     color: var(--accent);
+    font-weight: 500;
   }
 
   /* Modal Styles */
