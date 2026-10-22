@@ -8,6 +8,7 @@ export interface Shortcut {
 
 export const SHORTCUTS: Shortcut[] = [
   { id: "palette", key: "Mod+K", description: "Command palette", category: "Navigation", global: true },
+  { id: "quick_open", key: "Mod+P", description: "Go to file / Quick open", category: "Navigation", global: true },
   { id: "add_repo", key: "Mod+O", description: "Add repository", category: "Navigation", global: true },
   { id: "focus_pane_1", key: "Mod+1", description: "Focus pane 1", category: "Panes", global: true },
   { id: "focus_pane_2", key: "Mod+2", description: "Focus pane 2", category: "Panes", global: true },

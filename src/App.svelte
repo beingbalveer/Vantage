@@ -2,7 +2,7 @@
   import { onMount } from "svelte";
   import { loadRepos, repos, statuses, initRepoListeners } from "./lib/stores/repos";
   import { loadSettings } from "./lib/stores/settings";
-  import { panes } from "./lib/stores/panes";
+  import { panes, focusedPaneIndex, setPaneTab } from "./lib/stores/panes";
   import {
     paletteOpen,
     addRepoDialogOpen,
@@ -100,6 +100,12 @@
     if (matchShortcut(e, "Mod+K") || matchShortcut(e, "Ctrl+Shift+P")) {
       e.preventDefault();
       $paletteOpen = !$paletteOpen;
+      return;
+    }
+
+    if (matchShortcut(e, "Mod+P")) {
+      e.preventDefault();
+      setPaneTab($focusedPaneIndex, "files");
       return;
     }
 

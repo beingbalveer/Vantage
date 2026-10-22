@@ -3,7 +3,7 @@
   import type { RepoEntry, RepoStatus, CommitSummary, FileChange, DiffFile, DiffScope } from "../../types";
   import * as api from "../../api";
   import { settings } from "../../stores/settings";
-  import { panes, focusedPaneIndex, focusPane } from "../../stores/panes";
+  import { panes, focusedPaneIndex, focusPane, setPaneTab } from "../../stores/panes";
   import { addToast } from "../../stores/ui";
   import { navigationTarget, navigateTo } from "../../stores/navigation";
   import UncommittedRow from "./UncommittedRow.svelte";
@@ -383,16 +383,45 @@
         <span class="text-sm text-muted">Select a repository from the sidebar or press Mod+O to add one.</span>
       </div>
     {:else if currentPane.tab === "files"}
-      <FilesTab repoId={repo.id} rev={repo.branch || "HEAD"} />
+      <FilesTab
+        repoId={repo.id}
+        rev={repo.branch || "HEAD"}
+        {repo}
+        {status}
+        {paneIndex}
+      />
     {:else}
       <!-- History Tab 3-Column Layout -->
       <div class="history-layout">
         <!-- Commits Column -->
         {#if !focusDiff}
           <div class="commits-col" style="width: {commitsColWidth}px;">
-            <!-- Branch Selector Header -->
+            <!-- Branch Selector Header with View Tabs -->
             <div class="commits-header">
-              <BranchDropdown {repo} {status} />
+              <div class="branch-wrap">
+                <BranchDropdown {repo} {status} />
+              </div>
+              <div class="pane-view-tabs">
+                <button
+                  type="button"
+                  class="view-tab active"
+                  title="Commits & History"
+                  aria-label="Commits view"
+                >
+                  <Icon name="commit" size={13} />
+                  <span>Commits</span>
+                </button>
+                <button
+                  type="button"
+                  class="view-tab"
+                  onclick={() => setPaneTab(paneIndex, "files")}
+                  title="Project Files Explorer"
+                  aria-label="Files explorer"
+                >
+                  <Icon name="folder" size={13} />
+                  <span>Files</span>
+                </button>
+              </div>
             </div>
 
             <!-- Commits List -->
@@ -622,8 +651,60 @@
     border-bottom: 1px solid var(--border);
     display: flex;
     align-items: center;
+    justify-content: space-between;
     padding: 0 8px;
     background-color: var(--bg);
+    gap: 8px;
+  }
+
+  .branch-wrap {
+    min-width: 0;
+    flex: 1;
+    overflow: hidden;
+  }
+
+  .pane-view-tabs {
+    display: inline-flex;
+    align-items: center;
+    background: var(--bg-hover, rgba(0, 0, 0, 0.05));
+    padding: 2px;
+    border-radius: 6px;
+    border: 1px solid var(--border);
+    flex-shrink: 0;
+  }
+  :global([data-theme="dark"]) .pane-view-tabs {
+    background: rgba(255, 255, 255, 0.06);
+  }
+
+  .view-tab {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    height: 24px;
+    padding: 0 8px;
+    font-size: 11.5px;
+    font-weight: 500;
+    border: 0;
+    background: transparent;
+    border-radius: 4px;
+    color: var(--text-muted);
+    cursor: pointer;
+    transition: background 120ms ease, color 120ms ease;
+    white-space: nowrap;
+  }
+  .view-tab:hover:not(.active) {
+    color: var(--text);
+    background: rgba(125, 125, 125, 0.12);
+  }
+  .view-tab.active {
+    background: var(--bg);
+    color: var(--text);
+    font-weight: 600;
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.08);
+  }
+  :global([data-theme="dark"]) .view-tab.active {
+    background: #21262d;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.35);
   }
 
   .commits-scroll {
