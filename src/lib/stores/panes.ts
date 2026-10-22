@@ -10,6 +10,22 @@ export interface PaneState {
   terminalHeight: number;
 }
 
+function getSavedTerminalHeight(): number {
+  if (typeof window === "undefined" || !window.localStorage) return 240;
+  try {
+    const saved = localStorage.getItem("vantage_terminal_height");
+    if (saved) {
+      const val = parseInt(saved, 10);
+      if (!Number.isNaN(val) && val >= 80 && val <= 1200) {
+        return val;
+      }
+    }
+  } catch {}
+  return 240;
+}
+
+const initialTerminalHeight = getSavedTerminalHeight();
+
 export const paneCount = writable<number>(1);
 export const focusedPaneIndex = writable<number>(0);
 export const panes = writable<PaneState[]>([
@@ -18,21 +34,21 @@ export const panes = writable<PaneState[]>([
     repoId: null,
     tab: "history",
     terminalOpen: false,
-    terminalHeight: 240,
+    terminalHeight: initialTerminalHeight,
   },
   {
     id: "pane-1",
     repoId: null,
     tab: "history",
     terminalOpen: false,
-    terminalHeight: 240,
+    terminalHeight: initialTerminalHeight,
   },
   {
     id: "pane-2",
     repoId: null,
     tab: "history",
     terminalOpen: false,
-    terminalHeight: 240,
+    terminalHeight: initialTerminalHeight,
   },
 ]);
 

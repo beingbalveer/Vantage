@@ -132,25 +132,6 @@
         },
       },
       {
-        id: "cmd_mark_reviewed",
-        title: "Mark as reviewed",
-        shortcut: "r",
-        action: async () => {
-          $paletteOpen = false;
-          if (!focusedRepoId) {
-            addToast({ message: "No focused repository to mark reviewed", kind: "info" });
-            return;
-          }
-          try {
-            await api.markerSetToHead(focusedRepoId);
-            addToast({ message: "Marked as reviewed", kind: "success" });
-            await refreshSingleStatus(focusedRepoId);
-          } catch (e: any) {
-            addToast({ message: e.message || "Failed to mark as reviewed", kind: "error" });
-          }
-        },
-      },
-      {
         id: "cmd_switch_tab",
         title: "Switch tab (History / Files)",
         shortcut: "t",

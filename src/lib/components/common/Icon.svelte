@@ -43,6 +43,8 @@
     | "grid"
     | "worktree"
     | "changes"
+    | "alert"
+    | "wrap"
     | "file";
 
   interface Props {
@@ -250,6 +252,16 @@
     <!-- Uncommitted changes -->
     <circle cx="12" cy="12" r="8" stroke-dasharray="2 3" />
     <path d="M12 8v8m-4-4h8" />
+  {:else if name === "alert"}
+    <!-- SF Symbol exclamationmark.triangle (warning) -->
+    <path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z" />
+    <line x1="12" x2="12" y1="9" y2="13" />
+    <line x1="12" x2="12.01" y1="17" y2="17" />
+  {:else if name === "wrap"}
+    <!-- Word wrap / return arrow -->
+    <path d="M4 6h16M4 12h12a3 3 0 0 1 3 3v0a3 3 0 0 1-3 3H11" />
+    <path d="m14 15-3 3 3 3" />
+    <path d="M4 18h3" />
   {:else if name === "file"}
     <!-- Document -->
     <path d="M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z" />
