@@ -7,6 +7,7 @@
   import { isMac } from "../../keys";
   import { addToast } from "../../stores/ui";
   import Icon from "../common/Icon.svelte";
+  import FileIcon from "../common/FileIcon.svelte";
 
   interface Props {
     repoId: string;
@@ -186,6 +187,17 @@
   }
 
   // Find in file
+  async function toggleFindBar() {
+    if (findOpen) {
+      findOpen = false;
+    } else {
+      findOpen = true;
+      await tick();
+      findInputEl?.focus();
+      findInputEl?.select();
+    }
+  }
+
   async function openFindBar() {
     findOpen = true;
     await tick();
@@ -315,7 +327,10 @@
 
     if (mod && (e.key === "f" || e.key === "F")) {
       e.preventDefault();
-      openFindBar();
+      toggleFindBar();
+    } else if (e.altKey && (e.key === "z" || e.key === "Z")) {
+      e.preventDefault();
+      isWrapped = !isWrapped;
     } else if (e.key === "F12") {
       e.preventDefault();
       const sel = window.getSelection()?.toString().trim();
@@ -339,28 +354,42 @@
   <!-- Viewer Header -->
   <div class="viewer-header">
     <div class="header-left">
+      <FileIcon filename={path} size={15} />
       <div class="path-chip font-mono text-xs" title={path}>{path}</div>
       <div class="rev-chip font-mono text-xs">{rev}</div>
     </div>
 
     <div class="actions">
       <button
-        class="viewer-btn"
+        type="button"
+        class="viewer-icon-btn"
         class:active={isWrapped}
         onclick={() => (isWrapped = !isWrapped)}
-        title="Toggle word wrap"
+        title="Toggle word wrap (Alt+Z) · Currently {isWrapped ? 'On' : 'Off'}"
+        aria-label="Toggle word wrap"
       >
-        Wrap
+        <Icon name="wrap" size={15} />
       </button>
+
       <button
-        class="viewer-btn"
-        onclick={openFindBar}
+        type="button"
+        class="viewer-icon-btn"
+        class:active={findOpen}
+        onclick={toggleFindBar}
         title="Find in file ({isMac() ? '⌘F' : 'Ctrl+F'})"
+        aria-label="Find in file"
       >
-        Find
+        <Icon name="search" size={14} />
       </button>
-      <button class="viewer-btn" onclick={onopenineditor} title="Open in editor">
-        Open in editor
+
+      <button
+        type="button"
+        class="viewer-icon-btn"
+        onclick={onopenineditor}
+        title="Open in external editor (VS Code)"
+        aria-label="Open in external editor"
+      >
+        <Icon name="external-link" size={14} />
       </button>
     </div>
   </div>
@@ -501,14 +530,14 @@
   }
 
   .viewer-header {
-    height: 43px;
-    min-height: 43px;
+    height: 40px;
+    min-height: 40px;
     background-color: var(--bg);
-    border-bottom: 1px solid #dcdfe3;
+    border-bottom: 1px solid var(--border);
     display: flex;
     align-items: center;
     justify-content: space-between;
-    padding: 0 14px;
+    padding: 0 12px;
     flex-shrink: 0;
     z-index: 10;
   }
@@ -518,6 +547,7 @@
     align-items: center;
     gap: 8px;
     overflow: hidden;
+    min-width: 0;
   }
 
   .path-chip {
@@ -525,38 +555,52 @@
     text-overflow: ellipsis;
     overflow: hidden;
     white-space: nowrap;
+    font-size: 12.5px;
   }
 
   .rev-chip {
     padding: 1px 6px;
-    background-color: var(--bg-muted);
+    background-color: var(--bg-hover, rgba(125, 125, 125, 0.1));
     border-radius: var(--r-sm);
     color: var(--text-muted);
+    font-size: 11px;
+    flex-shrink: 0;
   }
 
   .actions {
     display: flex;
     align-items: center;
-    gap: 6px;
+    gap: 4px;
+    flex-shrink: 0;
   }
 
-  .viewer-btn {
-    height: 24px;
-    padding: 0 8px;
-    font-size: 11px;
-    border: 1px solid var(--border);
-    border-radius: var(--r-sm);
-    background-color: var(--bg);
-    color: var(--text);
+  .viewer-icon-btn {
+    width: 26px;
+    height: 26px;
+    padding: 0;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border: 1px solid transparent;
+    border-radius: 5px;
+    background: transparent;
+    color: var(--text-muted);
     cursor: pointer;
+    transition: background 120ms ease, color 120ms ease, border-color 120ms ease;
   }
-  .viewer-btn:hover {
-    background-color: var(--bg-muted);
+  .viewer-icon-btn:hover {
+    background: rgba(125, 125, 125, 0.15);
+    color: var(--text);
   }
-  .viewer-btn.active {
-    background-color: var(--accent-bg);
-    border-color: var(--accent);
-    color: var(--accent);
+  .viewer-icon-btn.active {
+    background: rgba(59, 130, 246, 0.15);
+    border-color: rgba(59, 130, 246, 0.35);
+    color: #3b82f6;
+  }
+  :global([data-theme="dark"]) .viewer-icon-btn.active {
+    background: rgba(59, 130, 246, 0.25);
+    border-color: rgba(59, 130, 246, 0.45);
+    color: #60a5fa;
   }
 
   /* Find Bar */
@@ -637,17 +681,20 @@
   }
 
   .lines-container {
+    font-family: ui-monospace, "SF Mono", Menlo, Monaco, "Cascadia Code", "Roboto Mono", Consolas, monospace;
     font-size: 12.5px;
     line-height: 20px;
     tab-size: 4;
     min-width: 100%;
     width: max-content;
+    -webkit-font-smoothing: antialiased;
   }
 
   .lines-container.wrapped {
     width: 100%;
     white-space: pre-wrap;
-    word-break: break-all;
+    overflow-wrap: anywhere;
+    word-break: normal;
   }
 
   .code-row {
@@ -662,8 +709,13 @@
     min-height: 20px;
   }
 
+  .code-row:hover {
+    background-color: var(--bg-hover, rgba(125, 125, 125, 0.05));
+  }
+
   .code-row.target-highlight {
-    background-color: var(--accent-bg);
+    background-color: rgba(59, 130, 246, 0.15);
+    border-left: 2px solid #3b82f6;
     transition: background-color 0.4s ease;
   }
 
@@ -671,18 +723,63 @@
     position: sticky;
     left: 0;
     z-index: 2;
-    width: 36px;
+    width: 44px;
     text-align: right;
-    padding-right: 6px;
-    background-color: var(--bg-inset);
+    padding-right: 12px;
+    padding-left: 8px;
+    background-color: var(--bg);
     color: var(--text-faint);
     user-select: none;
     cursor: pointer;
     flex-shrink: 0;
+    font-size: 11.5px;
+    font-family: inherit;
+    border-right: 1px solid var(--border);
+    transition: color 100ms ease;
   }
   .line-num:hover {
     color: var(--text);
   }
+
+  .line-code {
+    flex: 1;
+    white-space: pre;
+    padding-left: 12px;
+    padding-right: 20px;
+    color: var(--text);
+  }
+  .lines-container.wrapped .line-code {
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+    word-break: normal;
+  }
+
+  /* VS Code Highlight Tokens inside CodeViewer */
+  :global(.code-viewer .hljs-keyword) { color: var(--syn-keyword); font-weight: 500; }
+  :global(.code-viewer .hljs-literal) { color: var(--syn-keyword); }
+  :global(.code-viewer .hljs-symbol) { color: var(--syn-keyword); }
+  :global(.code-viewer .hljs-built_in) { color: var(--syn-type); }
+  :global(.code-viewer .hljs-type),
+  :global(.code-viewer .hljs-class) { color: var(--syn-type); }
+  :global(.code-viewer .hljs-string),
+  :global(.code-viewer .hljs-addition) { color: var(--syn-string); }
+  :global(.code-viewer .hljs-regexp) { color: var(--syn-regexp, var(--syn-string)); }
+  :global(.code-viewer .hljs-number) { color: var(--syn-number); }
+  :global(.code-viewer .hljs-comment),
+  :global(.code-viewer .hljs-quote) { color: var(--syn-comment); font-style: italic; }
+  :global(.code-viewer .hljs-title.function_),
+  :global(.code-viewer .hljs-title) { color: var(--syn-function); }
+  :global(.code-viewer .hljs-function) { color: var(--syn-function); }
+  :global(.code-viewer .hljs-section) { color: var(--syn-function); font-weight: 600; }
+  :global(.code-viewer .hljs-tag),
+  :global(.code-viewer .hljs-name) { color: var(--syn-tag, var(--syn-keyword)); }
+  :global(.code-viewer .hljs-attr),
+  :global(.code-viewer .hljs-attribute) { color: var(--syn-attr, var(--syn-variable)); }
+  :global(.code-viewer .hljs-variable),
+  :global(.code-viewer .hljs-params),
+  :global(.code-viewer .hljs-property) { color: var(--syn-variable); }
+  :global(.code-viewer .hljs-meta),
+  :global(.code-viewer .hljs-doctag) { color: var(--syn-meta); }
 
   .line-code {
     flex: 1;

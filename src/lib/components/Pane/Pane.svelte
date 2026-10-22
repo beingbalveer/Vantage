@@ -1,16 +1,24 @@
 <script lang="ts">
-  import { onMount, onDestroy, untrack } from "svelte";
-  import type { RepoEntry, RepoStatus, CommitSummary, FileChange, DiffFile, DiffScope } from "../../types";
+  import { onMount, onDestroy, tick, untrack } from "svelte";
+  import type { RepoEntry, RepoStatus, CommitSummary, FileChange, DiffFile, DiffScope, TriageFlag } from "../../types";
   import * as api from "../../api";
   import { settings } from "../../stores/settings";
-  import { panes, focusedPaneIndex, focusPane } from "../../stores/panes";
-  import { addToast, openDialog } from "../../stores/ui";
+  import { panes, focusedPaneIndex, focusPane, setPaneTab } from "../../stores/panes";
+  import { addToast, openDialog, activeDialog, paletteOpen, settingsOpen, shortcutsHelpOpen, addRepoDialogOpen, scanFolderDialogOpen } from "../../stores/ui";
   import { navigationTarget, navigateTo } from "../../stores/navigation";
+  import {
+    HISTORY_PAGE_SIZE,
+    formatHistoryFooter,
+    hasMoreHistory,
+    isEditableTarget,
+  } from "../../history";
+  import { findFlaggedCommitIndex, matchShortcut } from "../../keys";
   import type { MenuItem } from "../../menu";
   import ContextMenu from "../common/ContextMenu.svelte";
   import UncommittedRow from "./UncommittedRow.svelte";
   import CommitRow from "./CommitRow.svelte";
   import CommitHeader from "./CommitHeader.svelte";
+  import BranchDropdown from "./BranchDropdown.svelte";
   import FileList from "./FileList.svelte";
   import CommitBox from "./CommitBox.svelte";
   import DiffView from "../Diff/DiffView.svelte";
@@ -18,7 +26,12 @@
   import TerminalDrawer from "../Terminal/TerminalDrawer.svelte";
   import Icon from "../common/Icon.svelte";
   import { viewportPaneWidths, savedPaneWidth } from "../../layout";
-  import { createHorizontalResizer, createHorizontalResizerKeyboard } from "../../resizer";
+  import {
+    createHorizontalResizer,
+    createHorizontalResizerKeyboard,
+    createVerticalBottomResizer,
+    createVerticalBottomResizerKeyboard,
+  } from "../../resizer";
 
   interface Props {
     paneIndex: number;
@@ -72,12 +85,57 @@
     storageKey: "vantage_files_col_width",
   });
 
+  let terminalHeight = $state(savedPaneWidth("vantage_terminal_height", 240));
+
+  const startTerminalResize = createVerticalBottomResizer({
+    getHeight: () => terminalHeight,
+    setHeight: (h) => {
+      terminalHeight = h;
+      panes.update((list) => {
+        if (list[paneIndex]) {
+          list[paneIndex] = { ...list[paneIndex], terminalHeight: h };
+        }
+        return list;
+      });
+    },
+    minHeight: 80,
+    maxHeight: 1200,
+    storageKey: "vantage_terminal_height",
+  });
+
+  const nudgeTerminalResize = createVerticalBottomResizerKeyboard({
+    getHeight: () => terminalHeight,
+    setHeight: (h) => {
+      terminalHeight = h;
+      panes.update((list) => {
+        if (list[paneIndex]) {
+          list[paneIndex] = { ...list[paneIndex], terminalHeight: h };
+        }
+        return list;
+      });
+    },
+    minHeight: 80,
+    maxHeight: 1200,
+    storageKey: "vantage_terminal_height",
+  });
+
   // Commits & Selection
   let commits = $state<CommitSummary[]>([]);
   let selectedCommitSha = $state<string | null>(null);
   let isUncommittedSelected = $state(false);
-  let isRangeSelected = $state(false);
   let currentScope = $state<DiffScope>({ type: "working" });
+
+  // Triage flags, cached per commit SHA for the loaded history page (ALPH-147).
+  let flagsBySha = $state<Record<string, TriageFlag[]>>({});
+  let commitsScrollEl = $state<HTMLDivElement | null>(null);
+
+  let flaggedCount = $derived.by(() => {
+    let n = 0;
+    for (const c of commits) {
+      if ((flagsBySha[c.sha]?.length ?? 0) > 0) n++;
+    }
+    return n;
+  });
 
   let selectedCommit = $derived(
     selectedCommitSha && !isUncommittedSelected
@@ -85,16 +143,26 @@
       : null
   );
 
-  // Prototype parity: the commits column ends with a quiet branch summary
-  // (approved-prototype.html · .history-footer). The history is paged at 200,
-  // so the count is reported as "200+" when the page is full.
-  let branchCommitLabel = $derived(
-    commits.length === 0
-      ? ""
-      : `${commits.length >= 200 ? "200+" : commits.length} ${
-          commits.length === 1 ? "commit" : "commits"
-        } on this branch`
-  );
+  // History paging + filter state (ALPH-149). `historyTotal` is the true commit
+  // count (or match count) from the backend, so the footer never claims a bogus
+  // hard "200+" cap.
+  let historyTotal = $state(0);
+  let historyCapped = $state(false);
+  let historyLoading = $state(false);
+  let historyLoadingMore = $state(false);
+  let historyFilter = $state("");
+  let historyFilterApplied = $state("");
+  let historyFilterInput = $state<HTMLInputElement | null>(null);
+  let historySentinel = $state<HTMLElement | null>(null);
+  let filterDebounce: ReturnType<typeof setTimeout> | undefined;
+
+  let historyFilterActive = $derived(historyFilterApplied.trim().length > 0);
+  let historyMeta = $derived({
+    total: historyTotal,
+    capped: historyCapped,
+    loaded: commits.length,
+  });
+  let historyFooterLabel = $derived(formatHistoryFooter(historyMeta, historyFilterActive));
 
   let unpushedShas = $derived.by(() => {
     const ahead = status?.ahead || 0;
@@ -136,8 +204,13 @@
     const currentId = repo?.id || "";
     if (currentId !== lastLoadedRepoId) {
       lastLoadedRepoId = currentId;
+      flagsBySha = {};
       untrack(() => {
         if (currentId) {
+          historyFilter = "";
+          historyFilterApplied = "";
+          historyTotal = 0;
+          historyCapped = false;
           loadHistory();
         } else {
           commits = [];
@@ -146,7 +219,8 @@
           selectedCommitSha = null;
           selectedFilePath = null;
           isUncommittedSelected = false;
-          isRangeSelected = false;
+          historyTotal = 0;
+          historyCapped = false;
         }
       });
     }
@@ -191,6 +265,7 @@
 
   onMount(() => {
     let active = true;
+    window.addEventListener("keydown", handleFlagKey);
     (async () => {
       try {
         const h = await api.onHeadChanged((payload: { repoId: string; sha: string }) => {
@@ -213,6 +288,8 @@
 
     return () => {
       active = false;
+      clearTimeout(filterDebounce);
+      window.removeEventListener("keydown", handleFlagKey);
       unlistenHead?.();
       unlistenStatus?.();
     };
@@ -221,38 +298,231 @@
   async function loadHistory(preserveSelection = false) {
     if (!repo) return;
     const gen = ++historyGen;
+    historyLoading = true;
+    historyLoadingMore = false;
+    const query = historyFilterApplied;
     try {
-      const log = await api.logPage(repo.id, 0, 200);
+      const page = await api.historyPage(repo.id, 0, HISTORY_PAGE_SIZE, query || undefined);
       if (gen !== historyGen) return;
-      commits = log;
+      commits = page.commits;
+      historyTotal = page.total;
+      historyCapped = page.capped;
+      historyLoading = false;
+
+      // Batch-request triage flags for the loaded page. Failures are ignored
+      // per-SHA (the backend omits SHAs it could not evaluate) so the list
+      // never breaks because flagging failed (ALPH-147).
+      void loadFlags(repo.id, page.commits.map((c) => c.sha), gen);
 
       if (!preserveSelection) {
-        // Select default view
-        if (status?.dirtyCount && status.dirtyCount > 0) {
+        if (query) {
+          // Filtering: land on the newest match, or clear when nothing matches.
+          if (page.commits.length > 0) {
+            selectCommit(page.commits[0].sha);
+          } else {
+            clearSelection();
+          }
+        } else if (status?.dirtyCount && status.dirtyCount > 0) {
           selectUncommitted();
-        } else if (status?.newCommitCount && status.newCommitCount > 0 && repo.marker) {
-          selectRange();
-        } else if (log.length > 0) {
-          selectCommit(log[0].sha);
+        } else if (page.commits.length > 0) {
+          selectCommit(page.commits[0].sha);
         }
       } else {
         // If current selection is commit, reload files; if uncommitted, reload files
         if (isUncommittedSelected) {
           loadScopeFiles({ type: "working" }, true);
-        } else if (isRangeSelected && repo.marker) {
-          loadScopeFiles({ type: "range", from: repo.marker.sha, to: "HEAD" }, true);
         } else if (selectedCommitSha) {
           loadScopeFiles({ type: "commit", sha: selectedCommitSha }, true);
         }
       }
     } catch (e) {
+      if (gen !== historyGen) return;
+      historyLoading = false;
       console.error("Failed to load history:", e);
     }
   }
 
+  // Append the next page without disturbing selection, scroll or the open diff.
+  async function loadMoreHistory() {
+    if (!repo || historyLoading || historyLoadingMore) return;
+    if (!hasMoreHistory(historyMeta)) return;
+    const gen = historyGen;
+    const skip = commits.length;
+    historyLoadingMore = true;
+    try {
+      const page = await api.historyPage(
+        repo.id,
+        skip,
+        HISTORY_PAGE_SIZE,
+        historyFilterApplied || undefined
+      );
+      if (gen !== historyGen) return;
+      const seen = new Set(commits.map((c) => c.sha));
+      const newCommits = page.commits.filter((c) => !seen.has(c.sha));
+      commits = [...commits, ...newCommits];
+      historyTotal = page.total;
+      historyCapped = page.capped;
+      void loadFlags(repo.id, newCommits.map((c) => c.sha), gen);
+    } catch (e: any) {
+      if (gen !== historyGen) return;
+      console.error("Failed to load more history:", e);
+      addToast({ message: e.message || "Failed to load more commits", kind: "error" });
+    } finally {
+      if (gen === historyGen) historyLoadingMore = false;
+    }
+  }
+
+  function clearSelection() {
+    selectedCommitSha = null;
+    isUncommittedSelected = false;
+    scopeFilesList = [];
+    currentDiffFile = null;
+    selectedFilePath = null;
+    checkedPaths = [];
+  }
+
+  function applyFilter(value: string) {
+    const next = value.trim();
+    if (next === historyFilterApplied) return;
+    historyFilterApplied = next;
+    loadHistory(false);
+  }
+
+  function onFilterInput(e: Event) {
+    historyFilter = (e.target as HTMLInputElement).value;
+    clearTimeout(filterDebounce);
+    filterDebounce = setTimeout(() => applyFilter(historyFilter), 220);
+  }
+
+  function onFilterKeydown(e: KeyboardEvent) {
+    if (e.key === "Escape") {
+      e.preventDefault();
+      clearFilter();
+      (e.target as HTMLInputElement)?.blur();
+    } else if (e.key === "Enter") {
+      e.preventDefault();
+      clearTimeout(filterDebounce);
+      applyFilter(historyFilter);
+    }
+  }
+
+  function clearFilter() {
+    clearTimeout(filterDebounce);
+    historyFilter = "";
+    if (historyFilterApplied !== "") {
+      historyFilterApplied = "";
+      loadHistory(false);
+    }
+    historyFilterInput?.focus();
+  }
+
+  // `/` focuses the history filter for the focused pane (F3) without hijacking
+  // typing in inputs, textareas or the embedded terminal.
+  function handlePaneKeydown(e: KeyboardEvent) {
+    if (!isFocused || !repo || currentPane?.tab !== "history") return;
+    if (e.metaKey || e.ctrlKey || e.altKey) return;
+    if (e.key !== "/") return;
+    if (isEditableTarget(e.target)) return;
+    e.preventDefault();
+    historyFilterInput?.focus();
+    historyFilterInput?.select();
+  }
+
+  // Auto-load the next page as the sentinel nears the viewport (F3 infinite scroll).
+  $effect(() => {
+    const el = historySentinel;
+    if (!el || !hasMoreHistory(historyMeta)) return;
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (entries.some((entry) => entry.isIntersecting)) {
+          loadMoreHistory();
+        }
+      },
+      { rootMargin: "160px" }
+    );
+    observer.observe(el);
+    return () => observer.disconnect();
+  });
+
+  // Fetch triage flags for a set of SHAs and merge them into the cache.
+  // Per-SHA failures are silent by design: a flagged SHA simply stays blank.
+  async function loadFlags(repoId: string, shas: string[], gen: number) {
+    if (shas.length === 0) return;
+    try {
+      const result = await api.commitFlags(repoId, shas);
+      if (gen !== historyGen) return;
+      flagsBySha = { ...flagsBySha, ...result };
+    } catch (e) {
+      console.warn("Failed to load triage flags:", e);
+    }
+  }
+
+  // `{` / `}` jump to the previous/next flagged commit in the loaded history.
+  async function jumpToFlag(direction: "next" | "prev") {
+    if (commits.length === 0) return;
+
+    const tagged = commits.map((c) => ({ flags: flagsBySha[c.sha] ?? [] }));
+    if (!tagged.some((c) => c.flags.length > 0)) {
+      addToast({ message: "No flagged commits in this history", kind: "info" });
+      return;
+    }
+
+    const currentIndex = selectedCommitSha
+      ? commits.findIndex((c) => c.sha === selectedCommitSha)
+      : -1;
+    const targetIndex = findFlaggedCommitIndex(tagged, currentIndex, direction);
+
+    if (targetIndex < 0 || targetIndex === currentIndex) {
+      addToast({
+        message:
+          direction === "next"
+            ? "No later flagged commits"
+            : "No earlier flagged commits",
+        kind: "info",
+      });
+      return;
+    }
+
+    const target = commits[targetIndex];
+    if (!target) return;
+    selectCommit(target.sha);
+    await tick();
+    const row = commitsScrollEl?.querySelector(`[data-sha="${target.sha}"]`);
+    if (row instanceof HTMLElement) row.scrollIntoView({ block: "nearest" });
+  }
+
+  function handleFlagKey(e: KeyboardEvent) {
+    if (!isFocused || !repo || currentPane?.tab !== "history") return;
+    if (
+      $activeDialog ||
+      $paletteOpen ||
+      $settingsOpen ||
+      $shortcutsHelpOpen ||
+      $addRepoDialogOpen ||
+      $scanFolderDialogOpen
+    ) {
+      return;
+    }
+    if (e.metaKey || e.ctrlKey || e.altKey) return;
+    const target = e.target as HTMLElement | null;
+    if (
+      target &&
+      (target instanceof HTMLInputElement ||
+        target instanceof HTMLTextAreaElement ||
+        target.isContentEditable)
+    ) {
+      return;
+    }
+    if (matchShortcut(e, "{")) {
+      e.preventDefault();
+      void jumpToFlag("prev");
+    } else if (matchShortcut(e, "}")) {
+      e.preventDefault();
+      void jumpToFlag("next");
+    }
+  }
   function selectUncommitted() {
     isUncommittedSelected = true;
-    isRangeSelected = false;
     selectedCommitSha = null;
     currentScope = { type: "working" };
     commitMode = false;
@@ -263,19 +533,7 @@
   function selectCommit(sha: string) {
     selectedCommitSha = sha;
     isUncommittedSelected = false;
-    isRangeSelected = false;
     currentScope = { type: "commit", sha };
-    commitMode = false;
-    showCommitDetails = false;
-    loadScopeFiles(currentScope);
-  }
-
-  function selectRange() {
-    if (!repo?.marker) return;
-    isRangeSelected = true;
-    isUncommittedSelected = false;
-    selectedCommitSha = null;
-    currentScope = { type: "range", from: repo.marker.sha, to: "HEAD" };
     commitMode = false;
     showCommitDetails = false;
     loadScopeFiles(currentScope);
@@ -491,6 +749,8 @@
   );
 </script>
 
+<svelte:window onkeydown={handlePaneKeydown} />
+
 <div
   class="pane-container {isFocused ? 'focused' : ''}"
   onpointerdown={() => focusPane(paneIndex)}
@@ -506,22 +766,96 @@
         <span class="text-sm text-muted">Select a repository from the sidebar or press Mod+O to add one.</span>
       </div>
     {:else if currentPane.tab === "files"}
-      <FilesTab repoId={repo.id} rev={repo.branch || "HEAD"} />
+      <FilesTab
+        repoId={repo.id}
+        rev={repo.branch || "HEAD"}
+        {repo}
+        {status}
+        {paneIndex}
+      />
     {:else}
       <!-- History Tab 3-Column Layout -->
       <div class="history-layout">
         <!-- Commits Column -->
         {#if !focusDiff}
           <div class="commits-col" style="width: {commitsColWidth}px;">
-            <!-- Commits List -->
-            <div class="commits-scroll">
-              <UncommittedRow
-                dirtyCount={status?.dirtyCount || 0}
-                isSelected={isUncommittedSelected}
-                onselect={selectUncommitted}
-              />
+            <!-- Branch Selector Header with View Tabs -->
+            <div class="commits-header">
+              <div class="branch-wrap">
+                <BranchDropdown {repo} {status} />
+              </div>
+              <div class="pane-view-tabs">
+                <button
+                  type="button"
+                  class="view-tab active"
+                  title="Commits & History"
+                  aria-label="Commits view"
+                >
+                  <Icon name="commit" size={13} />
+                  <span>Commits</span>
+                </button>
+                <button
+                  type="button"
+                  class="view-tab"
+                  onclick={() => setPaneTab(paneIndex, "files")}
+                  title="Project Files Explorer"
+                  aria-label="Files explorer"
+                >
+                  <Icon name="folder" size={13} />
+                  <span>Files</span>
+                </button>
+              </div>
+            </div>
 
-              {#if commits.length === 0}
+            <!-- History filter (F3): matches message, author or touched path -->
+            <div class="history-filter">
+              <span class="filter-icon" aria-hidden="true">
+                <Icon name="search" size={14} />
+              </span>
+              <input
+                class="filter-input"
+                type="text"
+                placeholder="Filter commits"
+                aria-label="Filter commits by message, author, or path"
+                bind:this={historyFilterInput}
+                value={historyFilter}
+                oninput={onFilterInput}
+                onkeydown={onFilterKeydown}
+              />
+              {#if historyFilter}
+                <button
+                  class="filter-clear"
+                  type="button"
+                  aria-label="Clear history filter"
+                  onclick={clearFilter}
+                >
+                  <Icon name="close" size={13} />
+                </button>
+              {/if}
+            </div>
+
+            <!-- Commits List -->
+            <div class="commits-scroll" bind:this={commitsScrollEl}>
+              {#if !historyFilterActive}
+                <UncommittedRow
+                  dirtyCount={status?.dirtyCount || 0}
+                  isSelected={isUncommittedSelected}
+                  onselect={selectUncommitted}
+                />
+              {/if}
+
+              {#if historyLoading && commits.length === 0}
+                <div class="history-status text-sm text-muted">Loading history…</div>
+              {:else if commits.length === 0 && historyFilterActive}
+                <div class="history-empty">
+                  <span class="text-sm text-muted">
+                    No commits match “{historyFilterApplied}”.
+                  </span>
+                  <button class="empty-clear" type="button" onclick={clearFilter}>
+                    Clear filter
+                  </button>
+                </div>
+              {:else if commits.length === 0}
                 <div class="empty-commits text-sm text-muted">No commits yet</div>
               {/if}
 
@@ -531,14 +865,30 @@
                   isSelected={selectedCommitSha === commit.sha}
                   isLocal={unpushedShas.has(commit.sha)}
                   isMenuOpen={isCommitMenuOpen(commit.sha)}
+                  flags={flagsBySha[commit.sha] ?? []}
                   onselect={() => selectCommit(commit.sha)}
                   onmenu={(pos) => openCommitMenu(commit, pos)}
                 />
               {/each}
+
+              {#if hasMoreHistory(historyMeta)}
+                <div class="load-more-row" bind:this={historySentinel}>
+                  <button
+                    class="load-more"
+                    type="button"
+                    disabled={historyLoadingMore}
+                    onclick={loadMoreHistory}
+                  >
+                    {historyLoadingMore ? "Loading…" : "Load more"}
+                  </button>
+                </div>
+              {/if}
             </div>
 
-            {#if branchCommitLabel}
-              <div class="history-footer">{branchCommitLabel}</div>
+            {#if historyFooterLabel}
+              <div class="history-footer">
+                {historyFooterLabel}{#if flaggedCount > 0}<span class="history-flagged"> · {flaggedCount} flagged</span>{/if}
+              </div>
             {/if}
           </div>
 
@@ -649,14 +999,40 @@
 
   <!-- Terminal Drawer: keyed by repo.id so switching repositories recreates clean session (R13) -->
   {#if currentPane.terminalOpen && repo}
+    <!-- svelte-ignore a11y_no_noninteractive_tabindex -->
+    <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
+    <div
+      class="terminal-sash"
+      role="separator"
+      aria-orientation="horizontal"
+      aria-label="Resize terminal"
+      tabindex="0"
+      title="Drag to resize terminal (Double-click to reset)"
+      onpointerdown={startTerminalResize}
+      onkeydown={nudgeTerminalResize}
+      ondblclick={() => {
+        terminalHeight = 240;
+        panes.update((list) => {
+          if (list[paneIndex]) list[paneIndex] = { ...list[paneIndex], terminalHeight: 240 };
+          return list;
+        });
+        try { localStorage.setItem("vantage_terminal_height", "240"); } catch {}
+      }}
+    ></div>
+
     {#key repo.id}
       <TerminalDrawer
         repoId={repo.id}
         repoName={repo.name}
         repoPath={repo.path}
-        height={currentPane.terminalHeight}
+        height={terminalHeight}
         onclose={() => {
-          $panes[paneIndex].terminalOpen = false;
+          panes.update((list) => {
+            if (list[paneIndex]) {
+              list[paneIndex] = { ...list[paneIndex], terminalOpen: false };
+            }
+            return list;
+          });
         }}
       />
     {/key}
@@ -711,7 +1087,8 @@
   .history-layout {
     display: flex;
     width: 100%;
-    height: 100%;
+    flex: 1 1 auto;
+    min-height: 0;
     min-width: 0;
     overflow: hidden;
   }
@@ -726,15 +1103,184 @@
     border-right: 1px solid var(--border);
   }
 
+  .commits-header {
+    flex-shrink: 0;
+    height: 40px;
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0 8px;
+    background-color: var(--bg);
+    gap: 8px;
+  }
+
+  .branch-wrap {
+    min-width: 0;
+    flex: 1;
+    position: relative;
+  }
+
+  .pane-view-tabs {
+    display: inline-flex;
+    align-items: center;
+    background: var(--bg-hover, rgba(0, 0, 0, 0.05));
+    padding: 2px;
+    border-radius: 6px;
+    border: 1px solid var(--border);
+    flex-shrink: 0;
+  }
+  :global([data-theme="dark"]) .pane-view-tabs {
+    background: rgba(255, 255, 255, 0.06);
+  }
+
+  .view-tab {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    height: 24px;
+    padding: 0 8px;
+    font-size: 11.5px;
+    font-weight: 500;
+    border: 0;
+    background: transparent;
+    border-radius: 4px;
+    color: var(--text-muted);
+    cursor: pointer;
+    transition: background 120ms ease, color 120ms ease;
+    white-space: nowrap;
+  }
+  .view-tab:hover:not(.active) {
+    color: var(--text);
+    background: rgba(125, 125, 125, 0.12);
+  }
+  .view-tab.active {
+    background: var(--bg);
+    color: var(--text);
+    font-weight: 600;
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.08);
+  }
+  :global([data-theme="dark"]) .view-tab.active {
+    background: #21262d;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.35);
+  }
+
   .commits-scroll {
     flex: 1;
     overflow-y: auto;
     overflow-x: hidden;
   }
 
+  /* History filter (F3). 28px control, quiet until focused. */
+  .history-filter {
+    flex-shrink: 0;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    height: 28px;
+    margin: 8px;
+    padding: 0 8px;
+    border: 1px solid var(--border);
+    border-radius: var(--r-sm);
+    background: var(--bg-subtle);
+    color: var(--text-faint);
+  }
+  .history-filter:focus-within {
+    border-color: var(--accent);
+    background: var(--bg);
+    color: var(--text-muted);
+  }
+  .filter-icon {
+    display: inline-flex;
+    align-items: center;
+    flex-shrink: 0;
+  }
+  .filter-input {
+    flex: 1;
+    min-width: 0;
+    border: 0;
+    outline: none;
+    background: transparent;
+    color: var(--text);
+    font-family: inherit;
+    font-size: 12.5px;
+  }
+  .filter-input::placeholder {
+    color: var(--text-faint);
+  }
+  .filter-clear {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+    width: 18px;
+    height: 18px;
+    padding: 0;
+    border: 0;
+    border-radius: 4px;
+    background: transparent;
+    color: var(--text-muted);
+    cursor: pointer;
+  }
+  .filter-clear:hover {
+    background: var(--bg-muted);
+    color: var(--text);
+  }
+
   .empty-commits {
     padding: 24px 16px;
     text-align: center;
+  }
+
+  .history-status {
+    padding: 16px;
+  }
+
+  .history-empty {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 10px;
+    padding: 28px 16px;
+    text-align: center;
+    overflow-wrap: anywhere;
+  }
+  .empty-clear {
+    border: 1px solid var(--border);
+    border-radius: var(--r-sm);
+    background: var(--bg-subtle);
+    color: var(--text);
+    font-size: 12px;
+    padding: 4px 10px;
+    cursor: pointer;
+  }
+  .empty-clear:hover {
+    border-color: var(--accent);
+    color: var(--accent);
+  }
+
+  /* Paging sentinel (F3). Sits at the list foot and self-loads when near. */
+  .load-more-row {
+    display: flex;
+    justify-content: center;
+    padding: 12px;
+  }
+  .load-more {
+    border: 1px solid var(--border);
+    border-radius: var(--r-sm);
+    background: var(--bg-subtle);
+    color: var(--text-muted);
+    font-size: 12px;
+    padding: 4px 14px;
+    cursor: pointer;
+  }
+  .load-more:hover:not(:disabled) {
+    border-color: var(--accent);
+    color: var(--accent);
+  }
+  .load-more:disabled {
+    cursor: default;
+    opacity: 0.7;
   }
 
   /* Quiet branch summary pinned to the foot of the commits column
@@ -745,6 +1291,10 @@
     color: #7c847a;
     font-size: 11px;
     user-select: none;
+  }
+
+  .history-flagged {
+    color: var(--warning);
   }
 
   .detail-layout {
@@ -807,5 +1357,34 @@
   .split-handle:focus-visible::after {
     background-color: var(--accent);
     opacity: 0.35;
+  }
+
+  /* Horizontal sash for the bottom terminal drawer */
+  .terminal-sash {
+    flex: 0 0 auto;
+    height: 0;
+    width: 100%;
+    position: relative;
+    cursor: row-resize;
+    cursor: ns-resize;
+    background-color: transparent;
+    z-index: 25;
+  }
+  .terminal-sash::after {
+    content: "";
+    position: absolute;
+    left: 0;
+    right: 0;
+    top: -5px;
+    height: 10px;
+    background-color: transparent;
+    transition: background-color 120ms ease;
+    z-index: 25;
+  }
+  .terminal-sash:hover::after,
+  .terminal-sash:focus-visible::after,
+  :global(body.resizing-row) .terminal-sash::after {
+    background-color: var(--accent);
+    opacity: 0.6;
   }
 </style>

@@ -47,15 +47,18 @@
   --diff-gutter-del: #ffdade;
   --shadow-pop: 0 9px 28px rgba(0, 0, 0, 0.07);
 
-  /* Syntax Highlighting Light */
-  --syn-keyword: #8552b5;
-  --syn-string: #497747;
-  --syn-number: #497747;
-  --syn-comment: #7b8590;
-  --syn-function: #8552b5;
-  --syn-type: #8552b5;
-  --syn-attr: #497747;
-  --syn-meta: #7b8590;
+  /* Syntax Highlighting Light (VS Code Light+ palette) */
+  --syn-keyword: #0000ff;
+  --syn-string: #a31515;
+  --syn-number: #098658;
+  --syn-comment: #008000;
+  --syn-function: #795e26;
+  --syn-type: #267f99;
+  --syn-attr: #e50000;
+  --syn-tag: #800000;
+  --syn-variable: #001080;
+  --syn-meta: #707070;
+  --syn-regexp: #811f3f;
 }
 
 :root[data-theme="dark"] {
@@ -88,13 +91,16 @@
   --diff-gutter-del: rgba(248, 81, 73, 0.25);
   --shadow-pop: 0 8px 24px rgba(1, 4, 9, 0.6);
 
-  /* Syntax Highlighting Dark */
-  --syn-keyword: #ff7b72;
-  --syn-string: #a5d6ff;
-  --syn-number: #79c0ff;
-  --syn-comment: #8b949e;
-  --syn-function: #d2a8ff;
-  --syn-type: #ffa657;
-  --syn-attr: #7ee787;
-  --syn-meta: #79c0ff;
+  /* Syntax Highlighting Dark (VS Code Dark+ palette) */
+  --syn-keyword: #569cd6;
+  --syn-string: #ce9178;
+  --syn-number: #b5cea8;
+  --syn-comment: #6a9955;
+  --syn-function: #dcdcaa;
+  --syn-type: #4ec9b0;
+  --syn-attr: #9cdcfe;
+  --syn-tag: #569cd6;
+  --syn-variable: #9cdcfe;
+  --syn-meta: #9b9b9b;
+  --syn-regexp: #d16969;
 }

@@ -1,5 +1,9 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
-import { createHorizontalResizerKeyboard } from "../src/lib/resizer";
+import {
+  createHorizontalResizerKeyboard,
+  createVerticalBottomResizer,
+  createVerticalBottomResizerKeyboard,
+} from "../src/lib/resizer";
 
 function fakeStorage() {
   const store = new Map<string, string>();
@@ -107,5 +111,36 @@ describe("createHorizontalResizerKeyboard", () => {
     });
     expect(() => handler(key("ArrowRight"))).not.toThrow();
     expect(width).toBe(312);
+  });
+});
+
+describe("createVerticalBottomResizerKeyboard", () => {
+  it("nudges up to increase bottom drawer height", () => {
+    fakeStorage();
+    let height = 240;
+    const handler = createVerticalBottomResizerKeyboard({
+      getHeight: () => height,
+      setHeight: (h) => (height = h),
+      minHeight: 80,
+      maxHeight: 800,
+      storageKey: "vantage_terminal_height",
+    });
+    handler(key("ArrowUp"));
+    expect(height).toBe(256);
+  });
+
+  it("nudges down and clamps at minimum height", () => {
+    fakeStorage();
+    let height = 90;
+    const handler = createVerticalBottomResizerKeyboard({
+      getHeight: () => height,
+      setHeight: (h) => (height = h),
+      minHeight: 80,
+      maxHeight: 800,
+    });
+    handler(key("ArrowDown"));
+    expect(height).toBe(80);
+    handler(key("ArrowDown"));
+    expect(height).toBe(80);
   });
 });

@@ -12,6 +12,7 @@ import type {
   DiffScope,
   EnvInfo,
   FileChange,
+  HistoryPage,
   Layout,
   RepoEntry,
   RepoStatus,
@@ -78,6 +79,9 @@ export async function markerSet(id: string, sha: string): Promise<void> {
 }
 
 export async function markerSetToHead(id: string): Promise<void> {
+  // NOTE: not used by the review flow. "Mark reviewed" must target the captured
+  // snapshot end (see stores/review.ts); calling this at click time marks
+  // commits that arrived mid-review as reviewed (ALPH-146).
   return invoke("marker_set_to_head", { id });
 }
 
@@ -89,6 +93,15 @@ export async function logPage(
   query?: string
 ): Promise<CommitSummary[]> {
   return invoke("log_page", { id, skip, limit, query });
+}
+
+export async function historyPage(
+  id: string,
+  skip: number,
+  limit: number,
+  query?: string
+): Promise<HistoryPage> {
+  return invoke("history_page", { id, skip, limit, query });
 }
 
 export async function commitFlags(
