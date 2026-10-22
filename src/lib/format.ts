@@ -66,6 +66,21 @@ export function formatStats(additions: number, deletions: number): string {
   return `+${additions} −${deletions}`;
 }
 
+// Compact count for badges: caps at `${max}+` (e.g. "99+"), optional prefix
+// (e.g. "+" for new commits, "↑" for unpushed). Returns "" for non-positive.
+export function formatCount(
+  count: number,
+  opts: { prefix?: string; max?: number } = {}
+): string {
+  const { prefix = "", max = 99 } = opts;
+  if (!Number.isFinite(count) || count <= 0) return "";
+  return count > max ? `${max}+` : `${prefix}${count}`;
+}
+
+export function pluralize(count: number, singular: string, plural = `${singular}s`): string {
+  return count === 1 ? singular : plural;
+}
+
 export interface VirtualWindow {
   startIndex: number;
   endIndex: number;

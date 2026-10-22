@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { formatRelativeTime, hashStringToColor, formatStats, splitPath } from "../src/lib/format";
+import { formatRelativeTime, hashStringToColor, formatStats, splitPath, formatCount, pluralize } from "../src/lib/format";
 
 describe("format", () => {
   it("formats just now for recent times", () => {
@@ -26,6 +26,39 @@ describe("format", () => {
 
   it("formats additions and deletions correctly", () => {
     expect(formatStats(12, 3)).toBe("+12 −3");
+  });
+
+  describe("formatCount", () => {
+    it("returns empty for zero and negative values", () => {
+      expect(formatCount(0)).toBe("");
+      expect(formatCount(-3)).toBe("");
+    });
+
+    it("applies an optional prefix", () => {
+      expect(formatCount(7, { prefix: "+" })).toBe("+7");
+      expect(formatCount(3)).toBe("3");
+    });
+
+    it("caps large counts at max+", () => {
+      expect(formatCount(120)).toBe("99+");
+      expect(formatCount(120, { prefix: "+" })).toBe("99+");
+      expect(formatCount(50, { max: 20 })).toBe("20+");
+    });
+  });
+
+  describe("pluralize", () => {
+    it("returns singular for one", () => {
+      expect(pluralize(1, "commit")).toBe("commit");
+    });
+
+    it("returns the default plural otherwise", () => {
+      expect(pluralize(0, "commit")).toBe("commits");
+      expect(pluralize(2, "file")).toBe("files");
+    });
+
+    it("supports an explicit plural", () => {
+      expect(pluralize(2, "entry", "entries")).toBe("entries");
+    });
   });
 
   describe("splitPath", () => {
