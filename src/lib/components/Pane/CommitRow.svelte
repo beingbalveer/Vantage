@@ -142,12 +142,21 @@
   .commit-title {
     display: block;
     font-size: 14px;
-    font-weight: 400;
+    font-weight: 500;
     line-height: 1.5;
-    color: #30343a;
+    color: #1a1c1f;
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
+  }
+  :global([data-theme="dark"]) .commit-title {
+    color: var(--text, #f0f6fc);
+  }
+  .commit-item.active .commit-title {
+    color: #0d0e11;
+  }
+  :global([data-theme="dark"]) .commit-item.active .commit-title {
+    color: #ffffff;
   }
   .commit-meta {
     display: flex;
