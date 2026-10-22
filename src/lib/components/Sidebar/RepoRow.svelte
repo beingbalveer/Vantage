@@ -160,8 +160,8 @@
     return lines.join("\n");
   });
 
-  // Compact signal for the collapsed (icon-only) row.
-  let collapsedSignal = $derived.by(() => {
+  // Attention signal displayed as a badge on the repository icon (in all modes).
+  let attentionSignal = $derived.by(() => {
     if (hasError) return { kind: "error" as const, text: "", label: status?.error || "Repository error" };
     if (newCommits > 0) return { kind: "new" as const, text: newCommitLabel, label: newCommitTitle };
     if (dirtyCount > 0) return { kind: "dirty" as const, text: "", label: dirtyLabel };
@@ -299,81 +299,31 @@
   aria-label={rowAriaLabel}
   title={rowTitle}
 >
-  <div class="repo-icon-box">
-    <RepoIcon id={repo.id} repoName={repo.name} repoPath={repo.path} size={22} />
-  </div>
+  <div class="repo-icon-wrapper">
+    <div class="repo-icon-box">
+      <RepoIcon id={repo.id} repoName={repo.name} repoPath={repo.path} size={22} />
+    </div>
 
-  {#if $sidebarCollapsed && collapsedSignal}
-    <span
-      class="collapsed-badge {collapsedSignal.kind}"
-      role="img"
-      aria-label={collapsedSignal.label}
-      title={collapsedSignal.label}
-    >
-      {#if collapsedSignal.kind === "error" || collapsedSignal.kind === "marker"}
-        <Icon name="alert" size={10} />
-      {:else if collapsedSignal.text}
-        {collapsedSignal.text}
-      {/if}
-    </span>
-  {/if}
+    {#if attentionSignal}
+      <span
+        class="repo-badge {attentionSignal.kind}"
+        role="img"
+        aria-label={attentionSignal.label}
+        title={attentionSignal.label}
+      >
+        {#if attentionSignal.kind === "error" || attentionSignal.kind === "marker"}
+          <Icon name="alert" size={10} />
+        {:else if attentionSignal.text}
+          {attentionSignal.text}
+        {/if}
+      </span>
+    {/if}
+  </div>
 
   {#if !$sidebarCollapsed}
     <div class="info">
       <div class="row-top">
         <span class="repo-name">{repo.name}</span>
-        {#if hasError}
-          <span
-            class="badge error"
-            role="img"
-            aria-label={status?.error || "Repository error"}
-            title={status?.error || "Repository error"}
-          >
-            <Icon name="alert" size={13} />
-          </span>
-        {:else if newCommits > 0 || dirtyCount > 0 || aheadCount > 0 || markerProblem}
-          <span class="badges">
-            {#if markerProblem}
-              <span
-                class="badge marker"
-                role="img"
-                aria-label={markerTitle}
-                title={markerTitle}
-              >
-                <Icon name="alert" size={13} />
-              </span>
-            {/if}
-            {#if newCommits > 0}
-              <span
-                class="badge new-commits"
-                role="img"
-                aria-label={newCommitTitle}
-                title={newCommitTitle}
-              >
-                {newCommitLabel}
-              </span>
-            {/if}
-            {#if aheadCount > 0}
-              <span
-                class="badge ahead"
-                role="img"
-                aria-label={aheadTitle}
-                title={aheadTitle}
-              >
-                <Icon name="arrow-up" size={11} />
-                <span class="badge-count">{aheadLabel}</span>
-              </span>
-            {/if}
-            {#if dirtyCount > 0}
-              <span
-                class="dirty-dot"
-                role="img"
-                aria-label={dirtyLabel}
-                title={dirtyLabel}
-              ></span>
-            {/if}
-          </span>
-        {/if}
       </div>
       <span class="branch-name">{displayBranch || "HEAD"}</span>
     </div>
@@ -620,6 +570,14 @@
     margin: 0;
   }
 
+  .repo-icon-wrapper {
+    position: relative;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+  }
+
   .repo-icon-box {
     width: 36px;
     height: 36px;
@@ -642,87 +600,11 @@
     box-shadow: 0 1px 2px rgba(0, 0, 0, 0.3);
   }
 
-  .info {
-    flex: 1;
-    min-width: 0;
-    display: flex;
-    flex-direction: column;
-    justify-content: center;
-    gap: 2px;
-  }
-
-  .row-top {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    min-width: 0;
-  }
-
-  .badges {
-    display: inline-flex;
-    align-items: center;
-    gap: 4px;
-    flex-shrink: 0;
-  }
-
-  .badge {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    gap: 1px;
-    height: 18px;
-    padding: 0 6px;
-    border-radius: 9px;
-    font-size: 11px;
-    font-weight: 600;
-    line-height: 1;
-    font-variant-numeric: tabular-nums;
-    flex-shrink: 0;
-  }
-
-  .badge.new-commits {
-    background-color: var(--accent);
-    color: var(--accent-fg);
-    padding: 0 6px;
-  }
-
-  .badge.ahead {
-    height: 18px;
-    padding: 0 6px;
-    background-color: var(--bg-muted);
-    color: var(--text-muted);
-  }
-
-  .badge.ahead :global(svg) {
-    display: block;
-  }
-
-  .badge-count {
-    font-variant-numeric: tabular-nums;
-  }
-
-  .badge.marker,
-  .badge.error {
-    height: 16px;
-    padding: 0;
-    width: 16px;
-    background-color: transparent;
-    color: var(--warning);
-  }
-
-  .dirty-dot {
-    width: 8px;
-    height: 8px;
-    border-radius: 50%;
-    background-color: var(--warning);
-    flex-shrink: 0;
-  }
-
-  /* Compact signal for the collapsed (icon-only) row */
-  .collapsed-badge {
+  /* Attention badge on repository icon (shown in all modes) */
+  .repo-badge {
     position: absolute;
-    top: 2px;
-    right: 4px;
+    top: -3px;
+    right: -4px;
     min-width: 14px;
     height: 14px;
     padding: 0 4px;
@@ -738,30 +620,54 @@
     align-items: center;
     justify-content: center;
     pointer-events: none;
+    border: 1.5px solid var(--chrome, #f3f4f6);
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.1);
+    z-index: 2;
   }
-  .collapsed-badge.dirty,
-  .collapsed-badge.ahead {
+  :global([data-theme="dark"]) .repo-badge,
+  :global(:root[data-theme="dark"]) .repo-badge {
+    border-color: #1b1f24;
+  }
+
+  .repo-badge.dirty,
+  .repo-badge.ahead {
     padding: 0;
     min-width: 10px;
     width: 10px;
     height: 10px;
     border-radius: 50%;
-    top: 4px;
-    right: 6px;
+    top: -1px;
+    right: -2px;
   }
-  .collapsed-badge.dirty {
+  .repo-badge.dirty {
     background-color: var(--warning);
   }
-  .collapsed-badge.ahead {
+  .repo-badge.ahead {
     background-color: var(--text-muted);
   }
-  .collapsed-badge.error,
-  .collapsed-badge.marker {
+  .repo-badge.error,
+  .repo-badge.marker {
     background-color: var(--warning-bg);
     color: var(--warning);
     padding: 0;
     width: 14px;
     height: 14px;
+  }
+
+  .info {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    gap: 2px;
+  }
+
+  .row-top {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    min-width: 0;
   }
 
   .repo-row.error .repo-name,
