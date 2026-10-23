@@ -29,6 +29,12 @@ export async function loadRepos() {
       if (!curActive || !list.some((r) => r.id === curActive)) {
         activeRepoId.set(list[0].id);
       }
+      // Ensure backend review markers are updated to HEAD to clear legacy unreviewed markers
+      for (const r of list) {
+        if (r.marker) {
+          api.markerSetToHead(r.id).catch(() => {});
+        }
+      }
     } else {
       activeRepoId.set(null);
     }

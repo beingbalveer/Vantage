@@ -1,8 +1,8 @@
 <script lang="ts">
   import type { BackupInfo } from "../../types";
   import * as api from "../../api";
-  import { activeDialog, closeDialog, addToast } from "../../stores/ui";
-  import { refreshSingleStatus, loadRepos } from "../../stores/repos";
+  import { activeDialog, closeDialog, addToast, recoveryToastLink } from "../../stores/ui";
+  import { statuses, repos, refreshSingleStatus, loadRepos } from "../../stores/repos";
   import { Modal, Button } from "../common";
 
   interface Props {
@@ -35,6 +35,12 @@
   let isDiscarding = $state(false);
   let errorMessage = $state<string | null>(null);
 
+  // The confirmation must name the repository and branch it will act on.
+  let repoEntry = $derived($repos.find((r) => r.id === currentRepoId) || null);
+  let branchLabel = $derived(
+    $statuses[currentRepoId]?.branch || repoEntry?.branch || "HEAD"
+  );
+
   function handleClose() {
     errorMessage = null;
     isDiscarding = false;
@@ -62,7 +68,7 @@
       const count = currentPaths.length;
 
       addToast({
-        message: `Discarded changes to ${count} file${count === 1 ? "" : "s"}.`,
+        message: `Discarded changes to ${count} file${count === 1 ? "" : "s"} on ${branchLabel}.`,
         kind: "info",
         actionLabel: "Undo",
         action: async () => {
@@ -75,6 +81,7 @@
             addToast({ message: e.message || "Failed to restore backup", kind: "error" });
           }
         },
+        ...recoveryToastLink(currentRepoId),
       });
 
       await refreshSingleStatus(currentRepoId);
@@ -103,6 +110,13 @@
   <p class="text-base text-strong">
     Discard changes to {currentPaths.length} file{currentPaths.length === 1 ? "" : "s"}?
   </p>
+
+  <div class="target-context text-xs">
+    <span class="text-muted">Target:</span>
+    <span class="target-name text-strong">{repoEntry?.name || "repository"}</span>
+    <span class="text-muted">on</span>
+    <span class="target-branch font-mono text-strong">{branchLabel}</span>
+  </div>
 
   <p class="text-sm text-muted">
     A backup is saved so you can undo this for 30 days.
@@ -163,6 +177,24 @@
     display: flex;
     flex-direction: column;
     gap: 4px;
+  }
+
+  .target-context {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    flex-wrap: wrap;
+    padding: 7px 10px;
+    background-color: var(--bg-subtle);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--r-md);
+  }
+
+  .target-branch {
+    background-color: var(--bg);
+    padding: 1px 5px;
+    border-radius: var(--r-sm);
+    border: 1px solid var(--border-subtle);
   }
 
   .file-item {
