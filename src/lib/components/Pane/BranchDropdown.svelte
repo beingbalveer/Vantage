@@ -1,7 +1,7 @@
 <script lang="ts">
   import { repos, loadRepos } from "../../stores/repos";
   import { openRepoInFocusedPane } from "../../stores/panes";
-  import { addToast } from "../../stores/ui";
+  import { addToast, openDialog, branchesVersion } from "../../stores/ui";
   import * as api from "../../api";
   import type { BranchInfo, RepoEntry, RepoStatus } from "../../types";
   import Icon from "../common/Icon.svelte";
@@ -48,6 +48,7 @@
 
   $effect(() => {
     const id = repo?.id;
+    const _rev = $branchesVersion;
     branches = [];
     showMenu = false;
     if (id) void refreshBranches(id);
@@ -162,6 +163,36 @@
       addToast({ message: e.message || "Failed to add branch view", kind: "error" });
     }
   }
+
+  function handleNewBranchFrom(startPoint: string) {
+    if (!repo) return;
+    closeMenu();
+    openDialog({
+      type: "branch_create",
+      repoId: repo.id,
+      data: { startPoint: startPoint || "HEAD" },
+    });
+  }
+
+  function handleRenameBranch(branch: string) {
+    if (!repo) return;
+    closeMenu();
+    openDialog({
+      type: "branch_rename",
+      repoId: repo.id,
+      data: { from: branch },
+    });
+  }
+
+  function handleDeleteBranch(branch: string) {
+    if (!repo) return;
+    closeMenu();
+    openDialog({
+      type: "branch_delete",
+      repoId: repo.id,
+      data: { name: branch },
+    });
+  }
 </script>
 
 <div class="branch-dropdown-wrapper">
@@ -254,6 +285,16 @@
       {/if}
 
       <div class="menu-divider"></div>
+      <button
+        type="button"
+        class="branch-option create-branch-action"
+        role="menuitem"
+        onclick={() => handleNewBranchFrom("HEAD")}
+      >
+        <Icon name="plus" size={13} />
+        <span>New branch from {currentBranch}…</span>
+      </button>
+
       <button
         type="button"
         class="branch-option add-view-action"
