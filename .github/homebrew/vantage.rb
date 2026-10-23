@@ -1,7 +1,7 @@
 cask "vantage" do
   arch arm: "aarch64", intel: "x64"
 
-  version "0.1.1"
+  version "0.2.0"
   sha256 :no_check # Or specify the exact sha256 checksum of the release DMG
 
   url "https://github.com/beingbalveer/Vantage/releases/download/v#{version}/Vantage_#{version}_universal.dmg"
