@@ -912,7 +912,9 @@ pub async fn checkout(
 
     let target = target.trim().to_string();
     if target.is_empty() {
-        return Err(AppError::other("No branch or commit specified to check out"));
+        return Err(AppError::other(
+            "No branch or commit specified to check out",
+        ));
     }
 
     checkout_target(
@@ -965,11 +967,7 @@ pub async fn stash_push(
 }
 
 #[tauri::command]
-pub async fn stash_pop(
-    state: State<'_, AppState>,
-    id: String,
-    index: u32,
-) -> Result<(), AppError> {
+pub async fn stash_pop(state: State<'_, AppState>, id: String, index: u32) -> Result<(), AppError> {
     let repo_path = repo_path_for(&state, &id).await?;
     git_stash_pop(&state.runner, &repo_path, index).await
 }

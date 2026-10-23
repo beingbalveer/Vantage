@@ -149,11 +149,7 @@ pub(crate) async fn stash_pop_locked(
     Ok(())
 }
 
-pub async fn stash_pop(
-    runner: &GitRunner,
-    repo_path: &Path,
-    index: u32,
-) -> Result<(), AppError> {
+pub async fn stash_pop(runner: &GitRunner, repo_path: &Path, index: u32) -> Result<(), AppError> {
     let repo_lock = runner.get_repo_lock(repo_path).await;
     let _guard = repo_lock.lock().await;
     stash_pop_locked(runner, repo_path, index).await
@@ -174,11 +170,7 @@ pub(crate) async fn stash_apply_locked(
     Ok(())
 }
 
-pub async fn stash_apply(
-    runner: &GitRunner,
-    repo_path: &Path,
-    index: u32,
-) -> Result<(), AppError> {
+pub async fn stash_apply(runner: &GitRunner, repo_path: &Path, index: u32) -> Result<(), AppError> {
     let repo_lock = runner.get_repo_lock(repo_path).await;
     let _guard = repo_lock.lock().await;
     stash_apply_locked(runner, repo_path, index).await
@@ -199,11 +191,7 @@ pub(crate) async fn stash_drop_locked(
     Ok(())
 }
 
-pub async fn stash_drop(
-    runner: &GitRunner,
-    repo_path: &Path,
-    index: u32,
-) -> Result<(), AppError> {
+pub async fn stash_drop(runner: &GitRunner, repo_path: &Path, index: u32) -> Result<(), AppError> {
     let repo_lock = runner.get_repo_lock(repo_path).await;
     let _guard = repo_lock.lock().await;
     stash_drop_locked(runner, repo_path, index).await

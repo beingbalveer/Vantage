@@ -349,7 +349,9 @@ pub async fn create_branch(
     }
 
     if checkout {
-        let out = runner.run_write(repo_path, &["checkout", branch], 20).await?;
+        let out = runner
+            .run_write(repo_path, &["checkout", branch], 20)
+            .await?;
         if !out.success() {
             return Err(AppError::other(out.stderr.trim().to_string()).with_stderr(out.stderr));
         }
@@ -416,7 +418,9 @@ pub async fn delete_branch(
     }
 
     let flag = if force { "-D" } else { "-d" };
-    let out = runner.run_write(repo_path, &["branch", flag, branch], 20).await?;
+    let out = runner
+        .run_write(repo_path, &["branch", flag, branch], 20)
+        .await?;
     if !out.success() {
         return Err(AppError::other(out.stderr.trim().to_string()).with_stderr(out.stderr));
     }
@@ -447,7 +451,12 @@ pub async fn is_branch_merged(
     let upstream_out = runner
         .run_read(
             repo_path,
-            &["rev-parse", "--abbrev-ref", "--symbolic-full-name", &upstream_spec],
+            &[
+                "rev-parse",
+                "--abbrev-ref",
+                "--symbolic-full-name",
+                &upstream_spec,
+            ],
         )
         .await;
     if let Ok(out) = upstream_out {
@@ -455,7 +464,10 @@ pub async fn is_branch_merged(
             let upstream = out.stdout_string().trim().to_string();
             if !upstream.is_empty() {
                 let merged = runner
-                    .run_read(repo_path, &["merge-base", "--is-ancestor", branch, &upstream])
+                    .run_read(
+                        repo_path,
+                        &["merge-base", "--is-ancestor", branch, &upstream],
+                    )
                     .await?;
                 if merged.success() {
                     return Ok(true);

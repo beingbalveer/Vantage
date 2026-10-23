@@ -414,7 +414,8 @@ async fn search_history(
     limit: u32,
     marker_sha: Option<&str>,
 ) -> Result<HistoryPage, AppError> {
-    let all_shas = search_commit_shas(runner, repo_path, target_ref, query, SEARCH_RESULT_CAP).await?;
+    let all_shas =
+        search_commit_shas(runner, repo_path, target_ref, query, SEARCH_RESULT_CAP).await?;
     let capped = all_shas.len() >= SEARCH_RESULT_CAP;
     let total = all_shas.len() as u32;
 
@@ -490,7 +491,10 @@ mod tests {
     fn test_escape_ere_literal_escapes_metacharacters() {
         // Ordinary text is left untouched.
         assert_eq!(escape_ere_literal("plain"), "plain");
-        assert_eq!(escape_ere_literal("balveer@users.noreply.github.com"), "balveer@users\\.noreply\\.github\\.com");
+        assert_eq!(
+            escape_ere_literal("balveer@users.noreply.github.com"),
+            "balveer@users\\.noreply\\.github\\.com"
+        );
         // Every POSIX ERE metacharacter is neutralized so it matches literally.
         assert_eq!(escape_ere_literal("v0.1.0"), "v0\\.1\\.0");
         assert_eq!(escape_ere_literal("a*b"), "a\\*b");
@@ -501,7 +505,10 @@ mod tests {
         assert_eq!(escape_ere_literal("a{b}"), "a\\{b\\}");
         assert_eq!(escape_ere_literal("a^b$"), "a\\^b\\$");
         assert_eq!(escape_ere_literal("a\\b"), "a\\\\b");
-        assert_eq!(escape_ere_literal("fix: [wip] (v2.0)"), "fix: \\[wip\\] \\(v2\\.0\\)");
+        assert_eq!(
+            escape_ere_literal("fix: [wip] (v2.0)"),
+            "fix: \\[wip\\] \\(v2\\.0\\)"
+        );
     }
 
     #[test]

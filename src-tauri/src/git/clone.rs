@@ -491,7 +491,10 @@ mod tests {
             is_empty: true,
             inside_repo: true,
         };
-        assert_eq!(validate_destination(&nested).unwrap_err().code, "Validation");
+        assert_eq!(
+            validate_destination(&nested).unwrap_err().code,
+            "Validation"
+        );
     }
 
     #[test]
@@ -509,14 +512,24 @@ mod tests {
             "NotFound"
         );
         assert_eq!(
-            classify_clone_error("fatal: unable to access: Could not resolve host: github.com", "u")
-                .code,
+            classify_clone_error(
+                "fatal: unable to access: Could not resolve host: github.com",
+                "u"
+            )
+            .code,
             "Other"
         );
         assert_eq!(
-            classify_clone_error("fatal: destination path 'x' already exists and is not an empty directory.", "u").code,
+            classify_clone_error(
+                "fatal: destination path 'x' already exists and is not an empty directory.",
+                "u"
+            )
+            .code,
             "Validation"
         );
-        assert_eq!(classify_clone_error("fatal: something odd", "u").code, "Other");
+        assert_eq!(
+            classify_clone_error("fatal: something odd", "u").code,
+            "Other"
+        );
     }
 }
