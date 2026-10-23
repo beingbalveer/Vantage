@@ -1,49 +1,5 @@
 <script lang="ts">
-  type IconName =
-    | "sidebar"
-    | "git-branch"
-    | "chevron-down"
-    | "chevron-right"
-    | "chevron-up"
-    | "check"
-    | "arrow-up"
-    | "arrow-down"
-    | "arrow-up-down"
-    | "refresh"
-    | "search"
-    | "file-text"
-    | "terminal"
-    | "gear"
-    | "question"
-    | "more-horizontal"
-    | "pin"
-    | "folder"
-    | "external-link"
-    | "trash"
-    | "plus"
-    | "close"
-    | "commit"
-    | "message"
-    | "zap"
-    | "key"
-    | "test-tube"
-    | "package"
-    | "hard-drive"
-    | "flag"
-    | "binary"
-    | "sparkles"
-    | "expand"
-    | "clock"
-    | "copy"
-    | "unfold"
-    | "fold"
-    | "chevrons-up-down"
-    | "chevrons-down-up"
-    | "code"
-    | "grid"
-    | "worktree"
-    | "changes"
-    | "file";
+  import type { IconName } from "./iconName";
 
   interface Props {
     name: IconName;
@@ -250,10 +206,30 @@
     <!-- Uncommitted changes -->
     <circle cx="12" cy="12" r="8" stroke-dasharray="2 3" />
     <path d="M12 8v8m-4-4h8" />
+  {:else if name === "alert"}
+    <!-- SF Symbol exclamationmark.triangle (warning) -->
+    <path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z" />
+    <line x1="12" x2="12" y1="9" y2="13" />
+    <line x1="12" x2="12.01" y1="17" y2="17" />
+  {:else if name === "wrap"}
+    <!-- Word wrap / return arrow -->
+    <path d="M4 6h16M4 12h12a3 3 0 0 1 3 3v0a3 3 0 0 1-3 3H11" />
+    <path d="m14 15-3 3 3 3" />
+    <path d="M4 18h3" />
   {:else if name === "file"}
     <!-- Document -->
     <path d="M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z" />
     <path d="M14 3v6h6" />
+  {:else if name === "download"}
+    <!-- Clone / download (arrow into tray) -->
+    <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+    <polyline points="7 10 12 15 17 10" />
+    <line x1="12" x2="12" y1="15" y2="3" />
+  {:else if name === "files"}
+    <!-- SF Symbol doc.on.doc / stacked documents (large change) -->
+    <path d="M20 7h-3a2 2 0 0 1-2-2V2" />
+    <path d="M9 18a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h7l4 4v10a2 2 0 0 1-2 2Z" />
+    <path d="M3 7.6v12.8A1.6 1.6 0 0 0 4.6 22h9.8" />
   {/if}
 </svg>
 

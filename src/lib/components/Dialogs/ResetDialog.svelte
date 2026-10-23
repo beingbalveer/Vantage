@@ -1,7 +1,7 @@
 <script lang="ts">
   import type { CommitSummary, BackupInfo } from "../../types";
   import * as api from "../../api";
-  import { activeDialog, closeDialog, addToast } from "../../stores/ui";
+  import { activeDialog, closeDialog, addToast, recoveryToastLink } from "../../stores/ui";
   import { statuses, repos, refreshSingleStatus, loadRepos } from "../../stores/repos";
   import { Modal, Button, Checkbox } from "../common";
 
@@ -21,7 +21,7 @@
     repoId,
     targetSha,
     fromSha,
-    targetLabel = "reviewed marker",
+    targetLabel,
     commits,
     onclose,
     onsuccess,
@@ -29,6 +29,14 @@
 
   let isStoreActive = $derived($activeDialog?.type === "reset");
   let isOpen = $derived(open !== undefined ? open : isStoreActive);
+
+  // Allow the caller (commit context menu) to describe the reset target through
+  // the dialog store as well as via props.
+  let currentTargetLabel = $derived(
+    targetLabel ||
+      (isStoreActive ? $activeDialog?.data?.targetLabel : "") ||
+      "reviewed marker"
+  );
 
   let currentRepoId = $derived(
     repoId || (isStoreActive ? $activeDialog?.repoId : "") || ""
@@ -48,6 +56,10 @@
 
   let repoEntry = $derived(
     $repos.find((r) => r.id === currentRepoId) || null
+  );
+
+  let branchLabel = $derived(
+    $statuses[currentRepoId]?.branch || repoEntry?.branch || "HEAD"
   );
 
   let droppedCommits = $state<CommitSummary[]>([]);
@@ -156,7 +168,7 @@
 
       const count = droppedCommits.length;
       addToast({
-        message: `Reset done. Dropped ${count} commit${count === 1 ? "" : "s"}.`,
+        message: `Reset ${branchLabel} on ${repoEntry?.name || "repository"}. Dropped ${count} commit${count === 1 ? "" : "s"}.`,
         kind: "info",
         actionLabel: "Undo",
         action: async () => {
@@ -169,6 +181,7 @@
             addToast({ message: e.message || "Failed to restore backup", kind: "error" });
           }
         },
+        ...recoveryToastLink(currentRepoId),
       });
 
       await refreshSingleStatus(currentRepoId);
@@ -194,13 +207,15 @@
     errorMessage = null;
 
     try {
-      const from = currentFromSha || "HEAD";
-      const to = currentTargetSha;
-      const res = await api.revertRange(currentRepoId, from, to);
+      // Revert the commits the reset would drop: `rev-list <target>..<head>`
+      // (newest first), so pushed history is rewritten safely.
+      const head = currentFromSha || "HEAD";
+      const res = await api.revertRange(currentRepoId, currentTargetSha, head);
 
       addToast({
-        message: `Created ${res.length} revert commit${res.length === 1 ? "" : "s"} for range`,
+        message: `Created ${res.length} revert commit${res.length === 1 ? "" : "s"} on ${branchLabel}`,
         kind: "success",
+        ...recoveryToastLink(currentRepoId),
       });
 
       await refreshSingleStatus(currentRepoId);
@@ -222,7 +237,7 @@
 {#if isOpen}
   <Modal
     open={isOpen}
-    title={`Reset ${repoEntry?.name || "repository"} to ${targetLabel}?`}
+    title={`Reset ${repoEntry?.name || "repository"} to ${currentTargetLabel}?`}
     width="520px"
     closeOnEscape={!isResetting && !isRevertingRange}
     closeOnOutsideClick={!isResetting && !isRevertingRange}
@@ -230,7 +245,7 @@
   >
     <div class="reset-content">
       <p class="text-base text-muted">
-        This will remove {droppedCommits.length} commit{droppedCommits.length === 1 ? "" : "s"} from {repoEntry?.branch || "HEAD"}:
+        This will remove {droppedCommits.length} commit{droppedCommits.length === 1 ? "" : "s"} from {branchLabel}:
       </p>
 
       <!-- Commits list (up to 20) -->

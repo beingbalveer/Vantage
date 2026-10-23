@@ -22,7 +22,7 @@
         "hiddenTitle": true,
         "trafficLightPosition": {
           "x": 18,
-          "y": 17
+          "y": 28
         }
       }
     ],
@@ -44,6 +44,9 @@
       "icons/icon.icns",
       "icons/icon.ico"
     ],
+    "macOS": {
+      "infoPlist": "Info.plist"
+    },
     "createUpdaterArtifacts": true
   },
   "plugins": {
