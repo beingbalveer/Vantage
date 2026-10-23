@@ -97,6 +97,26 @@ export const settingsOpen = writable<boolean>(false);
 export const shortcutsHelpOpen = writable<boolean>(false);
 export const addRepoDialogOpen = writable<boolean>(false);
 export const scanFolderDialogOpen = writable<boolean>(false);
+export const stashDialogOpen = writable<boolean>(false);
+
+// Dirty-tree branch switching: a single prompt that offers leave / bring / stash.
+export interface CheckoutRequest {
+  repoId: string;
+  repoName: string;
+  target: string;
+  dirtyCount: number;
+}
+
+export const checkoutRequest = writable<CheckoutRequest | null>(null);
+
+export function requestCheckout(request: CheckoutRequest) {
+  checkoutRequest.set(request);
+}
+
+export function clearCheckoutRequest() {
+  checkoutRequest.set(null);
+}
+
 // Which tab the Add-repository dialog should open on. Consumed once when the
 // dialog opens so the palette can deep-link straight to the clone form.
 export const addRepoInitialTab = writable<"existing" | "clone">("existing");

@@ -9,11 +9,15 @@ use crate::git::ops::{
     revert_range as git_revert_range,
 };
 use crate::git::refs::{
-    checkout_branch, create_branch, delete_branch, get_remote_url, is_branch_merged, list_branches,
+    checkout_target, create_branch, delete_branch, get_remote_url, is_branch_merged, list_branches,
     rename_branch, sync_fetch as git_sync_fetch, sync_pull as git_sync_pull,
     sync_push as git_sync_push,
 };
 use crate::git::runner::GitRunner;
+use crate::git::stash::{
+    list_stashes, stash_apply as git_stash_apply, stash_drop as git_stash_drop,
+    stash_pop as git_stash_pop, stash_push as git_stash_push,
+};
 use crate::git::status::query_repo_status;
 use crate::persist::{PersistedState, StatePersistence};
 use crate::state::*;
@@ -891,8 +895,11 @@ pub async fn branch_list(
 pub async fn checkout(
     state: State<'_, AppState>,
     id: String,
-    branch: String,
-) -> Result<(), AppError> {
+    target: String,
+    dirty_action: Option<String>,
+    stash_message: Option<String>,
+    include_untracked: Option<bool>,
+) -> Result<CheckoutResult, AppError> {
     let repo_path = {
         let data = state.data.lock().await;
         let entry = data
@@ -903,7 +910,88 @@ pub async fn checkout(
         PathBuf::from(&entry.path)
     };
 
-    checkout_branch(&state.runner, &repo_path, &branch).await
+    let target = target.trim().to_string();
+    if target.is_empty() {
+        return Err(AppError::other("No branch or commit specified to check out"));
+    }
+
+    checkout_target(
+        &state.runner,
+        &repo_path,
+        &target,
+        dirty_action.as_deref(),
+        stash_message.as_deref(),
+        include_untracked.unwrap_or(false),
+    )
+    .await
+}
+
+// ---------------- Stash Commands ----------------
+
+async fn repo_path_for(state: &State<'_, AppState>, id: &str) -> Result<PathBuf, AppError> {
+    let data = state.data.lock().await;
+    let entry = data
+        .repos
+        .iter()
+        .find(|r| r.id == id)
+        .ok_or_else(|| AppError::not_found("Repository not found"))?;
+    Ok(PathBuf::from(&entry.path))
+}
+
+#[tauri::command]
+pub async fn stash_list(
+    state: State<'_, AppState>,
+    id: String,
+) -> Result<Vec<StashEntry>, AppError> {
+    let repo_path = repo_path_for(&state, &id).await?;
+    list_stashes(&state.runner, &repo_path).await
+}
+
+#[tauri::command]
+pub async fn stash_push(
+    state: State<'_, AppState>,
+    id: String,
+    message: Option<String>,
+    include_untracked: Option<bool>,
+) -> Result<StashPushResult, AppError> {
+    let repo_path = repo_path_for(&state, &id).await?;
+    git_stash_push(
+        &state.runner,
+        &repo_path,
+        message.as_deref(),
+        include_untracked.unwrap_or(false),
+    )
+    .await
+}
+
+#[tauri::command]
+pub async fn stash_pop(
+    state: State<'_, AppState>,
+    id: String,
+    index: u32,
+) -> Result<(), AppError> {
+    let repo_path = repo_path_for(&state, &id).await?;
+    git_stash_pop(&state.runner, &repo_path, index).await
+}
+
+#[tauri::command]
+pub async fn stash_apply(
+    state: State<'_, AppState>,
+    id: String,
+    index: u32,
+) -> Result<(), AppError> {
+    let repo_path = repo_path_for(&state, &id).await?;
+    git_stash_apply(&state.runner, &repo_path, index).await
+}
+
+#[tauri::command]
+pub async fn stash_drop(
+    state: State<'_, AppState>,
+    id: String,
+    index: u32,
+) -> Result<(), AppError> {
+    let repo_path = repo_path_for(&state, &id).await?;
+    git_stash_drop(&state.runner, &repo_path, index).await
 }
 
 #[tauri::command]

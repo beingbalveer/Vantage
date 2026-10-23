@@ -27,6 +27,7 @@
     openDialog,
     addRepoInitialTab,
     openSettingsAt,
+    stashDialogOpen,
   } from "../../stores/ui";
   import type { Layout, CommitSummary } from "../../types";
   import * as api from "../../api";
@@ -441,6 +442,14 @@
         action: () => {
           $paletteOpen = false;
           openSettingsAt("recovery");
+        },
+      },
+      {
+        id: "cmd_stashes",
+        title: "Stashes…",
+        action: () => {
+          $paletteOpen = false;
+          $stashDialogOpen = true;
         },
       },
       {

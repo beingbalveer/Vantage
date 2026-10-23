@@ -5,11 +5,13 @@ import type {
   BlameInfo,
   BlobTextResult,
   BranchInfo,
+  CheckoutResult,
   CommitMsgResult,
   CommitSummary,
   DefHit,
   DiffFile,
   DiffScope,
+  DirtyAction,
   EnvInfo,
   FileChange,
   HistoryPage,
@@ -18,6 +20,8 @@ import type {
   RepoStatus,
   RepoStackInfo,
   Settings,
+  StashEntry,
+  StashPushResult,
   TriageFlag,
 } from "./types";
 
@@ -232,8 +236,38 @@ export async function branchList(id: string): Promise<BranchInfo[]> {
   return invoke("branch_list", { id });
 }
 
-export async function checkout(id: string, branch: string): Promise<void> {
-  return invoke("checkout", { id, branch });
+export async function checkout(
+  id: string,
+  target: string,
+  dirtyAction?: DirtyAction,
+  stashMessage?: string,
+  includeUntracked?: boolean
+): Promise<CheckoutResult> {
+  return invoke("checkout", { id, target, dirtyAction, stashMessage, includeUntracked });
+}
+
+export async function stashList(id: string): Promise<StashEntry[]> {
+  return invoke("stash_list", { id });
+}
+
+export async function stashPush(
+  id: string,
+  message?: string,
+  includeUntracked?: boolean
+): Promise<StashPushResult> {
+  return invoke("stash_push", { id, message, includeUntracked });
+}
+
+export async function stashPop(id: string, index: number): Promise<void> {
+  return invoke("stash_pop", { id, index });
+}
+
+export async function stashApply(id: string, index: number): Promise<void> {
+  return invoke("stash_apply", { id, index });
+}
+
+export async function stashDrop(id: string, index: number): Promise<void> {
+  return invoke("stash_drop", { id, index });
 }
 
 export async function branchCreate(

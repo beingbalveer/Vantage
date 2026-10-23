@@ -6,4 +6,5 @@ pub mod log;
 pub mod ops;
 pub mod refs;
 pub mod runner;
+pub mod stash;
 pub mod status;

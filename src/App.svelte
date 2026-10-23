@@ -27,6 +27,8 @@
   import RevertDialog from "./lib/components/Dialogs/RevertDialog.svelte";
   import ResetDialog from "./lib/components/Dialogs/ResetDialog.svelte";
   import DiscardDialog from "./lib/components/Dialogs/DiscardDialog.svelte";
+  import StashDialog from "./lib/components/Dialogs/StashDialog.svelte";
+  import CheckoutDialog from "./lib/components/Dialogs/CheckoutDialog.svelte";
   import RepoIconDialog from "./lib/components/Dialogs/RepoIconDialog.svelte";
   import RemoveRepoDialog from "./lib/components/Dialogs/RemoveRepoDialog.svelte";
   import CreateBranchDialog from "./lib/components/Dialogs/CreateBranchDialog.svelte";
@@ -223,6 +225,8 @@
   <RevertDialog />
   <ResetDialog />
   <DiscardDialog />
+  <StashDialog />
+  <CheckoutDialog />
   <RepoIconDialog />
   <RemoveRepoDialog />
   <CreateBranchDialog />
