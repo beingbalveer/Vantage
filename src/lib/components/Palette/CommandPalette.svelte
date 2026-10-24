@@ -152,7 +152,6 @@
         },
       },
       {
-      {
         id: "cmd_amend_last_commit",
         title: "Amend last commit…",
         action: () => {
@@ -180,6 +179,7 @@
           }
         },
       },
+      {
         id: "cmd_switch_tab",
         title: "Switch tab (History / Files)",
         shortcut: "t",
