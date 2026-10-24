@@ -18,7 +18,18 @@
   import { SHORTCUTS, formatKey } from "../../keys";
   import { fuzzyScore } from "../../fuzzy";
   import { formatRelativeTime } from "../../format";
-  import { addRepoDialogOpen, settingsOpen, shortcutsHelpOpen, addToast, sidebarCollapsed, openDialog, composerRequest } from "../../stores/ui";
+  import {
+    addRepoDialogOpen,
+    settingsOpen,
+    shortcutsHelpOpen,
+    addToast,
+    sidebarCollapsed,
+    openDialog,
+    addRepoInitialTab,
+    openSettingsAt,
+    stashDialogOpen,
+    composerRequest,
+  } from "../../stores/ui";
   import type { Layout, CommitSummary } from "../../types";
   import * as api from "../../api";
   import { runUndoLastCommit } from "../../undoCommit";
@@ -115,6 +126,15 @@
         },
       },
       {
+        id: "cmd_clone_repo",
+        title: "Clone repository…",
+        action: () => {
+          $paletteOpen = false;
+          addRepoInitialTab.set("clone");
+          $addRepoDialogOpen = true;
+        },
+      },
+      {
         id: "cmd_browse_repo",
         title: "Browse and add repository…",
         action: async () => {
@@ -132,24 +152,6 @@
         },
       },
       {
-        id: "cmd_mark_reviewed",
-        title: "Mark as reviewed",
-        shortcut: "r",
-        action: async () => {
-          $paletteOpen = false;
-          if (!focusedRepoId) {
-            addToast({ message: "No focused repository to mark reviewed", kind: "info" });
-            return;
-          }
-          try {
-            await api.markerSetToHead(focusedRepoId);
-            addToast({ message: "Marked as reviewed", kind: "success" });
-            await refreshSingleStatus(focusedRepoId);
-          } catch (e: any) {
-            addToast({ message: e.message || "Failed to mark as reviewed", kind: "error" });
-          }
-        },
-      },
       {
         id: "cmd_amend_last_commit",
         title: "Amend last commit…",
@@ -178,7 +180,6 @@
           }
         },
       },
-      {
         id: "cmd_switch_tab",
         title: "Switch tab (History / Files)",
         shortcut: "t",
@@ -462,7 +463,7 @@
         shortcut: "Mod+,",
         action: () => {
           $paletteOpen = false;
-          $settingsOpen = true;
+          openSettingsAt("general");
         },
       },
       {
@@ -470,7 +471,15 @@
         title: "Recovery (Backups)",
         action: () => {
           $paletteOpen = false;
-          $settingsOpen = true;
+          openSettingsAt("recovery");
+        },
+      },
+      {
+        id: "cmd_stashes",
+        title: "Stashes…",
+        action: () => {
+          $paletteOpen = false;
+          $stashDialogOpen = true;
         },
       },
       {
@@ -480,6 +489,38 @@
         action: () => {
           $paletteOpen = false;
           $shortcutsHelpOpen = true;
+        },
+      },
+      {
+        id: "cmd_new_branch",
+        title: "New branch…",
+        action: () => {
+          $paletteOpen = false;
+          if (!focusedRepoId) {
+            addToast({ message: "No repository selected to create a branch in", kind: "info" });
+            return;
+          }
+          openDialog({
+            type: "branch_create",
+            repoId: focusedRepoId,
+            data: { startPoint: "HEAD" },
+          });
+        },
+      },
+      {
+        id: "cmd_rename_branch",
+        title: "Rename current branch…",
+        action: () => {
+          $paletteOpen = false;
+          if (!focusedRepo) {
+            addToast({ message: "No repository selected", kind: "info" });
+            return;
+          }
+          openDialog({
+            type: "branch_rename",
+            repoId: focusedRepo.id,
+            data: { from: focusedRepo.branch || undefined },
+          });
         },
       },
       {

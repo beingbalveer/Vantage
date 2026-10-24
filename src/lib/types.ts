@@ -50,6 +50,12 @@ export interface CommitSummary {
   isNew: boolean;
 }
 
+export interface HistoryPage {
+  commits: CommitSummary[];
+  total: number;
+  capped: boolean;
+}
+
 export type FileStatus =
   | "added"
   | "modified"
@@ -177,6 +183,24 @@ export interface BranchInfo {
   upstream: string | null;
   isHead: boolean;
 }
+
+export interface StashEntry {
+  index: number;
+  sha: string;
+  subject: string;
+  date: string; // ISO-8601
+}
+
+export interface StashPushResult {
+  stashed: boolean;
+  entry: StashEntry | null;
+}
+
+export interface CheckoutResult {
+  stash: StashEntry | null;
+}
+
+export type DirtyAction = "leave" | "bring" | "stash";
 
 export interface BackupInfo {
   ref: string;

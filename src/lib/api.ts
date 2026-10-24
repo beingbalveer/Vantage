@@ -5,19 +5,24 @@ import type {
   BlameInfo,
   BlobTextResult,
   BranchInfo,
+  CheckoutResult,
   CommitMsgResult,
   CommitSummary,
   DefHit,
   DiffFile,
   DiffScope,
+  DirtyAction,
   EnvInfo,
   FileChange,
   HeadCommitInfo,
+  HistoryPage,
   Layout,
   RepoEntry,
   RepoStatus,
   RepoStackInfo,
   Settings,
+  StashEntry,
+  StashPushResult,
   TriageFlag,
   UndoCommitResult,
 } from "./types";
@@ -33,6 +38,22 @@ export async function repoAdd(
 
 export async function pickDirectory(): Promise<string | null> {
   return invoke("pick_directory");
+}
+
+export async function repoClone(
+  cloneId: string,
+  url: string,
+  destParent: string,
+  name?: string,
+  branch?: string
+): Promise<RepoEntry> {
+  return invoke("repo_clone", {
+    cloneId,
+    url,
+    destParent,
+    name: name || undefined,
+    branch: branch || undefined,
+  });
 }
 
 export async function repoScan(path: string, depth?: number): Promise<string[]> {
@@ -80,6 +101,9 @@ export async function markerSet(id: string, sha: string): Promise<void> {
 }
 
 export async function markerSetToHead(id: string): Promise<void> {
+  // NOTE: not used by the review flow. "Mark reviewed" must target the captured
+  // snapshot end (see stores/review.ts); calling this at click time marks
+  // commits that arrived mid-review as reviewed (ALPH-146).
   return invoke("marker_set_to_head", { id });
 }
 
@@ -91,6 +115,15 @@ export async function logPage(
   query?: string
 ): Promise<CommitSummary[]> {
   return invoke("log_page", { id, skip, limit, query });
+}
+
+export async function historyPage(
+  id: string,
+  skip: number,
+  limit: number,
+  query?: string
+): Promise<HistoryPage> {
+  return invoke("history_page", { id, skip, limit, query });
 }
 
 export async function commitFlags(
@@ -222,8 +255,59 @@ export async function branchList(id: string): Promise<BranchInfo[]> {
   return invoke("branch_list", { id });
 }
 
-export async function checkout(id: string, branch: string): Promise<void> {
-  return invoke("checkout", { id, branch });
+export async function checkout(
+  id: string,
+  target: string,
+  dirtyAction?: DirtyAction,
+  stashMessage?: string,
+  includeUntracked?: boolean
+): Promise<CheckoutResult> {
+  return invoke("checkout", { id, target, dirtyAction, stashMessage, includeUntracked });
+}
+
+export async function stashList(id: string): Promise<StashEntry[]> {
+  return invoke("stash_list", { id });
+}
+
+export async function stashPush(
+  id: string,
+  message?: string,
+  includeUntracked?: boolean
+): Promise<StashPushResult> {
+  return invoke("stash_push", { id, message, includeUntracked });
+}
+
+export async function stashPop(id: string, index: number): Promise<void> {
+  return invoke("stash_pop", { id, index });
+}
+
+export async function stashApply(id: string, index: number): Promise<void> {
+  return invoke("stash_apply", { id, index });
+}
+
+export async function stashDrop(id: string, index: number): Promise<void> {
+  return invoke("stash_drop", { id, index });
+}
+
+export async function branchCreate(
+  id: string,
+  name: string,
+  startPoint?: string | null,
+  checkout = false
+): Promise<void> {
+  return invoke("branch_create", { id, name, startPoint: startPoint || undefined, checkout });
+}
+
+export async function branchRename(id: string, from: string | null, to: string): Promise<void> {
+  return invoke("branch_rename", { id, from: from || undefined, to });
+}
+
+export async function branchDelete(id: string, name: string, force = false): Promise<void> {
+  return invoke("branch_delete", { id, name, force });
+}
+
+export async function branchIsMerged(id: string, name: string): Promise<boolean> {
+  return invoke("branch_is_merged", { id, name });
 }
 
 export async function syncFetch(id: string): Promise<void> {
@@ -340,4 +424,17 @@ export function onTermExit(
   cb: (payload: { repoId: string }) => void
 ): Promise<UnlistenFn> {
   return listen<{ repoId: string }>("term://exit", (event) => cb(event.payload));
+}
+
+export interface CloneProgressPayload {
+  cloneId: string;
+  line: string;
+}
+
+export function onCloneProgress(
+  cb: (payload: CloneProgressPayload) => void
+): Promise<UnlistenFn> {
+  return listen<CloneProgressPayload>("repo://clone-progress", (event) =>
+    cb(event.payload)
+  );
 }
