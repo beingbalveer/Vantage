@@ -1238,14 +1238,10 @@ pub async fn restore_backup(
         if !out.success() {
             return Err(AppError::other(out.stderr));
         }
-    } else if backup_ref.contains("reset") {
-        let out = runner
-            .run_write(repo_path, &["reset", "--hard", backup_ref], 30)
-            .await?;
-        if !out.success() {
-            return Err(AppError::other(out.stderr));
-        }
-    } else if backup_ref.contains("amend") || backup_ref.contains("undo") {
+    } else if backup_ref.contains("reset")
+        || backup_ref.contains("amend")
+        || backup_ref.contains("undo")
+    {
         let out = runner
             .run_write(repo_path, &["reset", "--hard", backup_ref], 30)
             .await?;
@@ -1762,7 +1758,10 @@ mod tests {
 
         // Cherry-pick takes precedence over revert ordering.
         fs::write(base.join("CHERRY_PICK_HEAD"), "abc\n").unwrap();
-        assert_eq!(operation_in_progress(&base), Some("cherry-pick".to_string()));
+        assert_eq!(
+            operation_in_progress(&base),
+            Some("cherry-pick".to_string())
+        );
 
         let _ = fs::remove_dir_all(&base);
     }
@@ -1983,10 +1982,7 @@ mod tests {
 
         let root_err = undo_last_commit(&runner, &repo.path).await;
         assert!(root_err.is_err(), "must refuse to undo the initial commit");
-        assert!(root_err
-            .unwrap_err()
-            .message
-            .contains("initial commit"));
+        assert!(root_err.unwrap_err().message.contains("initial commit"));
     }
 
     #[tokio::test]
@@ -2016,6 +2012,10 @@ mod tests {
             .await
             .unwrap()
             .stdout_string();
-        assert!(status.trim().is_empty(), "index must stay clean: {}", status);
+        assert!(
+            status.trim().is_empty(),
+            "index must stay clean: {}",
+            status
+        );
     }
 }

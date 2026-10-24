@@ -7,8 +7,8 @@ use crate::git::ops::{
     amend_commit as git_amend_commit, check_pushed as git_check_pushed, commit as git_commit,
     discard as git_discard, head_commit_info as git_head_commit_info, list_backups,
     reset_to as git_reset_to, restore_backup, revert as git_revert,
-    revert_range as git_revert_range, undo_last_commit as git_undo_last_commit,
-    HeadCommitInfo, UndoCommitResult,
+    revert_range as git_revert_range, undo_last_commit as git_undo_last_commit, HeadCommitInfo,
+    UndoCommitResult,
 };
 use crate::git::refs::{
     checkout_target, create_branch, delete_branch, get_remote_url, is_branch_merged, list_branches,

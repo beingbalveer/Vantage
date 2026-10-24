@@ -255,7 +255,6 @@
     if (!req) return;
     if (repo && req.repoId === repo.id) {
       isUncommittedSelected = true;
-      isRangeSelected = false;
       selectedCommitSha = null;
       currentScope = { type: "working" };
       commitMode = true;
