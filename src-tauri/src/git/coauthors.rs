@@ -107,7 +107,8 @@ fn email_of_entry(entry: &str) -> Option<String> {
 /// Extract the lowercased email from an existing `Co-authored-by:` trailer line.
 fn trailer_email(line: &str) -> Option<String> {
     let rest = line.trim();
-    if rest.len() < TRAILER_KEY.len() || !rest[..TRAILER_KEY.len()].eq_ignore_ascii_case(TRAILER_KEY)
+    if rest.len() < TRAILER_KEY.len()
+        || !rest[..TRAILER_KEY.len()].eq_ignore_ascii_case(TRAILER_KEY)
     {
         return None;
     }
@@ -125,10 +126,7 @@ fn trailer_email(line: &str) -> Option<String> {
 /// Idempotent with respect to `message`: any entry whose email already appears
 /// in a `Co-authored-by:` trailer (case-insensitively) is skipped, as are
 /// duplicates within `co_authors` itself. Invalid entries are rejected.
-pub fn pending_co_authors(
-    message: &str,
-    co_authors: &[String],
-) -> Result<Vec<String>, AppError> {
+pub fn pending_co_authors(message: &str, co_authors: &[String]) -> Result<Vec<String>, AppError> {
     let mut seen: HashSet<String> = message.lines().filter_map(trailer_email).collect();
     let mut pending = Vec::new();
     for raw in co_authors {
@@ -242,7 +240,9 @@ mod tests {
     #[test]
     fn validate_rejects_injection_attempts() {
         // Newline would let the caller smuggle an extra header/trailer.
-        assert!(validate_co_author("Jane <jane@example.com>\nSigned-off-by: Evil <e@e.com>").is_err());
+        assert!(
+            validate_co_author("Jane <jane@example.com>\nSigned-off-by: Evil <e@e.com>").is_err()
+        );
         // Trailing text after the closing angle bracket (looks like a flag).
         assert!(validate_co_author("Jane <jane@example.com> --author=evil").is_err());
         assert!(validate_co_author("Jane <jane@example.com> -m extra").is_err());
@@ -291,7 +291,9 @@ mod tests {
             "Jane Doe <jane@example.com>".to_string(),
             "Jane Doe <JANE@example.com>".to_string(),
         ];
-        let block = co_author_trailer_block("add feature", &co).unwrap().unwrap();
+        let block = co_author_trailer_block("add feature", &co)
+            .unwrap()
+            .unwrap();
         assert_eq!(block, "Co-authored-by: Jane Doe <jane@example.com>");
     }
 

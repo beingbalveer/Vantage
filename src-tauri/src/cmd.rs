@@ -1,8 +1,6 @@
 use crate::error::AppError;
 use crate::git::blob::{get_blob_lines, get_blob_text, get_tree_list, BlobTextResult};
-use crate::git::coauthors::{
-    recent_contributors as git_recent_contributors, Contributor,
-};
+use crate::git::coauthors::{recent_contributors as git_recent_contributors, Contributor};
 use crate::git::diff::{get_scope_file_diff, get_scope_files};
 use crate::git::grep::{blame_line as git_blame_line, grep_definitions};
 use crate::git::log::{get_history_page, get_log_page};
