@@ -5,17 +5,24 @@ use crate::git::coauthors::{
 };
 use crate::git::diff::{get_scope_file_diff, get_scope_files};
 use crate::git::grep::{blame_line as git_blame_line, grep_definitions};
-use crate::git::log::get_log_page;
+use crate::git::log::{get_history_page, get_log_page};
 use crate::git::ops::{
-    check_pushed as git_check_pushed, commit as git_commit, discard as git_discard, list_backups,
+    amend_commit as git_amend_commit, check_pushed as git_check_pushed, commit as git_commit,
+    discard as git_discard, head_commit_info as git_head_commit_info, list_backups,
     reset_to as git_reset_to, restore_backup, revert as git_revert,
-    revert_range as git_revert_range,
+    revert_range as git_revert_range, undo_last_commit as git_undo_last_commit, HeadCommitInfo,
+    UndoCommitResult,
 };
 use crate::git::refs::{
-    checkout_branch, get_remote_url, list_branches, sync_fetch as git_sync_fetch,
-    sync_pull as git_sync_pull, sync_push as git_sync_push,
+    checkout_target, create_branch, delete_branch, get_remote_url, is_branch_merged, list_branches,
+    rename_branch, sync_fetch as git_sync_fetch, sync_pull as git_sync_pull,
+    sync_push as git_sync_push,
 };
 use crate::git::runner::GitRunner;
+use crate::git::stash::{
+    list_stashes, stash_apply as git_stash_apply, stash_drop as git_stash_drop,
+    stash_pop as git_stash_pop, stash_push as git_stash_push,
+};
 use crate::git::status::query_repo_status;
 use crate::persist::{PersistedState, StatePersistence};
 use crate::state::*;
@@ -58,10 +65,13 @@ impl AppState {
 
 // ---------------- Repo Commands ----------------
 
-#[tauri::command]
-pub async fn repo_add(
-    state: State<'_, AppState>,
-    app_handle: AppHandle,
+/// Register a directory that is already on disk as a repo: verify it is a git
+/// work tree, canonicalize it, set the initial reviewed marker, persist, and
+/// start watching. Shared by "add existing", scan, and clone so the semantics
+/// stay identical.
+async fn register_repo(
+    state: &AppState,
+    app_handle: &AppHandle,
     path: String,
     branch: Option<String>,
     unreviewed_last_n: Option<u32>,
@@ -168,7 +178,7 @@ pub async fn repo_add(
     state
         .watcher_mgr
         .watch_repo(
-            app_handle,
+            app_handle.clone(),
             repo_id,
             top_canon,
             target_branch,
@@ -178,6 +188,43 @@ pub async fn repo_add(
         .await;
 
     Ok(entry)
+}
+
+#[tauri::command]
+pub async fn repo_add(
+    state: State<'_, AppState>,
+    app_handle: AppHandle,
+    path: String,
+    branch: Option<String>,
+    unreviewed_last_n: Option<u32>,
+) -> Result<RepoEntry, AppError> {
+    register_repo(state.inner(), &app_handle, path, branch, unreviewed_last_n).await
+}
+
+#[tauri::command]
+pub async fn repo_clone(
+    state: State<'_, AppState>,
+    app_handle: AppHandle,
+    clone_id: String,
+    url: String,
+    dest_parent: String,
+    name: Option<String>,
+    branch: Option<String>,
+) -> Result<RepoEntry, AppError> {
+    // Clone into the chosen destination, then register through the same path as
+    // "add existing" so marker/watch/duplicate semantics are identical.
+    let final_path = crate::git::clone::clone_repo(
+        &state.runner,
+        &app_handle,
+        &clone_id,
+        &url,
+        &dest_parent,
+        name.as_deref(),
+        branch.as_deref(),
+    )
+    .await?;
+
+    register_repo(state.inner(), &app_handle, final_path, branch, None).await
 }
 
 #[tauri::command]
@@ -415,6 +462,41 @@ pub async fn log_page(
     };
 
     get_log_page(
+        &state.runner,
+        &repo_path,
+        target_branch.as_deref(),
+        skip,
+        limit,
+        query.as_deref(),
+        marker_sha.as_deref(),
+    )
+    .await
+}
+
+/// Paged history with a total count and an optional message/author/path filter.
+#[tauri::command]
+pub async fn history_page(
+    state: State<'_, AppState>,
+    id: String,
+    skip: u32,
+    limit: u32,
+    query: Option<String>,
+) -> Result<HistoryPage, AppError> {
+    let (repo_path, marker_sha, target_branch) = {
+        let data = state.data.lock().await;
+        let entry = data
+            .repos
+            .iter()
+            .find(|r| r.id == id)
+            .ok_or_else(|| AppError::not_found("Repository not found"))?;
+        (
+            PathBuf::from(&entry.path),
+            entry.marker.as_ref().map(|m| m.sha.clone()),
+            entry.branch.clone(),
+        )
+    };
+
+    get_history_page(
         &state.runner,
         &repo_path,
         target_branch.as_deref(),
@@ -706,6 +788,65 @@ pub async fn recent_contributors(
 }
 
 #[tauri::command]
+pub async fn head_commit_info(
+    state: State<'_, AppState>,
+    id: String,
+) -> Result<HeadCommitInfo, AppError> {
+    let repo_path = {
+        let data = state.data.lock().await;
+        let entry = data
+            .repos
+            .iter()
+            .find(|r| r.id == id)
+            .ok_or_else(|| AppError::not_found("Repository not found"))?;
+        PathBuf::from(&entry.path)
+    };
+
+    git_head_commit_info(&state.runner, &repo_path).await
+}
+
+#[tauri::command]
+pub async fn amend_commit(
+    state: State<'_, AppState>,
+    id: String,
+    paths: Vec<String>,
+    summary: String,
+    body: Option<String>,
+) -> Result<CommitSummary, AppError> {
+    let (repo_path, branch) = {
+        let data = state.data.lock().await;
+        let entry = data
+            .repos
+            .iter()
+            .find(|r| r.id == id)
+            .ok_or_else(|| AppError::not_found("Repository not found"))?;
+        (PathBuf::from(&entry.path), entry.branch.clone())
+    };
+
+    verify_branch_checked_out(&state.runner, &repo_path, branch.as_deref()).await?;
+    git_amend_commit(&state.runner, &repo_path, &paths, &summary, body.as_deref()).await
+}
+
+#[tauri::command]
+pub async fn undo_last_commit(
+    state: State<'_, AppState>,
+    id: String,
+) -> Result<UndoCommitResult, AppError> {
+    let (repo_path, branch) = {
+        let data = state.data.lock().await;
+        let entry = data
+            .repos
+            .iter()
+            .find(|r| r.id == id)
+            .ok_or_else(|| AppError::not_found("Repository not found"))?;
+        (PathBuf::from(&entry.path), entry.branch.clone())
+    };
+
+    verify_branch_checked_out(&state.runner, &repo_path, branch.as_deref()).await?;
+    git_undo_last_commit(&state.runner, &repo_path).await
+}
+
+#[tauri::command]
 pub async fn discard(
     state: State<'_, AppState>,
     id: String,
@@ -846,7 +987,110 @@ pub async fn branch_list(
 pub async fn checkout(
     state: State<'_, AppState>,
     id: String,
-    branch: String,
+    target: String,
+    dirty_action: Option<String>,
+    stash_message: Option<String>,
+    include_untracked: Option<bool>,
+) -> Result<CheckoutResult, AppError> {
+    let repo_path = {
+        let data = state.data.lock().await;
+        let entry = data
+            .repos
+            .iter()
+            .find(|r| r.id == id)
+            .ok_or_else(|| AppError::not_found("Repository not found"))?;
+        PathBuf::from(&entry.path)
+    };
+
+    let target = target.trim().to_string();
+    if target.is_empty() {
+        return Err(AppError::other(
+            "No branch or commit specified to check out",
+        ));
+    }
+
+    checkout_target(
+        &state.runner,
+        &repo_path,
+        &target,
+        dirty_action.as_deref(),
+        stash_message.as_deref(),
+        include_untracked.unwrap_or(false),
+    )
+    .await
+}
+
+// ---------------- Stash Commands ----------------
+
+async fn repo_path_for(state: &State<'_, AppState>, id: &str) -> Result<PathBuf, AppError> {
+    let data = state.data.lock().await;
+    let entry = data
+        .repos
+        .iter()
+        .find(|r| r.id == id)
+        .ok_or_else(|| AppError::not_found("Repository not found"))?;
+    Ok(PathBuf::from(&entry.path))
+}
+
+#[tauri::command]
+pub async fn stash_list(
+    state: State<'_, AppState>,
+    id: String,
+) -> Result<Vec<StashEntry>, AppError> {
+    let repo_path = repo_path_for(&state, &id).await?;
+    list_stashes(&state.runner, &repo_path).await
+}
+
+#[tauri::command]
+pub async fn stash_push(
+    state: State<'_, AppState>,
+    id: String,
+    message: Option<String>,
+    include_untracked: Option<bool>,
+) -> Result<StashPushResult, AppError> {
+    let repo_path = repo_path_for(&state, &id).await?;
+    git_stash_push(
+        &state.runner,
+        &repo_path,
+        message.as_deref(),
+        include_untracked.unwrap_or(false),
+    )
+    .await
+}
+
+#[tauri::command]
+pub async fn stash_pop(state: State<'_, AppState>, id: String, index: u32) -> Result<(), AppError> {
+    let repo_path = repo_path_for(&state, &id).await?;
+    git_stash_pop(&state.runner, &repo_path, index).await
+}
+
+#[tauri::command]
+pub async fn stash_apply(
+    state: State<'_, AppState>,
+    id: String,
+    index: u32,
+) -> Result<(), AppError> {
+    let repo_path = repo_path_for(&state, &id).await?;
+    git_stash_apply(&state.runner, &repo_path, index).await
+}
+
+#[tauri::command]
+pub async fn stash_drop(
+    state: State<'_, AppState>,
+    id: String,
+    index: u32,
+) -> Result<(), AppError> {
+    let repo_path = repo_path_for(&state, &id).await?;
+    git_stash_drop(&state.runner, &repo_path, index).await
+}
+
+#[tauri::command]
+pub async fn branch_create(
+    state: State<'_, AppState>,
+    id: String,
+    name: String,
+    start_point: Option<String>,
+    checkout: bool,
 ) -> Result<(), AppError> {
     let repo_path = {
         let data = state.data.lock().await;
@@ -858,7 +1102,73 @@ pub async fn checkout(
         PathBuf::from(&entry.path)
     };
 
-    checkout_branch(&state.runner, &repo_path, &branch).await
+    create_branch(
+        &state.runner,
+        &repo_path,
+        &name,
+        start_point.as_deref(),
+        checkout,
+    )
+    .await
+}
+
+#[tauri::command]
+pub async fn branch_rename(
+    state: State<'_, AppState>,
+    id: String,
+    from: Option<String>,
+    to: String,
+) -> Result<(), AppError> {
+    let repo_path = {
+        let data = state.data.lock().await;
+        let entry = data
+            .repos
+            .iter()
+            .find(|r| r.id == id)
+            .ok_or_else(|| AppError::not_found("Repository not found"))?;
+        PathBuf::from(&entry.path)
+    };
+
+    rename_branch(&state.runner, &repo_path, from.as_deref(), &to).await
+}
+
+#[tauri::command]
+pub async fn branch_delete(
+    state: State<'_, AppState>,
+    id: String,
+    name: String,
+    force: bool,
+) -> Result<(), AppError> {
+    let repo_path = {
+        let data = state.data.lock().await;
+        let entry = data
+            .repos
+            .iter()
+            .find(|r| r.id == id)
+            .ok_or_else(|| AppError::not_found("Repository not found"))?;
+        PathBuf::from(&entry.path)
+    };
+
+    delete_branch(&state.runner, &repo_path, &name, force).await
+}
+
+#[tauri::command]
+pub async fn branch_is_merged(
+    state: State<'_, AppState>,
+    id: String,
+    name: String,
+) -> Result<bool, AppError> {
+    let repo_path = {
+        let data = state.data.lock().await;
+        let entry = data
+            .repos
+            .iter()
+            .find(|r| r.id == id)
+            .ok_or_else(|| AppError::not_found("Repository not found"))?;
+        PathBuf::from(&entry.path)
+    };
+
+    is_branch_merged(&state.runner, &repo_path, &name).await
 }
 
 #[tauri::command]

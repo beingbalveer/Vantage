@@ -1,8 +1,8 @@
 <script lang="ts">
   import type { CommitSummary } from "../../types";
   import * as api from "../../api";
-  import { activeDialog, closeDialog, addToast } from "../../stores/ui";
-  import { statuses, refreshSingleStatus, loadRepos } from "../../stores/repos";
+  import { activeDialog, closeDialog, addToast, recoveryToastLink } from "../../stores/ui";
+  import { statuses, refreshSingleStatus, loadRepos, repos } from "../../stores/repos";
   import { formatRelativeTime, formatFullTimestamp } from "../../format";
   import { Modal, Button } from "../common";
 
@@ -54,6 +54,12 @@
   let isReverting = $state(false);
   let errorMessage = $state<string | null>(null);
 
+  // The confirmation must name the repository and branch it will act on.
+  let repoEntry = $derived($repos.find((r) => r.id === currentRepoId) || null);
+  let branchLabel = $derived(
+    $statuses[currentRepoId]?.branch || repoEntry?.branch || "HEAD"
+  );
+
   // Check dirty state
   let isDirty = $derived.by(() => {
     if (!currentRepoId) return false;
@@ -87,8 +93,9 @@
       const res = await api.revert(currentRepoId, currentSha);
       const shortSha = res.short || currentSha.slice(0, 7);
       addToast({
-        message: `Created revert commit ${shortSha}`,
+        message: `Created revert commit ${shortSha} on ${branchLabel}. Revert it again to undo.`,
         kind: "success",
+        ...recoveryToastLink(currentRepoId),
       });
 
       await refreshSingleStatus(currentRepoId);
@@ -122,6 +129,14 @@
       <p class="text-base text-muted">
         This will create a new commit that inverts the changes made in the selected commit.
       </p>
+
+      <!-- Target context: which repo + branch this affects -->
+      <div class="target-context text-xs">
+        <span class="text-muted">Target:</span>
+        <span class="target-name text-strong">{repoEntry?.name || "repository"}</span>
+        <span class="text-muted">on</span>
+        <span class="target-branch font-mono text-strong">{branchLabel}</span>
+      </div>
 
       <!-- Commit Preview Box -->
       <div class="commit-preview">
@@ -203,6 +218,24 @@
     display: flex;
     flex-direction: column;
     gap: 6px;
+  }
+
+  .target-context {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    flex-wrap: wrap;
+    padding: 7px 10px;
+    background-color: var(--bg-subtle);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--r-md);
+  }
+
+  .target-branch {
+    background-color: var(--bg);
+    padding: 1px 5px;
+    border-radius: var(--r-sm);
+    border: 1px solid var(--border-subtle);
   }
 
   .commit-subject {

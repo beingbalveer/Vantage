@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { settingsOpen, addToast } from "../../stores/ui";
+  import { settingsOpen, addToast, settingsSection, settingsRecoveryRepoId } from "../../stores/ui";
   import { settings, updateSettings } from "../../stores/settings";
   import { repos, activeRepoId, refreshSingleStatus, loadRepos } from "../../stores/repos";
   import * as api from "../../api";
@@ -25,7 +25,17 @@
   let recoveryError = $state<string | null>(null);
 
   $effect(() => {
-    if (!selectedRepoId) {
+    // Reveal the section the caller asked for when the dialog opens.
+    if ($settingsOpen) {
+      activeSection = $settingsSection;
+    }
+  });
+
+  $effect(() => {
+    const preferred = $settingsRecoveryRepoId;
+    if (preferred && $repos.some((r) => r.id === preferred)) {
+      selectedRepoId = preferred;
+    } else if (!selectedRepoId) {
       if ($activeRepoId) {
         selectedRepoId = $activeRepoId;
       } else if ($repos.length > 0) {
@@ -91,7 +101,11 @@
     title="Settings"
     width="720px"
     bodyPadding={false}
-    onclose={() => ($settingsOpen = false)}
+    onclose={() => {
+      $settingsOpen = false;
+      $settingsSection = "general";
+      $settingsRecoveryRepoId = null;
+    }}
   >
     <div class="settings-layout">
       <!-- Left nav -->
@@ -249,7 +263,7 @@
           <div class="recovery-header">
             <h3 class="text-strong">Recovery & Backups</h3>
             <p class="text-sm text-muted">
-              Restore uncommitted changes or dropped commits from automatic backups saved during discard or reset operations. Backups are stored in <code>refs/vantage/backup/*</code> for 30 days.
+              Restore uncommitted changes or dropped commits from automatic backups saved during discard, reset, amend, or undo operations. Backups are stored in <code>refs/vantage/backup/*</code> for 30 days.
             </p>
           </div>
 
@@ -335,7 +349,7 @@
             <img src="/favicon.png" alt="Vantage" width="36" height="36" style="border-radius: 8px;" />
             <div>
               <h3 class="text-strong" style="margin: 0;">Vantage</h3>
-              <p class="text-xs text-muted" style="margin: 0;">v0.1.1</p>
+              <p class="text-xs text-muted" style="margin: 0;">v0.2.0</p>
             </div>
           </div>
           <p class="text-sm text-muted">A fast, local, multi-repo Git desktop client, read-only code viewer, and terminal workspace.</p>

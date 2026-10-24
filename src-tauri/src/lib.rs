@@ -44,9 +44,6 @@ pub fn run() {
                 for repo in repos {
                     let p = std::path::PathBuf::from(&repo.path);
                     if p.exists() {
-                        // Prune backup refs older than 30 days on startup
-                        crate::git::ops::prune_old_backups(&runner, &p).await;
-
                         // Actively watch repo immediately on startup
                         watcher_mgr
                             .watch_repo(
@@ -62,13 +59,32 @@ pub fn run() {
                 }
 
                 // Start status polling loop
-                watcher_mgr.start_poller(app_handle, runner, data_arc);
+                watcher_mgr.start_poller(app_handle, runner.clone(), data_arc.clone());
+
+                // Run backup pruning deferred in background after startup so we don't block
+                // or storm disk during launch.
+                let r_clone = runner.clone();
+                let data_clone = data_arc.clone();
+                tauri::async_runtime::spawn(async move {
+                    tokio::time::sleep(std::time::Duration::from_secs(15)).await;
+                    let repos = {
+                        let data = data_clone.lock().await;
+                        data.repos.clone()
+                    };
+                    for repo in repos {
+                        let p = std::path::PathBuf::from(&repo.path);
+                        if p.exists() {
+                            crate::git::ops::prune_old_backups(&r_clone, &p).await;
+                        }
+                    }
+                });
             });
 
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
             repo_add,
+            repo_clone,
             repo_scan,
             repo_remove,
             repo_update,
@@ -79,6 +95,7 @@ pub fn run() {
             marker_set,
             marker_set_to_head,
             log_page,
+            history_page,
             commit_flags,
             scope_files,
             scope_file_diff,
@@ -89,6 +106,9 @@ pub fn run() {
             grep_defs,
             commit,
             recent_contributors,
+            amend_commit,
+            undo_last_commit,
+            head_commit_info,
             discard,
             revert,
             revert_range,
@@ -98,6 +118,15 @@ pub fn run() {
             backup_restore,
             branch_list,
             checkout,
+            stash_list,
+            stash_push,
+            stash_pop,
+            stash_apply,
+            stash_drop,
+            branch_create,
+            branch_rename,
+            branch_delete,
+            branch_is_merged,
             sync_fetch,
             sync_pull,
             sync_push,

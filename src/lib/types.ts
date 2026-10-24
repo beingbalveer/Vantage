@@ -50,6 +50,12 @@ export interface CommitSummary {
   isNew: boolean;
 }
 
+export interface HistoryPage {
+  commits: CommitSummary[];
+  total: number;
+  capped: boolean;
+}
+
 export type FileStatus =
   | "added"
   | "modified"
@@ -178,6 +184,24 @@ export interface BranchInfo {
   isHead: boolean;
 }
 
+export interface StashEntry {
+  index: number;
+  sha: string;
+  subject: string;
+  date: string; // ISO-8601
+}
+
+export interface StashPushResult {
+  stashed: boolean;
+  entry: StashEntry | null;
+}
+
+export interface CheckoutResult {
+  stash: StashEntry | null;
+}
+
+export type DirtyAction = "leave" | "bring" | "stash";
+
 export interface BackupInfo {
   ref: string;
   createdAt: string;
@@ -209,6 +233,23 @@ export interface EnvInfo {
   gitVersion: string;
   shell: string;
   startupWarning?: string | null;
+}
+
+export interface HeadCommitInfo {
+  sha: string;
+  short: string;
+  subject: string;
+  body: string;
+  date: string;
+  isPushed: boolean;
+  hasParent: boolean;
+  operationInProgress: string | null;
+}
+
+export interface UndoCommitResult {
+  undone: CommitSummary;
+  backupRef: string;
+  message: string;
 }
 
 export interface CommitMsgResult {

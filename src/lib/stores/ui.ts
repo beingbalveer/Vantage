@@ -6,6 +6,9 @@ export interface ToastMessage {
   kind?: "info" | "error" | "success";
   actionLabel?: string;
   action?: () => void;
+  /** Optional secondary link rendered next to the action (e.g. "Recovery"). */
+  linkLabel?: string;
+  linkAction?: () => void;
   details?: string;
 }
 
@@ -19,7 +22,7 @@ export function addToast(toast: Omit<ToastMessage, "id">) {
 
   toasts.update((list) => [...list.slice(-2), newToast]); // max 3 stacked
 
-  const duration = toast.actionLabel || toast.details ? 8000 : 5000;
+  const duration = toast.actionLabel || toast.linkLabel || toast.details ? 8000 : 5000;
   const timerData = {
     timeoutId: setTimeout(() => {
       removeToast(id);
@@ -94,15 +97,105 @@ export const settingsOpen = writable<boolean>(false);
 export const shortcutsHelpOpen = writable<boolean>(false);
 export const addRepoDialogOpen = writable<boolean>(false);
 export const scanFolderDialogOpen = writable<boolean>(false);
+export const stashDialogOpen = writable<boolean>(false);
+
+// Dirty-tree branch switching: a single prompt that offers leave / bring / stash.
+export interface CheckoutRequest {
+  repoId: string;
+  repoName: string;
+  target: string;
+  dirtyCount: number;
+}
+
+export const checkoutRequest = writable<CheckoutRequest | null>(null);
+
+export function requestCheckout(request: CheckoutRequest) {
+  checkoutRequest.set(request);
+}
+
+export function clearCheckoutRequest() {
+  checkoutRequest.set(null);
+}
+
+// Which tab the Add-repository dialog should open on. Consumed once when the
+// dialog opens so the palette can deep-link straight to the clone form.
+export const addRepoInitialTab = writable<"existing" | "clone">("existing");
+
+// Which Settings section to reveal when the dialog opens, and which repo the
+// Recovery pane should pre-select. Reset on close so a plain "open settings"
+// always lands on General.
+export type SettingsSection =
+  | "general"
+  | "git"
+  | "terminal"
+  | "integrations"
+  | "recovery"
+  | "about";
+
+export const settingsSection = writable<SettingsSection>("general");
+export const settingsRecoveryRepoId = writable<string | null>(null);
+
+export function openSettingsAt(section: SettingsSection, repoId?: string) {
+  settingsSection.set(section);
+  settingsRecoveryRepoId.set(repoId ?? null);
+  settingsOpen.set(true);
+}
+
+/**
+ * Toast extra that links a destructive-action confirmation to the Recovery
+ * pane (Settings → Recovery), so the user can see the backup is restorable.
+ */
+export function recoveryToastLink(
+  repoId: string
+): Pick<ToastMessage, "linkLabel" | "linkAction"> {
+  return {
+    linkLabel: "Recovery",
+    linkAction: () => openSettingsAt("recovery", repoId),
+  };
+}
+
+// ALPH-154: request the commit composer to open in amend mode for a repo.
+export interface ComposerRequest {
+  repoId: string;
+  action: "amend";
+}
+export const composerRequest = writable<ComposerRequest | null>(null);
+
+// ALPH-154: after undo/reset the commit message is stashed here so the composer
+// can pre-fill it the next time it opens for that repo.
+export interface PendingCommitMessage {
+  repoId: string;
+  summary: string;
+  body: string;
+}
+export const pendingCommitMessage = writable<PendingCommitMessage | null>(null);
 
 // Active modal dialogs
 export interface ActiveDialog {
-  type: "revert" | "reset" | "discard" | "error_details" | "rename" | "change_icon" | "remove_repo";
+  type:
+    | "revert"
+    | "reset"
+    | "discard"
+    | "error_details"
+    | "rename"
+    | "change_icon"
+    | "remove_repo"
+    | "branch_create"
+    | "branch_rename"
+    | "branch_delete";
   repoId: string;
   data?: any;
 }
 
 export const activeDialog = writable<ActiveDialog | null>(null);
+
+// Bumped after any local branch create/rename/delete so branch lists (header
+// switcher, pane header) refetch without prop-drilling.
+export const branchesVersion = writable(0);
+
+export function bumpBranches() {
+  branchesVersion.update((n) => n + 1);
+}
 
 export function openDialog(dialog: ActiveDialog) {
   activeDialog.set(dialog);

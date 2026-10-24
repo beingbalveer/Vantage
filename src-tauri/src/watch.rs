@@ -247,7 +247,12 @@ impl RepoWatcherManager {
 
                     let should_poll = match last_polled.get(&repo.id) {
                         Some(last) => now.duration_since(*last) >= target_interval,
-                        None => true,
+                        None => {
+                            // On first sighting, record timestamp so background polling waits
+                            // its normal interval instead of colliding with the initial UI load.
+                            last_polled.insert(repo.id.clone(), now);
+                            false
+                        }
                     };
 
                     if !should_poll {
@@ -291,10 +296,11 @@ impl RepoWatcherManager {
                         .await;
                         let elapsed = start_t.elapsed();
 
-                        // If status call exceeds 5s, double interval (max 60s)
+                        // If status call exceeds 5s or returned an error (e.g. permission/disk issue),
+                        // back off interval to avoid hammering the filesystem.
                         {
                             let mut slows = slow_flag.lock().await;
-                            if elapsed > Duration::from_secs(5) {
+                            if elapsed > Duration::from_secs(5) || status.error.is_some() {
                                 let curr = slows.entry(r_id.clone()).or_insert(base_interval);
                                 *curr = (*curr * 2).min(Duration::from_secs(60));
                             } else {

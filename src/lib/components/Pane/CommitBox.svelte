@@ -1,7 +1,10 @@
 <script lang="ts">
   import { settings } from "../../stores/settings";
   import * as api from "../../api";
-  import { addToast } from "../../stores/ui";
+  import { addToast, pendingCommitMessage } from "../../stores/ui";
+  import type { HeadCommitInfo } from "../../types";
+  import { canAmendLastCommit, amendWarning } from "../../commitActions";
+  import { runUndoLastCommit } from "../../undoCommit";
   import Icon from "../common/Icon.svelte";
   import {
     addCoAuthor,
@@ -15,10 +18,12 @@
     repoId: string;
     branch: string;
     selectedPaths: string[];
-    oncommit?: () => void;
+    /** Bumped by the palette to open this composer already in amend mode. */
+    amendToken?: number;
+    oncommit?: (preserveSelection?: boolean) => void;
   }
 
-  let { repoId, branch, selectedPaths, oncommit }: Props = $props();
+  let { repoId, branch, selectedPaths, amendToken = 0, oncommit }: Props = $props();
 
   let summary = $state("");
   let description = $state("");
@@ -32,11 +37,72 @@
   let suggestions = $state<CoAuthor[]>([]);
   let loadingSuggestions = $state(false);
 
+  // Amend / undo state (ALPH-154)
+  let amendMode = $state(false);
+  let headInfo = $state<HeadCommitInfo | null>(null);
+  let isLoadingHead = $state(false);
+  let isUndoing = $state(false);
+  // Starts at 0 (the token's initial value) so the effect below can detect the
+  // first real request without reading the prop during initialization.
+  let seenAmendToken = $state(0);
+
   let hasAiCmd = $derived(!!$settings.commitMessageCmd);
   let summaryLen = $derived(summary.length);
   let canCommit = $derived(
-    summary.trim().length > 0 && selectedPaths.length > 0 && !isCommitting
+    summary.trim().length > 0 &&
+      !isCommitting &&
+      (amendMode || selectedPaths.length > 0)
   );
+  let pushedWarning = $derived(headInfo ? amendWarning(headInfo.isPushed) : null);
+
+  // Pick up a message preserved by an undo (from the palette or composer).
+  $effect(() => {
+    const pending = $pendingCommitMessage;
+    if (pending && pending.repoId === repoId) {
+      summary = pending.summary;
+      description = pending.body;
+      showDescription = !!pending.body;
+      pendingCommitMessage.set(null);
+    }
+  });
+
+  // The palette bumps amendToken to request amend mode.
+  $effect(() => {
+    if (amendToken !== seenAmendToken) {
+      seenAmendToken = amendToken;
+      if (amendToken > 0) enterAmendMode();
+    }
+  });
+
+  async function enterAmendMode() {
+    if (isCommitting || isLoadingHead) return;
+    isLoadingHead = true;
+    try {
+      const info = await api.headCommitInfo(repoId);
+      const guard = canAmendLastCommit(info, info.operationInProgress);
+      if (!guard.ok) {
+        addToast({ message: guard.reason, kind: "error" });
+        return;
+      }
+      headInfo = info;
+      amendMode = true;
+      summary = info.subject;
+      description = info.body || "";
+      showDescription = !!info.body;
+    } catch (e: any) {
+      addToast({ message: e.message || "Cannot amend last commit", kind: "error" });
+    } finally {
+      isLoadingHead = false;
+    }
+  }
+
+  function exitAmendMode() {
+    amendMode = false;
+    headInfo = null;
+    summary = "";
+    description = "";
+    showDescription = false;
+  }
 
   async function handleDraftMessage() {
     if (!hasAiCmd || isDrafting || selectedPaths.length === 0) return;
@@ -104,31 +170,97 @@
   async function handleCommit() {
     if (!canCommit) return;
     isCommitting = true;
+    const body = showDescription && description.trim() ? description.trim() : undefined;
     try {
-      const c = await api.commit(
-        repoId,
-        selectedPaths,
-        summary.trim(),
-        showDescription && description.trim() ? description.trim() : undefined,
-        coAuthors.length > 0 ? coAuthors.map(formatCoAuthor) : undefined
-      );
-      addToast({ message: `Committed ${c.short}`, kind: "success" });
+    try {
+      const coAuthorTrailers = coAuthors.length > 0 ? coAuthors.map(formatCoAuthor) : undefined;
+      if (amendMode) {
+        const c = await api.amendCommit(repoId, selectedPaths, summary.trim(), body);
+        addToast({ message: `Amended ${c.short}`, kind: "success" });
+      } else {
+        const c = await api.commit(repoId, selectedPaths, summary.trim(), body, coAuthorTrailers);
+        addToast({ message: `Committed ${c.short}`, kind: "success" });
+      }
       summary = "";
       description = "";
       showDescription = false;
       coAuthors = [];
       coAuthorInput = "";
       showCoAuthorPicker = false;
+      amendMode = false;
+      headInfo = null;
       oncommit?.();
     } catch (e: any) {
-      addToast({ message: e.message || "Commit failed", kind: "error" });
+      addToast({ message: e.message || (amendMode ? "Amend failed" : "Commit failed"), kind: "error" });
     } finally {
       isCommitting = false;
+    }
+      oncommit?.();
+    } catch (e: any) {
+      addToast({ message: e.message || (amendMode ? "Amend failed" : "Commit failed"), kind: "error" });
+    } finally {
+      isCommitting = false;
+    }
+  }
+
+  async function handleUndo() {
+    if (isUndoing || isCommitting) return;
+    isUndoing = true;
+    try {
+      await runUndoLastCommit(repoId);
+      exitAmendMode();
+      // Preserve selection so the composer stays open with the restored message.
+      oncommit?.(true);
+    } catch (e: any) {
+      addToast({ message: e.message || "Failed to undo last commit", kind: "error" });
+    } finally {
+      isUndoing = false;
     }
   }
 </script>
 
 <div class="commit-box">
+  <!-- Amend affordance: always visible; the previous commit is echoed so the
+       rewrite is never accidental. -->
+  {#if amendMode && headInfo}
+    <div class="amend-banner">
+      <div class="amend-body">
+        <Icon name="pencil" size={12} />
+        <span class="amend-label">
+          Amending <span class="font-mono">{headInfo.short}</span>
+          <span class="amend-subject" title={headInfo.subject}>{headInfo.subject}</span>
+        </span>
+      </div>
+      <button
+        type="button"
+        class="amend-exit"
+        aria-label="Cancel amend"
+        title="Cancel amend"
+        onclick={exitAmendMode}
+        disabled={isCommitting}
+      >
+        <Icon name="close" size={12} />
+      </button>
+    </div>
+    {#if pushedWarning}
+      <div class="amend-warning" role="alert">
+        <span class="warning-icon">⚠</span>
+        <span>{pushedWarning}</span>
+      </div>
+    {/if}
+  {:else}
+    <button
+      type="button"
+      class="amend-toggle"
+      onclick={enterAmendMode}
+      disabled={isLoadingHead || isCommitting}
+      title="Rewrite the last commit instead of creating a new one"
+    >
+      <Icon name="pencil" size={12} />
+      <span>{isLoadingHead ? "Loading last commit…" : "Amend last commit"}</span>
+    </button>
+  {/if}
+
   <!-- Summary Input with optional AI draft button and counter -->
   <div class="input-wrap">
     <input
@@ -280,10 +412,26 @@
     onclick={handleCommit}
   >
     {#if isCommitting}
-      Committing…
+      {amendMode ? "Amending…" : "Committing…"}
+    {:else if amendMode}
+      {selectedPaths.length > 0
+        ? `Amend commit (${selectedPaths.length} ${selectedPaths.length === 1 ? "file" : "files"})`
+        : "Amend commit message"}
     {:else}
       Commit {selectedPaths.length} {selectedPaths.length === 1 ? "file" : "files"}
     {/if}
+  </button>
+
+  <!-- Undo last commit: soft reset, changes come back staged. -->
+  <button
+    type="button"
+    class="undo-btn"
+    onclick={handleUndo}
+    disabled={isUndoing || isCommitting}
+    title="Move HEAD back one commit, keeping the changes staged"
+  >
+    <Icon name="undo" size={12} />
+    <span>{isUndoing ? "Undoing…" : "Undo last commit"}</span>
   </button>
 </div>
 
@@ -296,6 +444,84 @@
     flex-direction: column;
     gap: 8px;
     user-select: none;
+  }
+
+  .amend-toggle {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    align-self: flex-start;
+    background: none;
+    border: none;
+    color: var(--text-muted);
+    font-size: 12px;
+    cursor: pointer;
+    padding: 2px 0;
+  }
+  .amend-toggle:hover:not(:disabled) {
+    color: var(--text);
+  }
+  .amend-toggle:disabled {
+    opacity: 0.55;
+    cursor: not-allowed;
+  }
+
+  .amend-banner {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    padding: 6px 8px;
+    border-radius: var(--r-md);
+    background-color: var(--accent-bg, rgba(64, 120, 200, 0.12));
+    color: var(--text);
+  }
+  .amend-body {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    min-width: 0;
+    color: var(--text-muted);
+  }
+  .amend-label {
+    font-size: 12px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .amend-subject {
+    color: var(--text);
+    margin-left: 6px;
+  }
+  .amend-exit {
+    display: flex;
+    align-items: center;
+    background: none;
+    border: none;
+    color: var(--text-muted);
+    cursor: pointer;
+    padding: 2px;
+    flex-shrink: 0;
+  }
+  .amend-exit:hover:not(:disabled) {
+    color: var(--text);
+  }
+
+  .amend-warning {
+    display: flex;
+    align-items: flex-start;
+    gap: 6px;
+    padding: 8px 10px;
+    border-radius: var(--r-md);
+    border: 1px solid var(--danger);
+    background-color: var(--danger-subtle, rgba(218, 54, 51, 0.1));
+    color: var(--text);
+    font-size: 12px;
+    line-height: 16px;
+  }
+  .warning-icon {
+    color: var(--danger);
+    line-height: 16px;
   }
 
   .input-wrap {
@@ -553,6 +779,29 @@
   }
   .commit-btn:disabled {
     opacity: 0.45;
+    cursor: not-allowed;
+  }
+
+  .undo-btn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    width: 100%;
+    height: 26px;
+    border-radius: var(--r-md);
+    border: 1px solid var(--border);
+    background-color: transparent;
+    color: var(--text-muted);
+    font-size: 12px;
+    cursor: pointer;
+  }
+  .undo-btn:hover:not(:disabled) {
+    color: var(--text);
+    background-color: var(--bg-subtle);
+  }
+  .undo-btn:disabled {
+    opacity: 0.55;
     cursor: not-allowed;
   }
 </style>
