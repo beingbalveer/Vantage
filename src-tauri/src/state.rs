@@ -31,6 +31,29 @@ pub enum MarkerState {
     None,
 }
 
+/// A repository operation that is currently in progress and must be finished or
+/// abandoned before normal committing resumes (ALPH-156).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum OperationKind {
+    Merge,
+    Rebase,
+    CherryPick,
+    Revert,
+}
+
+impl OperationKind {
+    /// Human-facing name used in banners, confirmation dialogs and errors.
+    pub fn label(&self) -> &'static str {
+        match self {
+            OperationKind::Merge => "merge",
+            OperationKind::Rebase => "rebase",
+            OperationKind::CherryPick => "cherry-pick",
+            OperationKind::Revert => "revert",
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RepoStatus {
@@ -41,6 +64,15 @@ pub struct RepoStatus {
     pub ahead: u32,
     pub behind: u32,
     pub dirty_count: u32,
+    /// In-progress merge/rebase/cherry-pick/revert, if any.
+    #[serde(default)]
+    pub operation: Option<OperationKind>,
+    /// Number of paths with unmerged (conflicted) index entries.
+    #[serde(default)]
+    pub conflicted_count: u32,
+    /// Paths with unmerged (conflicted) index entries.
+    #[serde(default)]
+    pub conflicted_paths: Vec<String>,
     pub new_commit_count: u32,
     pub marker_state: MarkerState,
     pub last_activity_at: Option<String>,

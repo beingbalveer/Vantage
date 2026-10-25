@@ -19,6 +19,9 @@ export interface Marker {
 
 export type MarkerState = "ok" | "missing" | "diverged" | "none";
 
+/** In-progress repository operation that must be finished or aborted. */
+export type OperationKind = "merge" | "rebase" | "cherryPick" | "revert";
+
 export interface RepoStatus {
   repoId: string;
   branch: string | null;
@@ -27,6 +30,9 @@ export interface RepoStatus {
   ahead: number;
   behind: number;
   dirtyCount: number;
+  operation?: OperationKind | null;
+  conflictedCount?: number;
+  conflictedPaths?: string[];
   newCommitCount: number;
   markerState: MarkerState;
   lastActivityAt: string | null;

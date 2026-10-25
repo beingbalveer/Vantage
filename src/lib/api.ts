@@ -363,6 +363,15 @@ export async function checkPushed(id: string, sha: string): Promise<boolean> {
   return invoke("check_pushed", { id, sha });
 }
 
+// Conflict / in-progress operation flow (ALPH-156)
+export async function operationContinue(id: string): Promise<void> {
+  return invoke("operation_continue", { id });
+}
+
+export async function operationAbort(id: string): Promise<void> {
+  return invoke("operation_abort", { id });
+}
+
 // Terminal
 export async function termOpen(
   id: string,

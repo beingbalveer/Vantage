@@ -1,6 +1,7 @@
 use crate::error::AppError;
 use crate::git::runner::GitRunner;
-use crate::state::{BackupInfo, CommitSummary};
+use crate::git::status::{detect_operation, parse_unmerged_ls_files};
+use crate::state::{BackupInfo, CommitSummary, OperationKind};
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use std::fs;
@@ -226,6 +227,15 @@ pub async fn commit(
     // Acquire per-repo mutex across the entire staging & commit operation
     let repo_lock = runner.get_repo_lock(repo_path).await;
     let _repo_guard = repo_lock.lock().await;
+
+    // Never let an unresolved conflict reach git as a raw "unmerged" error.
+    let conflicts = unmerged_paths(runner, repo_path).await?;
+    if !conflicts.is_empty() {
+        return Err(AppError::conflict(unmerged_message(
+            "Cannot commit while files still have conflicts. Resolve them, then try again.",
+            &conflicts,
+        )));
+    }
 
     // Check if HEAD exists
     let has_head = runner
@@ -1324,6 +1334,116 @@ pub async fn prune_old_backups(runner: &GitRunner, repo_path: &Path) {
     }
 }
 
+/// Return the paths that still have unmerged (conflicted) index entries.
+pub async fn unmerged_paths(runner: &GitRunner, repo_path: &Path) -> Result<Vec<String>, AppError> {
+    let out = runner
+        .run_read(repo_path, &["ls-files", "-u", "-z"])
+        .await?;
+    if !out.success() {
+        return Err(AppError::other(out.stderr));
+    }
+    Ok(parse_unmerged_ls_files(&out.stdout))
+}
+
+/// Build an error message that names the files blocking an operation.
+fn unmerged_message(reason: &str, paths: &[String]) -> String {
+    let mut msg = reason.to_string();
+    if !paths.is_empty() {
+        msg.push_str("\n\nFiles with conflicts:");
+        for p in paths {
+            msg.push_str("\n  ");
+            msg.push_str(p);
+        }
+    }
+    msg
+}
+
+fn continue_args(kind: OperationKind) -> &'static [&'static str] {
+    match kind {
+        OperationKind::Merge => &["merge", "--continue"],
+        OperationKind::Rebase => &["rebase", "--continue"],
+        OperationKind::CherryPick => &["cherry-pick", "--continue"],
+        OperationKind::Revert => &["revert", "--continue"],
+    }
+}
+
+fn abort_args(kind: OperationKind) -> &'static [&'static str] {
+    match kind {
+        OperationKind::Merge => &["merge", "--abort"],
+        OperationKind::Rebase => &["rebase", "--abort"],
+        OperationKind::CherryPick => &["cherry-pick", "--abort"],
+        OperationKind::Revert => &["revert", "--abort"],
+    }
+}
+
+/// Finish an in-progress merge/rebase/cherry-pick/revert.
+///
+/// `GIT_EDITOR=true` is always set so the continue step can never block waiting
+/// for an editor. If conflicts remain, the returned error carries git's own
+/// stderr plus the list of unmerged paths.
+pub async fn continue_operation(runner: &GitRunner, repo_path: &Path) -> Result<(), AppError> {
+    let repo_lock = runner.get_repo_lock(repo_path).await;
+    let _repo_guard = repo_lock.lock().await;
+
+    let git_dir = get_real_git_dir(runner, repo_path).await?;
+    let kind = detect_operation(&git_dir).ok_or_else(|| {
+        AppError::other("No merge, rebase, cherry-pick, or revert is in progress.")
+    })?;
+
+    let out = runner
+        .run_env(
+            Some(repo_path),
+            continue_args(kind),
+            60,
+            true,
+            &[("GIT_EDITOR", "true")],
+        )
+        .await?;
+
+    if !out.success() {
+        let remaining = unmerged_paths(runner, repo_path).await.unwrap_or_default();
+        let reason = format!(
+            "Cannot continue the {}: {}",
+            kind.label(),
+            out.stderr.trim()
+        );
+        return Err(
+            AppError::conflict(unmerged_message(&reason, &remaining)).with_stderr(out.stderr)
+        );
+    }
+
+    Ok(())
+}
+
+/// Abandon an in-progress merge/rebase/cherry-pick/revert. Refused when nothing
+/// is in progress so the UI can explain instead of running a no-op git command.
+pub async fn abort_operation(runner: &GitRunner, repo_path: &Path) -> Result<(), AppError> {
+    let repo_lock = runner.get_repo_lock(repo_path).await;
+    let _repo_guard = repo_lock.lock().await;
+
+    let git_dir = get_real_git_dir(runner, repo_path).await?;
+    let kind = detect_operation(&git_dir).ok_or_else(|| {
+        AppError::other("There is no merge, rebase, cherry-pick, or revert to abort.")
+    })?;
+
+    let out = runner
+        .run_env(
+            Some(repo_path),
+            abort_args(kind),
+            60,
+            true,
+            &[("GIT_EDITOR", "true")],
+        )
+        .await?;
+
+    if !out.success() {
+        return Err(AppError::other(out.stderr));
+    }
+
+    Ok(())
+}
+
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2165,4 +2285,234 @@ mod tests {
             status
         );
     }
+
+    #[test]
+    fn test_operation_command_mapping() {
+        assert_eq!(
+            continue_args(OperationKind::Merge),
+            &["merge", "--continue"]
+        );
+        assert_eq!(
+            continue_args(OperationKind::Rebase),
+            &["rebase", "--continue"]
+        );
+        assert_eq!(
+            continue_args(OperationKind::CherryPick),
+            &["cherry-pick", "--continue"]
+        );
+        assert_eq!(
+            continue_args(OperationKind::Revert),
+            &["revert", "--continue"]
+        );
+
+        assert_eq!(abort_args(OperationKind::Merge), &["merge", "--abort"]);
+        assert_eq!(abort_args(OperationKind::Rebase), &["rebase", "--abort"]);
+        assert_eq!(
+            abort_args(OperationKind::CherryPick),
+            &["cherry-pick", "--abort"]
+        );
+        assert_eq!(abort_args(OperationKind::Revert), &["revert", "--abort"]);
+    }
+
+    #[tokio::test]
+    async fn test_conflict_blocks_commit_and_continue_resolves() {
+        let runner = GitRunner::new();
+        let repo = TempTestRepo::new(&runner).await;
+
+        let f = repo.path.join("f.txt");
+        fs::write(&f, "base\n").unwrap();
+        runner
+            .run_write(&repo.path, &["add", "f.txt"], 10)
+            .await
+            .unwrap();
+        runner
+            .run_write(&repo.path, &["commit", "-m", "base"], 10)
+            .await
+            .unwrap();
+
+        let base_branch = runner
+            .run_read(&repo.path, &["rev-parse", "--abbrev-ref", "HEAD"])
+            .await
+            .unwrap()
+            .stdout_string()
+            .trim()
+            .to_string();
+
+        runner
+            .run_write(&repo.path, &["checkout", "-b", "other"], 10)
+            .await
+            .unwrap();
+        fs::write(&f, "other\n").unwrap();
+        runner
+            .run_write(&repo.path, &["commit", "-am", "other"], 10)
+            .await
+            .unwrap();
+
+        runner
+            .run_write(&repo.path, &["checkout", &base_branch], 10)
+            .await
+            .unwrap();
+        fs::write(&f, "base two\n").unwrap();
+        runner
+            .run_write(&repo.path, &["commit", "-am", "base two"], 10)
+            .await
+            .unwrap();
+
+        // Conflict the merge.
+        let merge_out = runner
+            .run_write(&repo.path, &["merge", "other"], 20)
+            .await
+            .unwrap();
+        assert!(!merge_out.success(), "merge should conflict");
+
+        // Unmerged path is reported and the operation is detected.
+        let paths = unmerged_paths(&runner, &repo.path).await.unwrap();
+        assert_eq!(paths, vec!["f.txt".to_string()]);
+
+        let git_dir = get_real_git_dir(&runner, &repo.path).await.unwrap();
+        assert_eq!(detect_operation(&git_dir), Some(OperationKind::Merge));
+
+        // Commit is refused with a message naming the remaining file.
+        let err = commit(
+            &runner,
+            &repo.path,
+            &["f.txt".to_string()],
+            "should not commit",
+            None,
+            &[],
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(err.code, "Conflict");
+        assert!(err.message.contains("f.txt"), "message: {}", err.message);
+
+        // Continue while unresolved surfaces the file list.
+        let err = continue_operation(&runner, &repo.path).await.unwrap_err();
+        assert_eq!(err.code, "Conflict");
+        assert!(err.message.contains("f.txt"), "message: {}", err.message);
+
+        // Resolve, then continue succeeds and clears the operation.
+        fs::write(&f, "resolved\n").unwrap();
+        runner
+            .run_write(&repo.path, &["add", "f.txt"], 10)
+            .await
+            .unwrap();
+        continue_operation(&runner, &repo.path)
+            .await
+            .expect("continue should succeed once conflicts are resolved");
+        assert_eq!(
+            detect_operation(&get_real_git_dir(&runner, &repo.path).await.unwrap()),
+            None
+        );
+    }
+
+    #[tokio::test]
+    async fn test_rebase_operation_reports_branch_and_continues() {
+        let runner = GitRunner::new();
+        let repo = TempTestRepo::new(&runner).await;
+
+        let f = repo.path.join("f.txt");
+        fs::write(&f, "base\n").unwrap();
+        runner
+            .run_write(&repo.path, &["add", "f.txt"], 10)
+            .await
+            .unwrap();
+        runner
+            .run_write(&repo.path, &["commit", "-m", "base"], 10)
+            .await
+            .unwrap();
+        let base_branch = runner
+            .run_read(&repo.path, &["rev-parse", "--abbrev-ref", "HEAD"])
+            .await
+            .unwrap()
+            .stdout_string()
+            .trim()
+            .to_string();
+
+        runner
+            .run_write(&repo.path, &["checkout", "-b", "topic"], 10)
+            .await
+            .unwrap();
+        fs::write(&f, "topic\n").unwrap();
+        runner
+            .run_write(&repo.path, &["commit", "-am", "topic"], 10)
+            .await
+            .unwrap();
+        runner
+            .run_write(&repo.path, &["checkout", &base_branch], 10)
+            .await
+            .unwrap();
+        fs::write(&f, "base two\n").unwrap();
+        runner
+            .run_write(&repo.path, &["commit", "-am", "base two"], 10)
+            .await
+            .unwrap();
+
+        let rebase_out = runner
+            .run_write(&repo.path, &["rebase", "topic"], 20)
+            .await
+            .unwrap();
+        assert!(!rebase_out.success(), "rebase should conflict");
+
+        // HEAD is detached during a rebase; head-name still maps it to the
+        // branch the UI is viewing.
+        let git_dir = get_real_git_dir(&runner, &repo.path).await.unwrap();
+        assert_eq!(detect_operation(&git_dir), Some(OperationKind::Rebase));
+        assert_eq!(
+            crate::git::status::rebase_head_branch(&git_dir),
+            Some(base_branch.clone())
+        );
+        assert_eq!(
+            unmerged_paths(&runner, &repo.path).await.unwrap(),
+            ["f.txt"]
+        );
+
+        abort_operation(&runner, &repo.path).await.unwrap();
+        assert_eq!(detect_operation(&git_dir), None);
+        assert_eq!(fs::read_to_string(&f).unwrap(), "base two\n");
+
+        // Rebase again and finish it.
+        runner
+            .run_write(&repo.path, &["rebase", "topic"], 20)
+            .await
+            .unwrap();
+        fs::write(&f, "resolved\n").unwrap();
+        runner
+            .run_write(&repo.path, &["add", "f.txt"], 10)
+            .await
+            .unwrap();
+        continue_operation(&runner, &repo.path).await.unwrap();
+        assert_eq!(detect_operation(&git_dir), None);
+        let subject = runner
+            .run_read(&repo.path, &["log", "-1", "--format=%s"])
+            .await
+            .unwrap()
+            .stdout_string();
+        assert_eq!(subject.trim(), "base two");
+    }
+
+    #[tokio::test]
+    async fn test_abort_operation_refused_when_nothing_in_progress() {
+        let runner = GitRunner::new();
+        let repo = TempTestRepo::new(&runner).await;
+
+        let f = repo.path.join("f.txt");
+        fs::write(&f, "base\n").unwrap();
+        runner
+            .run_write(&repo.path, &["add", "f.txt"], 10)
+            .await
+            .unwrap();
+        runner
+            .run_write(&repo.path, &["commit", "-m", "base"], 10)
+            .await
+            .unwrap();
+
+        let err = abort_operation(&runner, &repo.path).await.unwrap_err();
+        assert!(
+            err.message.contains("no merge") || err.message.contains("No merge"),
+            "message: {}",
+            err.message
+        );
+    }
+
 }

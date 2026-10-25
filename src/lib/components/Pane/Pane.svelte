@@ -23,6 +23,8 @@
   import BranchDropdown from "./BranchDropdown.svelte";
   import FileList from "./FileList.svelte";
   import CommitBox from "./CommitBox.svelte";
+  import ConflictBanner from "./ConflictBanner.svelte";
+  import { loadRepos } from "../../stores/repos";
   import DiffView from "../Diff/DiffView.svelte";
   import FilesTab from "./FilesTab.svelte";
   import TerminalDrawer from "../Terminal/TerminalDrawer.svelte";
@@ -788,6 +790,21 @@
   let openMenuFilePath = $derived(
     contextMenu?.target.kind === "file" ? contextMenu.target.file.path : null
   );
+
+  // After a merge/rebase/cherry-pick/revert is continued or aborted the working
+  // tree and history both change, so refresh the pane, this repo's status, and
+  // the sidebar list (ALPH-156).
+  async function handleOperationResolved() {
+    if (!repo) return;
+    // Refresh the repo status first so the banner disappears (or re-renders with
+    // the remaining conflicts) and the sidebar reflects the new HEAD.
+    await refreshSingleStatus(repo.id);
+    loadRepos();
+    // Preserve the current selection while reloading history and the selected
+    // scope's files/diff, which the continue/abort just changed.
+    loadHistory(true);
+  }
+
 </script>
 
 <svelte:window onkeydown={handlePaneKeydown} />
@@ -801,6 +818,14 @@
 >
   <!-- Pane Body -->
   <div class="pane-content">
+    {#if repo}
+      <ConflictBanner
+        repoId={repo.id}
+        {status}
+        onresolved={handleOperationResolved}
+      />
+    {/if}
+
     {#if !repo}
       <div class="empty-pane">
         <span class="text-strong">No repository selected</span>
@@ -978,7 +1003,7 @@
                 menuOpenPath={openMenuFilePath}
                 ontogglecommitdetails={() => (showCommitDetails = !showCommitDetails)}
                 ontogglefocusdiff={() => (focusDiff = !focusDiff)}
-                onselectfile={(path) => selectFile(path)}
+                onselectfile={(path: string) => selectFile(path)}
                 ontogglepath={toggleCheckedPath}
                 ontoggleall={toggleAllChecked}
                 oncommitrequest={() => (commitMode = true)}
@@ -993,6 +1018,7 @@
                   repoId={repo.id}
                   branch={status?.branch || "main"}
                   selectedPaths={checkedPaths}
+                  conflictedPaths={status?.conflictedPaths ?? []}
                   amendToken={amendRequestToken}
                   oncommit={(preserve = false) => {
                     refreshSingleStatus(repo.id).then(() => {

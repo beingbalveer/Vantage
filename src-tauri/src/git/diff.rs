@@ -453,6 +453,26 @@ pub async fn get_scope_files(
                             });
                         }
                     }
+
+                    // Unmerged paths surface as ordinary modifications in
+                    // `git diff HEAD`; promote them to Conflicted so the file
+                    // list can distinguish them as unmerged (ALPH-156).
+                    for path in crate::git::status::parse_unmerged_paths(&untracked_out.stdout) {
+                        if let Some(existing) = merged_changes.iter_mut().find(|c| c.path == path) {
+                            existing.status = FileStatus::Conflicted;
+                        } else {
+                            merged_changes.push(FileChange {
+                                path,
+                                old_path: None,
+                                status: FileStatus::Conflicted,
+                                additions: 0,
+                                deletions: 0,
+                                binary: false,
+                                old_mode: None,
+                                new_mode: None,
+                            });
+                        }
+                    }
                 }
             }
             Ok(merged_changes)

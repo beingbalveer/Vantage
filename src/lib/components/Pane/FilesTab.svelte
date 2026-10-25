@@ -250,7 +250,8 @@
   .files-tab-container {
     display: flex;
     width: 100%;
-    height: 100%;
+    flex: 1;
+    min-height: 0;
     min-width: 0;
     overflow: hidden;
     background: var(--bg);

@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { isFeatureEnabled } from "../../featureFlags";
   import { settings } from "../../stores/settings";
   import * as api from "../../api";
   import { addToast, pendingCommitMessage } from "../../stores/ui";
@@ -18,12 +19,21 @@
     repoId: string;
     branch: string;
     selectedPaths: string[];
+    /** Paths with unmerged index entries; commit is blocked until resolved (ALPH-156). */
+    conflictedPaths?: string[];
     /** Bumped by the palette to open this composer already in amend mode. */
     amendToken?: number;
     oncommit?: (preserveSelection?: boolean) => void;
   }
 
-  let { repoId, branch, selectedPaths, amendToken = 0, oncommit }: Props = $props();
+  let {
+    repoId,
+    branch,
+    selectedPaths,
+    conflictedPaths = [],
+    amendToken = 0,
+    oncommit,
+  }: Props = $props();
 
   let summary = $state("");
   let description = $state("");
@@ -48,9 +58,11 @@
 
   let hasAiCmd = $derived(!!$settings.commitMessageCmd);
   let summaryLen = $derived(summary.length);
+  let hasConflicts = $derived(conflictedPaths.length > 0);
   let canCommit = $derived(
     summary.trim().length > 0 &&
       !isCommitting &&
+      !hasConflicts &&
       (amendMode || selectedPaths.length > 0)
   );
   let pushedWarning = $derived(headInfo ? amendWarning(headInfo.isPushed) : null);
@@ -168,7 +180,7 @@
   }
 
   async function handleCommit() {
-    if (!canCommit) return;
+    if (!canCommit || hasConflicts) return;
     isCommitting = true;
     const body = showDescription && description.trim() ? description.trim() : undefined;
     try {
@@ -403,6 +415,17 @@
     <Icon name="git-branch" size={11} class="mr-1 inline-block" />
     <span>{branch || "main"}</span>
   </div>
+
+  {#if hasConflicts}
+    <div class="commit-conflict-warning" role="alert">
+      <span class="text-strong">Resolve conflicts before committing.</span>
+      <ul>
+        {#each conflictedPaths as path (path)}
+          <li class="font-mono">{path}</li>
+        {/each}
+      </ul>
+    </div>
+  {/if}
 
   <!-- Commit Button with concise label (R28) -->
   <button
@@ -760,6 +783,26 @@
   .coauthor-empty {
     color: var(--text-faint);
     padding: 2px 0;
+  }
+
+  .commit-conflict-warning {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    padding: 8px 10px;
+    background-color: var(--danger-subtle, rgba(218, 54, 51, 0.1));
+    border: 1px solid var(--danger);
+    border-radius: var(--r-md);
+    color: var(--danger);
+    font-size: 12px;
+  }
+  .commit-conflict-warning ul {
+    margin: 0;
+    padding-left: 16px;
+    max-height: 76px;
+    overflow-y: auto;
+    font-size: 11.5px;
+
   }
 
   .commit-btn {

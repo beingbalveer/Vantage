@@ -9,7 +9,8 @@ use crate::git::ops::{
     discard as git_discard, head_commit_info as git_head_commit_info, list_backups,
     reset_to as git_reset_to, restore_backup, revert as git_revert,
     revert_range as git_revert_range, undo_last_commit as git_undo_last_commit, HeadCommitInfo,
-    UndoCommitResult,
+    UndoCommitResult, abort_operation as git_abort_operation,
+    continue_operation as git_continue_operation, get_real_git_dir,
 };
 use crate::git::refs::{
     checkout_target, create_branch, delete_branch, get_remote_url, is_branch_merged, list_branches,
@@ -23,7 +24,7 @@ use crate::git::stash::{
     list_stashes, stash_apply as git_stash_apply, stash_drop as git_stash_drop,
     stash_pop as git_stash_pop, stash_push as git_stash_push,
 };
-use crate::git::status::query_repo_status;
+use crate::git::status::{query_repo_status, rebase_head_branch};
 use crate::persist::{PersistedState, StatePersistence};
 use crate::state::*;
 use crate::term::{TermOpenResult, TerminalManager};
@@ -742,10 +743,23 @@ async fn verify_branch_checked_out(
             .await?;
         let current_branch = head_out.stdout_string().trim().to_string();
         if current_branch != tb {
-            return Err(AppError::other(format!(
-                "Cannot perform write on inactive branch view '{}' (current checked-out branch is '{}'). Checkout branch first.",
-                tb, current_branch
-            )));
+            // A rebase intentionally detaches HEAD. Accept the write when the
+            // branch being rebased is the one this repo view targets, otherwise
+            // rebase continue/abort would be impossible to run (ALPH-156).
+            let detached_for_rebase = if current_branch == "HEAD" {
+                match get_real_git_dir(runner, repo_path).await {
+                    Ok(git_dir) => rebase_head_branch(&git_dir).as_deref() == Some(tb),
+                    Err(_) => false,
+                }
+            } else {
+                false
+            };
+            if !detached_for_rebase {
+                return Err(AppError::other(format!(
+                    "Cannot perform write on inactive branch view '{}' (current checked-out branch is '{}'). Checkout branch first.",
+                    tb, current_branch
+                )));
+            }
         }
     }
     Ok(())
@@ -919,6 +933,40 @@ pub async fn revert_range(
 
     verify_branch_checked_out(&state.runner, &repo_path, branch.as_deref()).await?;
     git_revert_range(&state.runner, &repo_path, &from, &to).await
+}
+
+/// Finish an in-progress merge/rebase/cherry-pick/revert (ALPH-156).
+#[tauri::command]
+pub async fn operation_continue(state: State<'_, AppState>, id: String) -> Result<(), AppError> {
+    let (repo_path, branch) = {
+        let data = state.data.lock().await;
+        let entry = data
+            .repos
+            .iter()
+            .find(|r| r.id == id)
+            .ok_or_else(|| AppError::not_found("Repository not found"))?;
+        (PathBuf::from(&entry.path), entry.branch.clone())
+    };
+
+    verify_branch_checked_out(&state.runner, &repo_path, branch.as_deref()).await?;
+    git_continue_operation(&state.runner, &repo_path).await
+}
+
+/// Abandon an in-progress merge/rebase/cherry-pick/revert (ALPH-156).
+#[tauri::command]
+pub async fn operation_abort(state: State<'_, AppState>, id: String) -> Result<(), AppError> {
+    let (repo_path, branch) = {
+        let data = state.data.lock().await;
+        let entry = data
+            .repos
+            .iter()
+            .find(|r| r.id == id)
+            .ok_or_else(|| AppError::not_found("Repository not found"))?;
+        (PathBuf::from(&entry.path), entry.branch.clone())
+    };
+
+    verify_branch_checked_out(&state.runner, &repo_path, branch.as_deref()).await?;
+    git_abort_operation(&state.runner, &repo_path).await
 }
 
 #[tauri::command]
