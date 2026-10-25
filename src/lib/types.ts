@@ -89,6 +89,20 @@ export interface DiffFile {
   truncated: boolean;
 }
 
+export interface LineSelection {
+  kind: LineKind;
+  oldNo: number | null;
+  newNo: number | null;
+  text: string;
+}
+
+export type WorkingPart = "unstaged" | "staged";
+
+export interface WorkingPartCounts {
+  unstaged: number;
+  staged: number;
+}
+
 export interface Hunk {
   oldStart: number;
   oldLines: number;

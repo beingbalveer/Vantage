@@ -1,4 +1,33 @@
-// Shared types + geometry helpers for context menus (DESIGN.md §6.3).
+/**
+ * Context menu types + geometry helpers (DESIGN.md §6.3),
+ * and frontend dispatcher for native menu commands (ALPH-163).
+ */
+import { get } from "svelte/store";
+import type { RepoEntry } from "./types";
+import * as api from "./api";
+import {
+  activeRepoId,
+  refreshSingleStatus,
+  repos,
+  statuses,
+} from "./stores/repos";
+import {
+  closePane,
+  cyclePaneCount,
+  focusedPaneIndex,
+  paneCount,
+  panes,
+  setPaneCount,
+  toggleTerminalInPane,
+} from "./stores/panes";
+import {
+  addRepoDialogOpen,
+  addToast,
+  paletteOpen,
+  settingsOpen,
+  shortcutsHelpOpen,
+  sidebarCollapsed,
+} from "./stores/ui";
 
 export interface MenuItem {
   id: string;
@@ -32,47 +61,15 @@ export function clampMenuPosition(
     left: Math.max(pad, Math.min(x, viewportWidth - width - pad)),
     top: Math.max(pad, Math.min(y, viewportHeight - height - pad)),
   };
+}
 
-/**
- * Frontend dispatcher for native menu commands.
- *
- * `src-tauri/src/menu.rs` emits `menu://command` with the ids below. Each
- * branch calls the same stores/API used by `CommandPalette.svelte` and the
- * global shortcuts in `keys.ts`, so a menu item cannot drift from the in-app
- * behaviour. Keep the ids in sync with `MenuAction::id()`.
- */
-import { get } from "svelte/store";
-import type { RepoEntry } from "./types";
-import * as api from "./api";
-import {
-  activeRepoId,
-  refreshSingleStatus,
-  repos,
-  statuses,
-} from "./stores/repos";
-import {
-  closePane,
-  cyclePaneCount,
-  focusedPaneIndex,
-  paneCount,
-  panes,
-  setPaneCount,
-  toggleTerminalInPane,
-} from "./stores/panes";
-import {
-  addRepoDialogOpen,
-  addToast,
-  paletteOpen,
-  settingsOpen,
-  shortcutsHelpOpen,
-  sidebarCollapsed,
-} from "./stores/ui";
-
-/** Event listened to by `TopHeader.svelte` to reuse its branch menu. */
+/** Event listened to by `BranchDropdown.svelte` or `TopHeader.svelte` to open branch selection. */
 export const OPEN_BRANCH_MENU_EVENT = "vantage:open-branch-menu";
 
 function focusedRepoId(): string | null {
-  const pane = get(panes)[get(focusedPaneIndex)];
+  const allPanes = get(panes);
+  const idx = get(focusedPaneIndex);
+  const pane = allPanes[idx];
   return pane?.repoId ?? get(activeRepoId) ?? get(repos)[0]?.id ?? null;
 }
 
@@ -230,5 +227,4 @@ export async function dispatchMenuCommand(command: string): Promise<void> {
     default:
       console.warn(`Unhandled native menu command: ${command}`);
   }
-
 }

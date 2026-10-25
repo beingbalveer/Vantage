@@ -2,7 +2,10 @@ use crate::error::AppError;
 use crate::git::binary::{get_file_diff_meta, FileDiffMeta};
 use crate::git::blob::{get_blob_lines, get_blob_text, get_tree_list, BlobTextResult};
 use crate::git::coauthors::{recent_contributors as git_recent_contributors, Contributor};
-use crate::git::diff::{get_scope_file_diff, get_scope_files};
+use crate::git::diff::{
+    get_scope_file_diff, get_scope_files, get_working_file_diff, get_working_part_counts,
+    WorkingPartCounts,
+};
 use crate::git::grep::{blame_line as git_blame_line, grep_definitions};
 use crate::git::log::{get_history_page, get_log_page};
 use crate::git::ops::{
@@ -12,7 +15,9 @@ use crate::git::ops::{
     revert_range as git_revert_range, undo_last_commit as git_undo_last_commit, HeadCommitInfo,
     UndoCommitResult, abort_operation as git_abort_operation,
     continue_operation as git_continue_operation, get_real_git_dir,
+    partial_lines, PartialAction,
 };
+use crate::git::patch::SelectedLine;
 use crate::git::refs::{
     checkout_target, create_branch, delete_branch, get_remote_url, is_branch_merged, list_branches,
     rename_branch, sync_fetch as git_sync_fetch, sync_pull as git_sync_pull,
@@ -626,6 +631,148 @@ pub async fn scope_file_diff(
         ignore_ws,
         force,
         full_context,
+    )
+    .await
+}
+
+#[tauri::command]
+pub async fn working_file_diff(
+    state: State<'_, AppState>,
+    id: String,
+    path: String,
+    part: String,
+    ctx_lines: u32,
+    ignore_ws: bool,
+    force: bool,
+) -> Result<DiffFile, AppError> {
+    let repo_path = {
+        let data = state.data.lock().await;
+        let entry = data
+            .repos
+            .iter()
+            .find(|r| r.id == id)
+            .ok_or_else(|| AppError::not_found("Repository not found"))?;
+        PathBuf::from(&entry.path)
+    };
+
+    get_working_file_diff(
+        &state.runner,
+        &repo_path,
+        &path,
+        &part,
+        ctx_lines,
+        ignore_ws,
+        force,
+    )
+    .await
+}
+
+#[tauri::command]
+pub async fn working_part_counts(
+    state: State<'_, AppState>,
+    id: String,
+) -> Result<WorkingPartCounts, AppError> {
+    let repo_path = {
+        let data = state.data.lock().await;
+        let entry = data
+            .repos
+            .iter()
+            .find(|r| r.id == id)
+            .ok_or_else(|| AppError::not_found("Repository not found"))?;
+        PathBuf::from(&entry.path)
+    };
+
+    get_working_part_counts(&state.runner, &repo_path).await
+}
+
+#[tauri::command]
+pub async fn stage_lines(
+    state: State<'_, AppState>,
+    id: String,
+    path: String,
+    selection: Vec<SelectedLine>,
+    ignore_ws: bool,
+) -> Result<(), AppError> {
+    let (repo_path, branch) = {
+        let data = state.data.lock().await;
+        let entry = data
+            .repos
+            .iter()
+            .find(|r| r.id == id)
+            .ok_or_else(|| AppError::not_found("Repository not found"))?;
+        (PathBuf::from(&entry.path), entry.branch.clone())
+    };
+
+    verify_branch_checked_out(&state.runner, &repo_path, branch.as_deref()).await?;
+    partial_lines(
+        &state.runner,
+        &repo_path,
+        &path,
+        &selection,
+        PartialAction::Stage,
+        ignore_ws,
+    )
+    .await?;
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn unstage_lines(
+    state: State<'_, AppState>,
+    id: String,
+    path: String,
+    selection: Vec<SelectedLine>,
+    ignore_ws: bool,
+) -> Result<(), AppError> {
+    let (repo_path, branch) = {
+        let data = state.data.lock().await;
+        let entry = data
+            .repos
+            .iter()
+            .find(|r| r.id == id)
+            .ok_or_else(|| AppError::not_found("Repository not found"))?;
+        (PathBuf::from(&entry.path), entry.branch.clone())
+    };
+
+    verify_branch_checked_out(&state.runner, &repo_path, branch.as_deref()).await?;
+    partial_lines(
+        &state.runner,
+        &repo_path,
+        &path,
+        &selection,
+        PartialAction::Unstage,
+        ignore_ws,
+    )
+    .await?;
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn discard_lines(
+    state: State<'_, AppState>,
+    id: String,
+    path: String,
+    selection: Vec<SelectedLine>,
+    ignore_ws: bool,
+) -> Result<Option<BackupInfo>, AppError> {
+    let (repo_path, branch) = {
+        let data = state.data.lock().await;
+        let entry = data
+            .repos
+            .iter()
+            .find(|r| r.id == id)
+            .ok_or_else(|| AppError::not_found("Repository not found"))?;
+        (PathBuf::from(&entry.path), entry.branch.clone())
+    };
+
+    verify_branch_checked_out(&state.runner, &repo_path, branch.as_deref()).await?;
+    partial_lines(
+        &state.runner,
+        &repo_path,
+        &path,
+        &selection,
+        PartialAction::Discard,
+        ignore_ws,
     )
     .await
 }

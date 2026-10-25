@@ -1,4 +1,5 @@
 use crate::error::AppError;
+use crate::git::patch::{synthesize, PatchTarget, SelectedLine, Synthesized};
 use crate::git::runner::GitRunner;
 use crate::git::status::{detect_operation, parse_unmerged_ls_files};
 use crate::state::{BackupInfo, CommitSummary, OperationKind};
@@ -76,6 +77,22 @@ async fn load_backup_record(
     None
 }
 
+/// Extract the path from a porcelain v2 `1`/`2` record without splitting on
+/// spaces inside the filename. `fields` is the number of space-separated
+/// fields before the path (8 for `1`, 9 for `2`).
+fn porcelain_v2_path(line: &str, fields: usize) -> Option<&str> {
+    let bytes = line.as_bytes();
+    let mut idx = 0;
+    for _ in 0..fields {
+        let rel = bytes[idx..].iter().position(|b| *b == b' ')?;
+        idx += rel + 1;
+    }
+    if idx >= bytes.len() {
+        return None;
+    }
+    Some(&line[idx..])
+}
+
 /// Detects an in-progress history-mutating git operation by inspecting the
 /// repository's real git directory. Pure (path in, operation name out) so it is
 /// cheap to reason about and test. Returns `None` when the tree is at rest.
@@ -137,6 +154,13 @@ async fn read_commit_summary(
         .ok_or_else(|| AppError::other("Failed to read commit summary"))
 }
 
+async fn latest_head_summary(
+    runner: &GitRunner,
+    repo_path: &Path,
+) -> Result<CommitSummary, AppError> {
+    read_commit_summary(runner, repo_path, "HEAD").await
+}
+
 /// Details the commit composer needs before offering "Amend last commit":
 /// what HEAD is, whether it is already on a remote, whether it has a parent,
 /// and whether a merge/rebase is currently in progress.
@@ -192,6 +216,167 @@ pub async fn head_commit_info(
         has_parent,
         operation_in_progress: op,
     })
+}
+
+/// Commit a tree that preserves the index state of selected staged paths while
+/// still taking working-tree content for selected paths that are not staged.
+///
+/// This is required for line-level staging: `git commit --only -- <path>`
+/// takes the full working-tree content of `<path>` and would silently undo the
+/// partial index. The temporary index starts as a copy of the real index so
+/// selected staged paths (including renames) are committed exactly as staged;
+/// unselected staged paths are reset to HEAD in the temporary index so they are
+/// never committed. Real index entries are left untouched, except for paths
+/// whose working-tree content was committed, which are added so they become
+/// clean.
+#[allow(clippy::too_many_arguments)]
+async fn commit_using_temp_index(
+    runner: &GitRunner,
+    repo_path: &Path,
+    git_dir: &Path,
+    paths: &[String],
+    paths_to_commit: &[String],
+    staged_paths: &std::collections::HashMap<String, Option<String>>,
+    summary: &str,
+    body: Option<&str>,
+    trailer_block: Option<&str>,
+) -> Result<CommitSummary, AppError> {
+    let temp_index = git_dir.join(format!(
+        "vantage-index-{}",
+        uuid::Uuid::new_v4().simple()
+    ));
+    let temp_index_str = temp_index.to_string_lossy().to_string();
+
+    let real_index = git_dir.join("index");
+    let init = if real_index.exists() {
+        fs::copy(&real_index, &temp_index)
+            .map(|_| ())
+            .map_err(AppError::io)
+    } else {
+        Ok(())
+    };
+    if let Err(e) = init {
+        let _ = fs::remove_file(&temp_index);
+        return Err(e);
+    }
+    if !temp_index.exists() {
+        let out = runner
+            .run_env(
+                Some(repo_path),
+                &["read-tree", "HEAD"],
+                20,
+                true,
+                &[("GIT_INDEX_FILE", &temp_index_str)],
+            )
+            .await?;
+        if !out.success() {
+            let _ = fs::remove_file(&temp_index);
+            return Err(AppError::other(out.stderr));
+        }
+    }
+
+    // Reset staged content that the user did not select.
+    for (path, orig) in staged_paths {
+        if paths.contains(path) {
+            continue;
+        }
+        let mut args = vec!["reset", "-q", "HEAD", "--", path.as_str()];
+        if let Some(orig) = orig {
+            args.push(orig.as_str());
+        }
+        let out = runner
+            .run_env(
+                Some(repo_path),
+                &args,
+                20,
+                true,
+                &[
+                    ("GIT_INDEX_FILE", &temp_index_str),
+                    ("GIT_LITERAL_PATHSPECS", "1"),
+                ],
+            )
+            .await?;
+        if !out.success() {
+            let _ = fs::remove_file(&temp_index);
+            return Err(AppError::other(out.stderr));
+        }
+    }
+
+    // Stage the working-tree content of selected paths that are not already
+    // staged (including the old side of unstaged renames).
+    let add_paths: Vec<&String> = paths_to_commit
+        .iter()
+        .filter(|p| !staged_paths.contains_key(*p))
+        .collect();
+    if !add_paths.is_empty() {
+        let mut add_args = vec!["add", "-A", "--"];
+        for p in &add_paths {
+            add_args.push(p.as_str());
+        }
+        let out = runner
+            .run_env(
+                Some(repo_path),
+                &add_args,
+                30,
+                true,
+                &[
+                    ("GIT_INDEX_FILE", &temp_index_str),
+                    ("GIT_LITERAL_PATHSPECS", "1"),
+                ],
+            )
+            .await?;
+        if !out.success() {
+            let _ = fs::remove_file(&temp_index);
+            return Err(AppError::other(out.stderr));
+        }
+    }
+
+    let mut commit_args = vec!["commit", "-m", summary];
+    let body_str;
+    if let Some(b) = body {
+        if !b.trim().is_empty() {
+            body_str = b.to_string();
+            commit_args.push("-m");
+            commit_args.push(&body_str);
+        }
+    }
+    let trailer_str;
+    if let Some(t) = trailer_block {
+        trailer_str = t.to_string();
+        commit_args.push("-m");
+        commit_args.push(&trailer_str);
+    }
+
+    let out = runner
+        .run_env(
+            Some(repo_path),
+            &commit_args,
+            60,
+            true,
+            &[("GIT_INDEX_FILE", &temp_index_str)],
+        )
+        .await;
+    let _ = fs::remove_file(&temp_index);
+    let out = out?;
+    if !out.success() {
+        return Err(AppError::other(out.stderr));
+    }
+
+    // Make the real index agree with the new HEAD for paths that came from the
+    // working tree, so they are clean while unstaged lines in partially staged
+    // files remain visible. Reset (rather than add) so a post-commit hook that
+    // touches the file cannot leak extra content into the index.
+    if !add_paths.is_empty() {
+        let mut reset_args = vec!["reset", "-q", "HEAD", "--"];
+        for p in &add_paths {
+            reset_args.push(p.as_str());
+        }
+        let _ = runner
+            .run_write_literal(repo_path, &reset_args, 30)
+            .await;
+    }
+
+    latest_head_summary(runner, repo_path).await
 }
 
 pub async fn commit(
@@ -255,6 +440,9 @@ pub async fn commit(
 
         let mut untracked_in_paths = Vec::new();
         let mut paths_to_commit: Vec<String> = paths.to_vec();
+        // Staged paths (new path -> optional original path, for renames).
+        let mut staged_paths: std::collections::HashMap<String, Option<String>> =
+            std::collections::HashMap::new();
 
         let raw_parts: Vec<&[u8]> = status_out.stdout.split(|&b| b == 0).collect();
         let mut i = 0;
@@ -275,20 +463,60 @@ pub async fn commit(
                 // Rename entry in porcelain v2: header contains <path>, next part contains <origPath>
                 // Format: 2 <XY> <sub> <mH> <mI> <mW> <hH> <hI> <X><score> <path>\0<origPath>\0
                 let line = String::from_utf8_lossy(part);
-                let tokens: Vec<&str> = line.split(' ').collect();
-                if tokens.len() >= 9 && i + 1 < raw_parts.len() {
-                    let path = tokens[tokens.len() - 1].to_string();
-                    let orig_path = String::from_utf8_lossy(raw_parts[i + 1]).to_string();
-                    if paths.contains(&path) && !paths_to_commit.contains(&orig_path) {
-                        paths_to_commit.push(orig_path);
+                if let Some(path) = porcelain_v2_path(&line, 9) {
+                    if i + 1 < raw_parts.len() {
+                        let orig_path = String::from_utf8_lossy(raw_parts[i + 1]).to_string();
+                        let xy = line.as_bytes().get(2).copied().unwrap_or(b'.');
+                        if xy != b'.' {
+                            staged_paths.insert(path.to_string(), Some(orig_path.clone()));
+                        }
+                        if paths.contains(&path.to_string())
+                            && !paths_to_commit.contains(&orig_path)
+                        {
+                            paths_to_commit.push(orig_path);
+                        }
+                        i += 2;
+                        continue;
                     }
-                    i += 2;
-                    continue;
                 }
+                i += 1;
+            } else if part.starts_with(b"1 ") {
+                let line = String::from_utf8_lossy(part);
+                if let Some(path) = porcelain_v2_path(&line, 8) {
+                    if line.as_bytes().get(2).copied().unwrap_or(b'.') != b'.' {
+                        staged_paths.insert(path.to_string(), None);
+                    }
+                }
+                i += 1;
+            } else if part.starts_with(b"u ") {
                 i += 1;
             } else {
                 i += 1;
             }
+        }
+
+        // If any selected path has staged content, commit the index state for
+        // that path. `git commit --only` would otherwise replace it with the
+        // full working-tree content and silently include unstaged lines.
+        let selected_staged: Vec<String> = paths
+            .iter()
+            .filter(|p| staged_paths.contains_key(*p))
+            .cloned()
+            .collect();
+        if !selected_staged.is_empty() {
+            let git_dir = get_real_git_dir(runner, repo_path).await?;
+            return commit_using_temp_index(
+                runner,
+                repo_path,
+                &git_dir,
+                paths,
+                &paths_to_commit,
+                &staged_paths,
+                summary,
+                body,
+                trailer_block.as_deref(),
+            )
+            .await;
         }
 
         // For untracked selected files, mark them intent-to-add literally so git commit --only recognises them
@@ -717,6 +945,421 @@ pub async fn undo_last_commit(
         backup_ref,
         undone,
     })
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PartialAction {
+    Stage,
+    Unstage,
+    Discard,
+}
+
+/// Partial operations only accept repository-relative paths. Reject absolute
+/// paths and parent traversal so a malformed IPC call cannot touch files
+/// outside the repository.
+fn validate_relative_path(path: &str) -> Result<(), AppError> {
+    let p = Path::new(path);
+    if path.is_empty() || p.is_absolute() {
+        return Err(AppError::other("Invalid file path for a partial operation"));
+    }
+    for component in p.components() {
+        if matches!(component, std::path::Component::ParentDir) {
+            return Err(AppError::other(
+                "Invalid file path for a partial operation",
+            ));
+        }
+    }
+    Ok(())
+}
+
+async fn has_head(runner: &GitRunner, repo_path: &Path) -> bool {
+    runner
+        .run_read(repo_path, &["rev-parse", "--verify", "HEAD"])
+        .await
+        .map(|o| o.success())
+        .unwrap_or(false)
+}
+
+async fn ensure_no_conflicts(runner: &GitRunner, repo_path: &Path) -> Result<(), AppError> {
+    let out = runner
+        .run_read(
+            repo_path,
+            &["status", "--porcelain=v2", "-z", "--untracked-files=all"],
+        )
+        .await?;
+    if out
+        .stdout
+        .split(|b| *b == 0)
+        .any(|part| part.starts_with(b"u "))
+    {
+        return Err(AppError::conflict(
+            "Resolve the conflicted files before staging or discarding individual lines.",
+        ));
+    }
+    Ok(())
+}
+
+async fn path_is_tracked(
+    runner: &GitRunner,
+    repo_path: &Path,
+    path: &str,
+) -> Result<bool, AppError> {
+    let out = runner
+        .run_read_literal(repo_path, &["ls-files", "--error-unmatch", "--", path])
+        .await?;
+    Ok(out.success())
+}
+
+/// Run the authoritative diff for the tree we are about to modify.
+/// `staged` selects HEAD→index; otherwise index→worktree.
+async fn partial_diff(
+    runner: &GitRunner,
+    repo_path: &Path,
+    path: &str,
+    staged: bool,
+    ignore_whitespace: bool,
+) -> Result<Vec<u8>, AppError> {
+    let head = has_head(runner, repo_path).await;
+    let mut args = vec!["diff"];
+    if staged {
+        args.push("--cached");
+    }
+    args.extend_from_slice(&["-U0", "-M", "--no-color", "--no-ext-diff"]);
+    if ignore_whitespace {
+        args.push("-w");
+    }
+    if staged && head {
+        args.push("HEAD");
+    }
+    args.push("--");
+    args.push(path);
+
+    let out = runner.run_read_literal(repo_path, &args).await?;
+    if !out.success() {
+        return Err(AppError::other(out.stderr));
+    }
+    if !out.stdout.is_empty() || staged {
+        return Ok(out.stdout);
+    }
+
+    // An untracked file has no index entry, so `git diff` is empty. Show it as
+    // a new-file diff. Do not do this for tracked files that simply have no
+    // unstaged changes (that would fake an entire-file addition).
+    let full_path = repo_path.join(path);
+    if full_path.exists() && !path_is_tracked(runner, repo_path, path).await? {
+        let mut no_index_args = vec![
+            "diff",
+            "--no-index",
+            "-U0",
+            "--no-color",
+            "--no-ext-diff",
+        ];
+        if ignore_whitespace {
+            no_index_args.push("-w");
+        }
+        no_index_args.push("--");
+        no_index_args.push("/dev/null");
+        no_index_args.push(path);
+        let no_index = runner.run_read(repo_path, &no_index_args).await?;
+        // `git diff --no-index` exits with 1 when files differ; stdout is the
+        // patch we want.
+        if !no_index.stdout.is_empty() {
+            return Ok(no_index.stdout);
+        }
+    }
+
+    Ok(Vec::new())
+}
+
+async fn apply_patch_bytes(
+    runner: &GitRunner,
+    repo_path: &Path,
+    patch: &[u8],
+    reverse: bool,
+    cached: bool,
+) -> Result<(), AppError> {
+    let git_dir = get_real_git_dir(runner, repo_path).await?;
+    let patch_path = git_dir.join(format!(
+        "vantage-patch-{}.patch",
+        uuid::Uuid::new_v4().simple()
+    ));
+    fs::write(&patch_path, patch)?;
+    let patch_arg = patch_path.to_string_lossy().to_string();
+
+    let build_args = |check: bool| {
+        let mut args = vec!["apply", "--unidiff-zero", "--whitespace=nowarn"];
+        if cached {
+            args.push("--cached");
+        }
+        if reverse {
+            args.push("--reverse");
+        }
+        if check {
+            args.push("--check");
+        }
+        args.push(&patch_arg);
+        args
+    };
+
+    // Check first so we can give a precise, reassuring error. `git apply`
+    // itself is all-or-nothing, so no partial application is possible.
+    let check_args = build_args(true);
+    let check = runner.run_write(repo_path, &check_args, 30).await;
+    let check = match check {
+        Ok(out) => out,
+        Err(e) => {
+            let _ = fs::remove_file(&patch_path);
+            return Err(e);
+        }
+    };
+    if !check.success() {
+        let _ = fs::remove_file(&patch_path);
+        return Err(AppError::other(format!(
+            "Cannot apply the selected lines because the index or working tree changed since the diff was shown. Nothing was changed. {}",
+            check.stderr.trim()
+        )));
+    }
+
+    let apply_args = build_args(false);
+    let applied = runner.run_write(repo_path, &apply_args, 30).await;
+    let _ = fs::remove_file(&patch_path);
+    let applied = applied?;
+    if !applied.success() {
+        return Err(AppError::other(format!(
+            "Git could not apply the selected lines. Nothing was changed. {}",
+            applied.stderr.trim()
+        )));
+    }
+    Ok(())
+}
+
+/// Snapshot the file before a line-level discard. This mirrors the file-level
+/// discard backup: tracked changes go into a stash referenced by
+/// `refs/vantage/backup/*`, untracked (or root-commit) files are copied into
+/// `.git/vantage-trash/<id>` with a manifest.
+async fn create_line_discard_backup(
+    runner: &GitRunner,
+    repo_path: &Path,
+    path: &str,
+    line_count: usize,
+) -> Result<(BackupRecord, String), AppError> {
+    let backup_id = format!(
+        "{}_{}",
+        Utc::now().timestamp_millis(),
+        uuid::Uuid::new_v4().simple()
+    );
+    let backup_ref = format!("refs/vantage/backup/{}", backup_id);
+
+    let status_out = runner
+        .run_read(
+            repo_path,
+            &["status", "--porcelain=v2", "-z", "--untracked-files=all"],
+        )
+        .await?;
+    let is_untracked = status_out
+        .stdout
+        .split(|b| *b == 0)
+        .any(|part| part.starts_with(b"? ") && String::from_utf8_lossy(&part[2..]) == path);
+
+    let head_exists = has_head(runner, repo_path).await;
+    let mut stash_sha = None;
+    let mut untracked_dir = None;
+
+    if !is_untracked && head_exists {
+        let stash_out = runner
+            .run_write(repo_path, &["stash", "create"], 30)
+            .await?;
+        let sha = stash_out.stdout_string().trim().to_string();
+        if sha.is_empty() {
+            return Err(AppError::other(
+                "Could not create a backup before discarding lines. Nothing was changed.",
+            ));
+        }
+        let update = runner
+            .run_write(repo_path, &["update-ref", &backup_ref, &sha], 20)
+            .await?;
+        if !update.success() {
+            return Err(AppError::other(
+                "Could not record the discard backup. Nothing was changed.",
+            ));
+        }
+        stash_sha = Some(sha);
+    } else {
+        let git_dir = get_real_git_dir(runner, repo_path).await?;
+        let trash_dir = git_dir.join("vantage-trash").join(&backup_id);
+        let dest = trash_dir.join("files").join(path);
+        if let Some(parent) = dest.parent() {
+            fs::create_dir_all(parent).map_err(AppError::io)?;
+        }
+        let src = repo_path.join(path);
+        fs::copy(&src, &dest).map_err(AppError::io)?;
+        let manifest = serde_json::to_string_pretty(&vec![path.to_string()])?;
+        fs::write(trash_dir.join("manifest.json"), manifest).map_err(AppError::io)?;
+        untracked_dir = Some(backup_id.clone());
+    }
+
+    let record = BackupRecord {
+        id: backup_id.clone(),
+        kind: "discard".to_string(),
+        head_sha: None,
+        stash_sha,
+        paths: vec![path.to_string()],
+        untracked_dir,
+        created_at: Utc::now().to_rfc3339(),
+        description: format!(
+            "Discarded {} line{} from {}",
+            line_count,
+            if line_count == 1 { "" } else { "s" },
+            path
+        ),
+    };
+
+    save_backup_record(runner, repo_path, &record).await?;
+
+    Ok((record, backup_ref))
+}
+
+async fn remove_line_discard_backup(
+    runner: &GitRunner,
+    repo_path: &Path,
+    record: &BackupRecord,
+    backup_ref: &str,
+) {
+    let _ = runner
+        .run_write(repo_path, &["update-ref", "-d", backup_ref], 10)
+        .await;
+    if let Ok(git_dir) = get_real_git_dir(runner, repo_path).await {
+        let _ = fs::remove_file(
+            git_dir
+                .join("vantage-backups")
+                .join(format!("{}.json", record.id)),
+        );
+        if let Some(trash_id) = &record.untracked_dir {
+            let _ = fs::remove_dir_all(git_dir.join("vantage-trash").join(trash_id));
+        }
+    }
+}
+
+/// Stage, unstage, or discard selected lines in one file.
+///
+/// The entire operation runs under the repository write lock. The patch is
+/// synthesized from a freshly generated diff, checked with `git apply
+/// --check`, and then applied atomically. On any failure nothing is modified.
+pub async fn partial_lines(
+    runner: &GitRunner,
+    repo_path: &Path,
+    path: &str,
+    selection: &[SelectedLine],
+    action: PartialAction,
+    ignore_whitespace: bool,
+) -> Result<Option<BackupInfo>, AppError> {
+    validate_relative_path(path)?;
+    if selection.is_empty() {
+        return Err(AppError::other("No lines selected"));
+    }
+
+    let repo_lock = runner.get_repo_lock(repo_path).await;
+    let _repo_guard = repo_lock.lock().await;
+
+    ensure_no_conflicts(runner, repo_path).await?;
+
+    let staged_source = action == PartialAction::Unstage;
+    let raw = partial_diff(runner, repo_path, path, staged_source, ignore_whitespace).await?;
+    if raw.is_empty() {
+        return Err(AppError::other(
+            "No changes for this file in the selected view. Refresh the diff and try again.",
+        ));
+    }
+
+    let target = match action {
+        PartialAction::Stage => PatchTarget::Stage,
+        PartialAction::Unstage => PatchTarget::Unstage,
+        PartialAction::Discard => PatchTarget::Discard,
+    };
+    let synthesized = synthesize(&raw, selection, target)?;
+
+    match synthesized {
+        Synthesized::ResetIndex => {
+            let head = has_head(runner, repo_path).await;
+            let args = if head {
+                vec!["reset", "-q", "HEAD", "--", path]
+            } else {
+                vec!["rm", "-q", "--cached", "--", path]
+            };
+            let out = runner.run_write_literal(repo_path, &args, 20).await?;
+            if !out.success() {
+                return Err(AppError::other(out.stderr));
+            }
+            return Ok(None);
+        }
+        Synthesized::AddFile(patch) => {
+            // Creating a partial index entry cannot be done by reversing a
+            // deletion patch, so this synthesized new-file patch is applied
+            // forward.
+            apply_patch_bytes(runner, repo_path, &patch, false, true).await?;
+            Ok(None)
+        }
+        Synthesized::Patch(patch) => {
+            if action != PartialAction::Discard {
+                // Unstage applies the HEAD→index patch in reverse so exactly
+                // the selected lines leave the index.
+                let reverse = action == PartialAction::Unstage;
+                apply_patch_bytes(runner, repo_path, &patch, reverse, true).await?;
+                return Ok(None);
+            }
+
+            let line_count = selection
+                .iter()
+                .filter(|s| {
+                    s.kind == crate::state::LineKind::Add
+                        || s.kind == crate::state::LineKind::Del
+                })
+                .count();
+
+            // Validate that the worktree patch applies before creating a
+            // backup, then apply it. The backup is rolled back if Git refuses
+            // the patch after the check (e.g. an external writer won the race).
+            let git_dir = get_real_git_dir(runner, repo_path).await?;
+            let patch_path = git_dir.join(format!(
+                "vantage-patch-{}.patch",
+                uuid::Uuid::new_v4().simple()
+            ));
+            fs::write(&patch_path, &patch)?;
+            let patch_arg = patch_path.to_string_lossy().to_string();
+            let check_args = vec![
+                "apply",
+                "--unidiff-zero",
+                "--whitespace=nowarn",
+                "--reverse",
+                "--check",
+                patch_arg.as_str(),
+            ];
+            let check = runner.run_write(repo_path, &check_args, 30).await;
+            let _ = fs::remove_file(&patch_path);
+            let check = check?;
+            if !check.success() {
+                return Err(AppError::other(format!(
+                    "Cannot discard the selected lines because the file changed since the diff was shown. Nothing was changed. {}",
+                    check.stderr.trim()
+                )));
+            }
+
+            let (record, backup_ref) =
+                create_line_discard_backup(runner, repo_path, path, line_count).await?;
+
+            if let Err(e) = apply_patch_bytes(runner, repo_path, &patch, true, false).await {
+                remove_line_discard_backup(runner, repo_path, &record, &backup_ref).await;
+                return Err(e);
+            }
+
+            Ok(Some(BackupInfo {
+                r#ref: backup_ref,
+                created_at: record.created_at,
+                kind: record.kind,
+                description: record.description,
+            }))
+        }
+    }
 }
 
 pub async fn discard(
@@ -1775,6 +2418,740 @@ mod tests {
         let status_str = status_out.stdout_string();
         assert!(status_str.contains("A  other_staged.txt"));
         assert!(!status_str.contains("chosen_file.txt"));
+    }
+
+    fn line_sel(
+        kind: crate::state::LineKind,
+        old_no: Option<u32>,
+        new_no: Option<u32>,
+        text: &str,
+    ) -> SelectedLine {
+        SelectedLine {
+            kind,
+            old_no,
+            new_no,
+            text: text.to_string(),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_partial_stage_only_selected_lines() {
+        let runner = GitRunner::new();
+        let repo = TempTestRepo::new(&runner).await;
+        let f = repo.path.join("f.txt");
+        fs::write(&f, "a\nb\nc\nd\ne\n").unwrap();
+        runner
+            .run_write(&repo.path, &["add", "f.txt"], 10)
+            .await
+            .unwrap();
+        runner
+            .run_write(&repo.path, &["commit", "-m", "init"], 10)
+            .await
+            .unwrap();
+
+        fs::write(&f, "a\nB\nc\nd\nE\n").unwrap();
+
+        partial_lines(
+            &runner,
+            &repo.path,
+            "f.txt",
+            &[
+                line_sel(crate::state::LineKind::Del, Some(2), None, "b"),
+                line_sel(crate::state::LineKind::Add, None, Some(2), "B"),
+            ],
+            PartialAction::Stage,
+            false,
+        )
+        .await
+        .expect("partial stage should succeed");
+
+        let cached = runner
+            .run_read(&repo.path, &["diff", "--cached", "--", "f.txt"])
+            .await
+            .unwrap()
+            .stdout_string();
+        assert!(cached.contains("+B"));
+        assert!(!cached.contains("+E"));
+
+        let unstaged = runner
+            .run_read(&repo.path, &["diff", "--", "f.txt"])
+            .await
+            .unwrap()
+            .stdout_string();
+        assert!(unstaged.contains("+E"));
+        assert!(!unstaged.contains("+B"));
+        assert_eq!(fs::read_to_string(&f).unwrap(), "a\nB\nc\nd\nE\n");
+    }
+
+    #[tokio::test]
+    async fn test_commit_after_partial_stage_ignores_unstaged_lines() {
+        let runner = GitRunner::new();
+        let repo = TempTestRepo::new(&runner).await;
+        let f = repo.path.join("f.txt");
+        fs::write(&f, "a\nb\nc\nd\ne\n").unwrap();
+        runner
+            .run_write(&repo.path, &["add", "f.txt"], 10)
+            .await
+            .unwrap();
+        runner
+            .run_write(&repo.path, &["commit", "-m", "init"], 10)
+            .await
+            .unwrap();
+
+        fs::write(&f, "a\nB\nc\nd\nE\n").unwrap();
+        partial_lines(
+            &runner,
+            &repo.path,
+            "f.txt",
+            &[
+                line_sel(crate::state::LineKind::Del, Some(2), None, "b"),
+                line_sel(crate::state::LineKind::Add, None, Some(2), "B"),
+            ],
+            PartialAction::Stage,
+            false,
+        )
+        .await
+        .unwrap();
+
+        let summary = commit(
+            &runner,
+            &repo.path,
+            &["f.txt".to_string()],
+            "partial commit",
+            None,
+            &[],
+        )
+        .await
+        .expect("commit after partial stage should succeed");
+        assert_eq!(summary.subject, "partial commit");
+
+        let head_file = runner
+            .run_read(&repo.path, &["show", "HEAD:f.txt"])
+            .await
+            .unwrap()
+            .stdout;
+        assert_eq!(head_file, b"a\nB\nc\nd\ne\n");
+        assert_eq!(fs::read_to_string(&f).unwrap(), "a\nB\nc\nd\nE\n");
+
+        let status = runner
+            .run_read(&repo.path, &["status", "--porcelain"])
+            .await
+            .unwrap()
+            .stdout_string();
+        assert!(status.contains(" M f.txt"), "status was: {}", status);
+    }
+
+    #[tokio::test]
+    async fn test_partial_unstage_only_selected_lines() {
+        let runner = GitRunner::new();
+        let repo = TempTestRepo::new(&runner).await;
+        let f = repo.path.join("f.txt");
+        fs::write(&f, "a\nb\nc\nd\ne\n").unwrap();
+        runner
+            .run_write(&repo.path, &["add", "f.txt"], 10)
+            .await
+            .unwrap();
+        runner
+            .run_write(&repo.path, &["commit", "-m", "init"], 10)
+            .await
+            .unwrap();
+
+        fs::write(&f, "a\nB\nc\nd\nE\n").unwrap();
+        runner
+            .run_write(&repo.path, &["add", "f.txt"], 10)
+            .await
+            .unwrap();
+
+        partial_lines(
+            &runner,
+            &repo.path,
+            "f.txt",
+            &[
+                line_sel(crate::state::LineKind::Del, Some(2), None, "b"),
+                line_sel(crate::state::LineKind::Add, None, Some(2), "B"),
+            ],
+            PartialAction::Unstage,
+            false,
+        )
+        .await
+        .expect("partial unstage should succeed");
+
+        let cached = runner
+            .run_read(&repo.path, &["diff", "--cached", "--", "f.txt"])
+            .await
+            .unwrap()
+            .stdout_string();
+        assert!(cached.contains("+E"));
+        assert!(!cached.contains("+B"));
+
+        let unstaged = runner
+            .run_read(&repo.path, &["diff", "--", "f.txt"])
+            .await
+            .unwrap()
+            .stdout_string();
+        assert!(unstaged.contains("+B"));
+        assert!(!unstaged.contains("+E"));
+    }
+
+    #[tokio::test]
+    async fn test_partial_discard_preserves_unselected_and_undo_restores() {
+        let runner = GitRunner::new();
+        let repo = TempTestRepo::new(&runner).await;
+        let f = repo.path.join("f.txt");
+        fs::write(&f, "a\nb\nc\nd\ne\n").unwrap();
+        runner
+            .run_write(&repo.path, &["add", "f.txt"], 10)
+            .await
+            .unwrap();
+        runner
+            .run_write(&repo.path, &["commit", "-m", "init"], 10)
+            .await
+            .unwrap();
+
+        fs::write(&f, "a\nB\nc\nd\nE\n").unwrap();
+
+        let backup = partial_lines(
+            &runner,
+            &repo.path,
+            "f.txt",
+            &[
+                line_sel(crate::state::LineKind::Del, Some(2), None, "b"),
+                line_sel(crate::state::LineKind::Add, None, Some(2), "B"),
+            ],
+            PartialAction::Discard,
+            false,
+        )
+        .await
+        .expect("partial discard should succeed")
+        .expect("partial discard must return a backup");
+
+        // Only the selected replacement was discarded.
+        assert_eq!(fs::read_to_string(&f).unwrap(), "a\nb\nc\nd\nE\n");
+
+        restore_backup(&runner, &repo.path, &backup.r#ref)
+            .await
+            .expect("undo should restore the file snapshot");
+        assert_eq!(fs::read_to_string(&f).unwrap(), "a\nB\nc\nd\nE\n");
+    }
+
+    #[tokio::test]
+    async fn test_partial_stage_preserves_crlf() {
+        let runner = GitRunner::new();
+        let repo = TempTestRepo::new(&runner).await;
+        let f = repo.path.join("f.txt");
+        fs::write(&f, b"a\r\nb\r\nc\r\n").unwrap();
+        runner
+            .run_write(&repo.path, &["add", "f.txt"], 10)
+            .await
+            .unwrap();
+        runner
+            .run_write(&repo.path, &["commit", "-m", "init"], 10)
+            .await
+            .unwrap();
+
+        fs::write(&f, b"a\r\nB\r\nc\r\n").unwrap();
+
+        partial_lines(
+            &runner,
+            &repo.path,
+            "f.txt",
+            &[
+                line_sel(crate::state::LineKind::Del, Some(2), None, "b"),
+                line_sel(crate::state::LineKind::Add, None, Some(2), "B"),
+            ],
+            PartialAction::Stage,
+            false,
+        )
+        .await
+        .expect("CRLF partial stage should succeed");
+
+        let index_content = runner
+            .run_read(&repo.path, &["show", ":f.txt"])
+            .await
+            .unwrap()
+            .stdout;
+        assert_eq!(index_content, b"a\r\nB\r\nc\r\n");
+        assert_eq!(fs::read(&f).unwrap(), b"a\r\nB\r\nc\r\n");
+    }
+
+    #[tokio::test]
+    async fn test_partial_stage_untracked_subset() {
+        let runner = GitRunner::new();
+        let repo = TempTestRepo::new(&runner).await;
+        let base = repo.path.join("base.txt");
+        fs::write(&base, "base\n").unwrap();
+        runner
+            .run_write(&repo.path, &["add", "base.txt"], 10)
+            .await
+            .unwrap();
+        runner
+            .run_write(&repo.path, &["commit", "-m", "init"], 10)
+            .await
+            .unwrap();
+
+        let f = repo.path.join("new.txt");
+        fs::write(&f, "one\ntwo\nthree\n").unwrap();
+
+        partial_lines(
+            &runner,
+            &repo.path,
+            "new.txt",
+            &[
+                line_sel(crate::state::LineKind::Add, None, Some(1), "one"),
+                line_sel(crate::state::LineKind::Add, None, Some(2), "two"),
+            ],
+            PartialAction::Stage,
+            false,
+        )
+        .await
+        .expect("partial untracked stage should succeed");
+
+        let index_content = runner
+            .run_read(&repo.path, &["show", ":new.txt"])
+            .await
+            .unwrap()
+            .stdout;
+        assert_eq!(index_content, b"one\ntwo\n");
+        assert_eq!(fs::read_to_string(&f).unwrap(), "one\ntwo\nthree\n");
+    }
+
+    #[tokio::test]
+    async fn test_partial_commit_excludes_unselected_staged_file() {
+        let runner = GitRunner::new();
+        let repo = TempTestRepo::new(&runner).await;
+        let f = repo.path.join("f.txt");
+        fs::write(&f, "a\nb\nc\nd\ne\n").unwrap();
+        runner
+            .run_write(&repo.path, &["add", "f.txt"], 10)
+            .await
+            .unwrap();
+        runner
+            .run_write(&repo.path, &["commit", "-m", "init"], 10)
+            .await
+            .unwrap();
+
+        let other = repo.path.join("other.txt");
+        fs::write(&other, "staged elsewhere\n").unwrap();
+        runner
+            .run_write(&repo.path, &["add", "other.txt"], 10)
+            .await
+            .unwrap();
+
+        fs::write(&f, "a\nB\nc\nd\nE\n").unwrap();
+        partial_lines(
+            &runner,
+            &repo.path,
+            "f.txt",
+            &[
+                line_sel(crate::state::LineKind::Del, Some(2), None, "b"),
+                line_sel(crate::state::LineKind::Add, None, Some(2), "B"),
+            ],
+            PartialAction::Stage,
+            false,
+        )
+        .await
+        .unwrap();
+
+        commit(
+            &runner,
+            &repo.path,
+            &["f.txt".to_string()],
+            "partial commit only",
+            None,
+            &[],
+        )
+        .await
+        .expect("partial commit should succeed");
+
+        let committed_files = runner
+            .run_read(&repo.path, &["show", "--name-only", "--format=", "HEAD"])
+            .await
+            .unwrap()
+            .stdout_string();
+        assert!(committed_files.contains("f.txt"));
+        assert!(!committed_files.contains("other.txt"));
+
+        let head_file = runner
+            .run_read(&repo.path, &["show", "HEAD:f.txt"])
+            .await
+            .unwrap()
+            .stdout;
+        assert_eq!(head_file, b"a\nB\nc\nd\ne\n");
+
+        let status = runner
+            .run_read(&repo.path, &["status", "--porcelain"])
+            .await
+            .unwrap()
+            .stdout_string();
+        assert!(status.contains("A  other.txt"), "status was: {}", status);
+        assert!(status.contains(" M f.txt"), "status was: {}", status);
+    }
+
+    #[tokio::test]
+    async fn test_partial_unstage_new_file_subset() {
+        let runner = GitRunner::new();
+        let repo = TempTestRepo::new(&runner).await;
+        let base = repo.path.join("base.txt");
+        fs::write(&base, "base\n").unwrap();
+        runner
+            .run_write(&repo.path, &["add", "base.txt"], 10)
+            .await
+            .unwrap();
+        runner
+            .run_write(&repo.path, &["commit", "-m", "init"], 10)
+            .await
+            .unwrap();
+
+        let f = repo.path.join("new.txt");
+        fs::write(&f, "one\ntwo\nthree\n").unwrap();
+        runner
+            .run_write(&repo.path, &["add", "new.txt"], 10)
+            .await
+            .unwrap();
+
+        partial_lines(
+            &runner,
+            &repo.path,
+            "new.txt",
+            &[line_sel(crate::state::LineKind::Add, None, Some(2), "two")],
+            PartialAction::Unstage,
+            false,
+        )
+        .await
+        .expect("partial new-file unstage should succeed");
+
+        let index_content = runner
+            .run_read(&repo.path, &["show", ":new.txt"])
+            .await
+            .unwrap()
+            .stdout;
+        assert_eq!(index_content, b"one\nthree\n");
+        assert_eq!(fs::read_to_string(&f).unwrap(), "one\ntwo\nthree\n");
+    }
+
+    #[tokio::test]
+    async fn test_partial_stage_whole_deleted_file() {
+        let runner = GitRunner::new();
+        let repo = TempTestRepo::new(&runner).await;
+        let f = repo.path.join("gone.txt");
+        fs::write(&f, "a\nb\nc\n").unwrap();
+        runner
+            .run_write(&repo.path, &["add", "gone.txt"], 10)
+            .await
+            .unwrap();
+        runner
+            .run_write(&repo.path, &["commit", "-m", "init"], 10)
+            .await
+            .unwrap();
+        fs::remove_file(&f).unwrap();
+
+        partial_lines(
+            &runner,
+            &repo.path,
+            "gone.txt",
+            &[
+                line_sel(crate::state::LineKind::Del, Some(1), None, "a"),
+                line_sel(crate::state::LineKind::Del, Some(2), None, "b"),
+                line_sel(crate::state::LineKind::Del, Some(3), None, "c"),
+            ],
+            PartialAction::Stage,
+            false,
+        )
+        .await
+        .expect("staging a whole deletion should succeed");
+
+        let status = runner
+            .run_read(&repo.path, &["status", "--porcelain"])
+            .await
+            .unwrap()
+            .stdout_string();
+        assert!(status.contains("D  gone.txt"));
+    }
+
+    #[tokio::test]
+    async fn test_partial_discard_untracked_subset_and_undo() {
+        let runner = GitRunner::new();
+        let repo = TempTestRepo::new(&runner).await;
+        let base = repo.path.join("base.txt");
+        fs::write(&base, "base\n").unwrap();
+        runner
+            .run_write(&repo.path, &["add", "base.txt"], 10)
+            .await
+            .unwrap();
+        runner
+            .run_write(&repo.path, &["commit", "-m", "init"], 10)
+            .await
+            .unwrap();
+
+        let f = repo.path.join("new.txt");
+        fs::write(&f, "one\ntwo\nthree\n").unwrap();
+
+        let backup = partial_lines(
+            &runner,
+            &repo.path,
+            "new.txt",
+            &[line_sel(crate::state::LineKind::Add, None, Some(2), "two")],
+            PartialAction::Discard,
+            false,
+        )
+        .await
+        .expect("partial untracked discard should succeed")
+        .expect("backup expected");
+
+        assert_eq!(fs::read_to_string(&f).unwrap(), "one\nthree\n");
+        assert!(backup.description.contains("new.txt"));
+
+        restore_backup(&runner, &repo.path, &backup.r#ref)
+            .await
+            .expect("undo should restore the untracked file");
+        assert_eq!(fs::read_to_string(&f).unwrap(), "one\ntwo\nthree\n");
+    }
+
+    #[tokio::test]
+    async fn test_partial_discard_whole_untracked_file_and_undo() {
+        let runner = GitRunner::new();
+        let repo = TempTestRepo::new(&runner).await;
+        let base = repo.path.join("base.txt");
+        fs::write(&base, "base\n").unwrap();
+        runner
+            .run_write(&repo.path, &["add", "base.txt"], 10)
+            .await
+            .unwrap();
+        runner
+            .run_write(&repo.path, &["commit", "-m", "init"], 10)
+            .await
+            .unwrap();
+
+        let f = repo.path.join("new.txt");
+        fs::write(&f, "one\ntwo\n").unwrap();
+
+        let backup = partial_lines(
+            &runner,
+            &repo.path,
+            "new.txt",
+            &[
+                line_sel(crate::state::LineKind::Add, None, Some(1), "one"),
+                line_sel(crate::state::LineKind::Add, None, Some(2), "two"),
+            ],
+            PartialAction::Discard,
+            false,
+        )
+        .await
+        .expect("whole untracked discard should succeed")
+        .expect("backup expected");
+
+        assert!(!f.exists(), "discarding every line should remove the file");
+        restore_backup(&runner, &repo.path, &backup.r#ref)
+            .await
+            .expect("undo should restore the untracked file");
+        assert_eq!(fs::read_to_string(&f).unwrap(), "one\ntwo\n");
+    }
+
+    #[tokio::test]
+    async fn test_partial_stage_part_of_deleted_file() {
+        let runner = GitRunner::new();
+        let repo = TempTestRepo::new(&runner).await;
+        let f = repo.path.join("gone.txt");
+        fs::write(&f, "a\nb\nc\n").unwrap();
+        runner
+            .run_write(&repo.path, &["add", "gone.txt"], 10)
+            .await
+            .unwrap();
+        runner
+            .run_write(&repo.path, &["commit", "-m", "init"], 10)
+            .await
+            .unwrap();
+        fs::remove_file(&f).unwrap();
+
+        partial_lines(
+            &runner,
+            &repo.path,
+            "gone.txt",
+            &[line_sel(crate::state::LineKind::Del, Some(2), None, "b")],
+            PartialAction::Stage,
+            false,
+        )
+        .await
+        .expect("partial deletion stage should succeed");
+
+        let index_content = runner
+            .run_read(&repo.path, &["show", ":gone.txt"])
+            .await
+            .unwrap()
+            .stdout;
+        assert_eq!(index_content, b"a\nc\n");
+    }
+
+    #[tokio::test]
+    async fn test_partial_unstage_part_of_deleted_file() {
+        let runner = GitRunner::new();
+        let repo = TempTestRepo::new(&runner).await;
+        let f = repo.path.join("gone.txt");
+        fs::write(&f, "a\nb\nc\n").unwrap();
+        runner
+            .run_write(&repo.path, &["add", "gone.txt"], 10)
+            .await
+            .unwrap();
+        runner
+            .run_write(&repo.path, &["commit", "-m", "init"], 10)
+            .await
+            .unwrap();
+        runner
+            .run_write(&repo.path, &["rm", "gone.txt"], 10)
+            .await
+            .unwrap();
+
+        partial_lines(
+            &runner,
+            &repo.path,
+            "gone.txt",
+            &[line_sel(crate::state::LineKind::Del, Some(2), None, "b")],
+            PartialAction::Unstage,
+            false,
+        )
+        .await
+        .expect("partial deletion unstage should succeed");
+
+        let index_content = runner
+            .run_read(&repo.path, &["show", ":gone.txt"])
+            .await
+            .unwrap()
+            .stdout;
+        assert_eq!(index_content, b"b\n");
+    }
+
+    #[tokio::test]
+    async fn test_partial_stage_no_newline() {
+        let runner = GitRunner::new();
+        let repo = TempTestRepo::new(&runner).await;
+        let f = repo.path.join("f.txt");
+        fs::write(&f, b"a\nb").unwrap();
+        runner
+            .run_write(&repo.path, &["add", "f.txt"], 10)
+            .await
+            .unwrap();
+        runner
+            .run_write(&repo.path, &["commit", "-m", "init"], 10)
+            .await
+            .unwrap();
+
+        fs::write(&f, b"a\nB").unwrap();
+
+        partial_lines(
+            &runner,
+            &repo.path,
+            "f.txt",
+            &[
+                line_sel(crate::state::LineKind::Del, Some(2), None, "b"),
+                line_sel(crate::state::LineKind::Add, None, Some(2), "B"),
+            ],
+            PartialAction::Stage,
+            false,
+        )
+        .await
+        .expect("whole no-newline hunk should stage");
+
+        let index_content = runner
+            .run_read(&repo.path, &["show", ":f.txt"])
+            .await
+            .unwrap()
+            .stdout;
+        assert_eq!(index_content, b"a\nB");
+    }
+
+    #[tokio::test]
+    async fn test_partial_stage_refuses_binary_without_changes() {
+        let runner = GitRunner::new();
+        let repo = TempTestRepo::new(&runner).await;
+        let f = repo.path.join("image.bin");
+        fs::write(&f, [0u8, 1, 2, 3, 4, 5, 0, 7]).unwrap();
+        runner
+            .run_write(&repo.path, &["add", "image.bin"], 10)
+            .await
+            .unwrap();
+        runner
+            .run_write(&repo.path, &["commit", "-m", "init"], 10)
+            .await
+            .unwrap();
+        fs::write(&f, [0u8, 9, 9, 9, 9, 9, 0, 7]).unwrap();
+
+        let before = runner
+            .run_read(&repo.path, &["status", "--porcelain"])
+            .await
+            .unwrap()
+            .stdout_string();
+
+        let err = partial_lines(
+            &runner,
+            &repo.path,
+            "image.bin",
+            &[line_sel(crate::state::LineKind::Add, None, Some(1), "x")],
+            PartialAction::Stage,
+            false,
+        )
+        .await
+        .unwrap_err();
+        assert!(err.message.contains("Binary"));
+
+        let after = runner
+            .run_read(&repo.path, &["status", "--porcelain"])
+            .await
+            .unwrap()
+            .stdout_string();
+        assert_eq!(before, after);
+    }
+
+    #[tokio::test]
+    async fn test_partial_stage_refuses_conflicted_index() {
+        let runner = GitRunner::new();
+        let repo = TempTestRepo::new(&runner).await;
+        let f = repo.path.join("f.txt");
+        fs::write(&f, "base\n").unwrap();
+        runner
+            .run_write(&repo.path, &["add", "f.txt"], 10)
+            .await
+            .unwrap();
+        runner
+            .run_write(&repo.path, &["commit", "-m", "base"], 10)
+            .await
+            .unwrap();
+
+        runner
+            .run_write(&repo.path, &["checkout", "-b", "side"], 10)
+            .await
+            .unwrap();
+        fs::write(&f, "side\n").unwrap();
+        runner
+            .run_write(&repo.path, &["commit", "-am", "side"], 10)
+            .await
+            .unwrap();
+        runner
+            .run_write(&repo.path, &["checkout", "-"], 10)
+            .await
+            .unwrap();
+        fs::write(&f, "main\n").unwrap();
+        runner
+            .run_write(&repo.path, &["commit", "-am", "main"], 10)
+            .await
+            .unwrap();
+        let _ = runner
+            .run_write(&repo.path, &["merge", "side"], 10)
+            .await;
+
+        let err = partial_lines(
+            &runner,
+            &repo.path,
+            "f.txt",
+            &[
+                line_sel(crate::state::LineKind::Del, Some(1), None, "main"),
+                line_sel(crate::state::LineKind::Add, None, Some(1), "merged"),
+            ],
+            PartialAction::Stage,
+            false,
+        )
+        .await
+        .unwrap_err();
+        assert!(err.message.contains("conflicted"));
     }
 
     #[tokio::test]

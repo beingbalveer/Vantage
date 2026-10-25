@@ -1,6 +1,17 @@
 <script lang="ts">
   import { onMount, onDestroy, tick, untrack } from "svelte";
-  import type { RepoEntry, RepoStatus, CommitSummary, FileChange, DiffFile, DiffScope, TriageFlag } from "../../types";
+  import { isFeatureEnabled } from "../../featureFlags";
+  import type {
+    RepoEntry,
+    RepoStatus,
+    CommitSummary,
+    FileChange,
+    DiffFile,
+    DiffScope,
+    TriageFlag,
+    WorkingPart,
+    WorkingPartCounts,
+  } from "../../types";
   import * as api from "../../api";
   import { settings } from "../../stores/settings";
   import { panes, focusedPaneIndex, focusPane, setPaneTab } from "../../stores/panes";
@@ -130,6 +141,7 @@
   let commits = $state<CommitSummary[]>([]);
   let selectedCommitSha = $state<string | null>(null);
   let isUncommittedSelected = $state(false);
+  let isRangeSelected = $state(false);
   let currentScope = $state<DiffScope>({ type: "working" });
 
   // Triage flags, cached per commit SHA for the loaded history page (ALPH-147).
@@ -219,6 +231,8 @@
       ? (scopeFilesList.find((f) => f.path === selectedFilePath) ?? null)
       : null
   );
+  let workingPart = $state<WorkingPart>("unstaged");
+  let workingCounts = $state<WorkingPartCounts | null>(null);
 
   // Generation IDs to avoid stale async overwrites (R11)
   let historyGen = 0;
@@ -250,6 +264,8 @@
           isUncommittedSelected = false;
           historyTotal = 0;
           historyCapped = false;
+          isRangeSelected = false;
+          workingCounts = null;
         }
       });
     }
@@ -579,6 +595,7 @@
     isUncommittedSelected = true;
     selectedCommitSha = null;
     currentScope = { type: "working" };
+    workingPart = "unstaged";
     commitMode = false;
     showCommitDetails = false;
     loadScopeFiles(currentScope);
@@ -593,11 +610,34 @@
     loadScopeFiles(currentScope);
   }
 
+  function selectRange() {
+    if (!repo?.marker) return;
+    isRangeSelected = true;
+    isUncommittedSelected = false;
+    selectedCommitSha = null;
+    currentScope = { type: "range", from: repo.marker.sha, to: "HEAD" };
+    commitMode = false;
+    showCommitDetails = false;
+    loadScopeFiles(currentScope);
+  }
+
+  async function loadWorkingCounts() {
+    if (!repo) return;
+    try {
+      workingCounts = await api.workingPartCounts(repo.id);
+    } catch (e) {
+      console.warn("Failed to load staged/unstaged counts:", e);
+    }
+  }
   async function loadScopeFiles(scope: DiffScope, preserveFile = false) {
     if (!repo) return;
     const gen = ++scopeGen;
     try {
+      const isWorking = scope.type === "working";
       const files = await api.scopeFiles(repo.id, scope, $settings.ignoreWhitespace);
+      if (isWorking) {
+        loadWorkingCounts();
+      }
       if (gen !== scopeGen) return;
 
       scopeFilesList = files;
@@ -636,15 +676,27 @@
     const activeScope = scope || currentScope;
 
     try {
-      const diff = await api.scopeFileDiff(
-        repo.id,
-        activeScope,
-        path,
-        $settings.contextLines,
-        $settings.ignoreWhitespace,
-        force,
-        fullContext
-      );
+      const diff =
+        isFeatureEnabled("ALPH_160_LINE_PARTIAL_COMMIT") &&
+        isUncommittedSelected &&
+        activeScope.type === "working"
+          ? await api.workingFileDiff(
+              repo.id,
+              path,
+              workingPart,
+              $settings.contextLines,
+              $settings.ignoreWhitespace,
+              force
+            )
+          : await api.scopeFileDiff(
+              repo.id,
+              activeScope,
+              path,
+              $settings.contextLines,
+              $settings.ignoreWhitespace,
+              force,
+              fullContext
+            );
       if (gen !== diffGen) return;
       currentDiffFile = diff;
     } catch (e: any) {
@@ -664,6 +716,19 @@
   function collapseContext(path?: string) {
     const target = path || selectedFilePath;
     if (target) selectFile(target, undefined, { fullContext: false });
+  }
+
+  function changeWorkingPart(part: WorkingPart) {
+    if (part === workingPart) return;
+    workingPart = part;
+    if (selectedFilePath) selectFile(selectedFilePath);
+  }
+
+  async function handlePartialRefresh() {
+    if (!repo) return;
+    await loadScopeFiles(currentScope, true);
+    await refreshSingleStatus(repo.id);
+    await loadWorkingCounts();
   }
 
   function toggleCheckedPath(path: string) {
@@ -1094,6 +1159,11 @@
                 fullContext={diffIsFullContext}
                 onexpandwholefile={() => expandWholeFile()}
                 oncollapsecontext={() => collapseContext()}
+                scopeType={currentScope.type}
+                {workingPart}
+                {workingCounts}
+                onchangepart={changeWorkingPart}
+                onrefresh={handlePartialRefresh}
                 onviewfile={(path: string) => {
                   navigateTo({
                     repoId: repo.id,

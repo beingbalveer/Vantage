@@ -18,6 +18,7 @@ import type {
   HistoryPage,
   FileDiffMeta,
   Layout,
+  LineSelection,
   RepoEntry,
   RepoStatus,
   RepoStackInfo,
@@ -28,6 +29,8 @@ import type {
   TriageFlag,
   RecentContributor,
   UndoCommitResult,
+  WorkingPart,
+  WorkingPartCounts,
 } from "./types";
 
 // Repos
@@ -154,6 +157,55 @@ export async function scopeFileDiff(
   fullContext = false
 ): Promise<DiffFile> {
   return invoke("scope_file_diff", { id, scope, path, ctxLines, ignoreWs, force, fullContext });
+}
+
+export async function workingFileDiff(
+  id: string,
+  path: string,
+  part: WorkingPart,
+  ctxLines: number,
+  ignoreWs: boolean,
+  force: boolean
+): Promise<DiffFile> {
+  return invoke("working_file_diff", {
+    id,
+    path,
+    part,
+    ctxLines,
+    ignoreWs,
+    force,
+  });
+}
+
+export async function workingPartCounts(id: string): Promise<WorkingPartCounts> {
+  return invoke("working_part_counts", { id });
+}
+
+export async function stageLines(
+  id: string,
+  path: string,
+  selection: LineSelection[],
+  ignoreWs: boolean
+): Promise<void> {
+  return invoke("stage_lines", { id, path, selection, ignoreWs });
+}
+
+export async function unstageLines(
+  id: string,
+  path: string,
+  selection: LineSelection[],
+  ignoreWs: boolean
+): Promise<void> {
+  return invoke("unstage_lines", { id, path, selection, ignoreWs });
+}
+
+export async function discardLines(
+  id: string,
+  path: string,
+  selection: LineSelection[],
+  ignoreWs: boolean
+): Promise<BackupInfo | null> {
+  return invoke("discard_lines", { id, path, selection, ignoreWs });
 }
 
 export async function blobLines(

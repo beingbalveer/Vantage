@@ -12,8 +12,6 @@
   import { setOperationRunning, setOperationSuccess, setOperationError } from "../../stores/operation";
   import { formatRelativeTime } from "../../format";
   import * as api from "../../api";
-  import type { BranchInfo } from "../../types";
-  import { OPEN_BRANCH_MENU_EVENT } from "../../menu";
   import Icon from "../common/Icon.svelte";
 
   let currentPane = $derived($panes[$focusedPaneIndex]);
@@ -156,18 +154,6 @@
       if (showMore) showMore = false;
     }
   }
-
-  // The native Branch > Checkout Branch… item reuses the header's branch menu
-  // instead of duplicating branch-loading/checkout logic.
-  function handleMenuOpenBranch() {
-    if (!activeRepo) return;
-    openBranchMenu("selected");
-  }
-
-  onMount(() => {
-    window.addEventListener(OPEN_BRANCH_MENU_EVENT, handleMenuOpenBranch);
-    return () => window.removeEventListener(OPEN_BRANCH_MENU_EVENT, handleMenuOpenBranch);
-  });
 
   onDestroy(() => {
     showMore = false;

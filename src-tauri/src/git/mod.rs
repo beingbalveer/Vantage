@@ -6,6 +6,7 @@ pub mod diff;
 pub mod grep;
 pub mod log;
 pub mod ops;
+pub mod patch;
 pub mod refs;
 pub mod runner;
 pub mod stash;

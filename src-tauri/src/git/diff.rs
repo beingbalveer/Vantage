@@ -606,6 +606,154 @@ pub async fn get_scope_file_diff(
     ))
 }
 
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WorkingPartCounts {
+    pub unstaged: u32,
+    pub staged: u32,
+}
+
+/// Number of files with worktree changes and with index changes. Used by the
+/// Unstaged/Staged switch; this is a cheap porcelain parse, not a diff.
+pub async fn get_working_part_counts(
+    runner: &GitRunner,
+    repo_path: &Path,
+) -> Result<WorkingPartCounts, AppError> {
+    let out = runner
+        .run_read(
+            repo_path,
+            &["status", "--porcelain=v2", "-z", "--untracked-files=all"],
+        )
+        .await?;
+    if !out.success() {
+        return Err(AppError::other(out.stderr));
+    }
+
+    let mut counts = WorkingPartCounts {
+        unstaged: 0,
+        staged: 0,
+    };
+    let parts: Vec<&[u8]> = out.stdout.split(|b| *b == 0).collect();
+    let mut i = 0;
+    while i < parts.len() {
+        let part = parts[i];
+        if part.is_empty() {
+            i += 1;
+            continue;
+        }
+        if part.starts_with(b"? ") {
+            counts.unstaged += 1;
+            i += 1;
+            continue;
+        }
+        if part.starts_with(b"u ") {
+            counts.unstaged += 1;
+            counts.staged += 1;
+            i += 1;
+            continue;
+        }
+        if part.starts_with(b"1 ") || part.starts_with(b"2 ") {
+            let line = String::from_utf8_lossy(part);
+            let tokens: Vec<&str> = line.split(' ').collect();
+            if tokens.len() >= 2 {
+                let xy = tokens[1].as_bytes();
+                if xy.len() >= 2 {
+                    if xy[0] != b'.' {
+                        counts.staged += 1;
+                    }
+                    if xy[1] != b'.' {
+                        counts.unstaged += 1;
+                    }
+                }
+            }
+            if part.starts_with(b"2 ") {
+                // Rename records carry the original path in the next field.
+                i += 1;
+            }
+        }
+        i += 1;
+    }
+    Ok(counts)
+}
+
+/// Diff one file for the Unstaged (index→worktree) or Staged (HEAD→index)
+/// view used by partial staging. The two trees are kept separate because a
+/// patch generated from the combined HEAD→worktree diff would not apply to the
+/// index when some lines are already staged.
+pub async fn get_working_file_diff(
+    runner: &GitRunner,
+    repo_path: &Path,
+    path: &str,
+    part: &str,
+    context_lines: u32,
+    ignore_whitespace: bool,
+    force: bool,
+) -> Result<DiffFile, AppError> {
+    let ctx_flag = format!("-U{}", context_lines);
+    let mut args = vec!["diff", "-M", &ctx_flag, "--no-color", "--no-ext-diff"];
+    if ignore_whitespace {
+        args.push("-w");
+    }
+
+    let staged = part == "staged";
+    if staged {
+        args.push("--cached");
+        let head = runner
+            .run_read(repo_path, &["rev-parse", "--verify", "HEAD"])
+            .await
+            .map(|o| o.success())
+            .unwrap_or(false);
+        if head {
+            args.push("HEAD");
+        }
+    }
+    args.push("--");
+    args.push(path);
+
+    let out = runner.run_read_literal(repo_path, &args).await?;
+    if !out.success() {
+        return Err(AppError::other(out.stderr));
+    }
+
+    let mut stdout = out.stdout;
+    if stdout.is_empty() && !staged {
+        // Only untracked files have no index entry; for tracked files an empty
+        // diff genuinely means "no unstaged changes".
+        let tracked = runner
+            .run_read_literal(repo_path, &["ls-files", "--error-unmatch", "--", path])
+            .await
+            .map(|o| o.success())
+            .unwrap_or(false);
+        if !tracked && repo_path.join(path).exists() {
+            let null_path = if cfg!(windows) { "NUL" } else { "/dev/null" };
+            let mut no_index_args =
+                vec!["diff", "--no-index", &ctx_flag, "--no-color", "--no-ext-diff"];
+            if ignore_whitespace {
+                no_index_args.push("-w");
+            }
+            no_index_args.push("--");
+            no_index_args.push(null_path);
+            no_index_args.push(path);
+            let out = runner.run_read(repo_path, &no_index_args).await?;
+            stdout = out.stdout;
+        }
+    }
+
+    let diff_text = String::from_utf8_lossy(&stdout).to_string();
+    let change = FileChange {
+        path: path.to_string(),
+        old_path: None,
+        status: FileStatus::Modified,
+        additions: 0,
+        deletions: 0,
+        binary: diff_text.contains("Binary files"),
+        old_mode: None,
+        new_mode: None,
+    };
+
+    Ok(parse_unified_diff(&diff_text, change, force))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
