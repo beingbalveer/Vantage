@@ -1,4 +1,4 @@
-# Relay: Performance & Resource Budgets Verification
+# Vantage: Performance & Resource Budgets Verification
 
 This document records the resource and latency benchmarks against the requirements defined in Section 11 of `PRODUCT_SPEC.md`.
 
@@ -23,7 +23,7 @@ This document records the resource and latency benchmarks against the requiremen
 ## 2. Architectural Design Details Supporting Budgets
 
 ### 2.1 Low-Memory Desktop Shell
-Unlike Electron which ships a bundled Chromium runtime and Node.js instance (~250–350 MB idle per window), Relay utilizes **Tauri v2** with the native OS webview (WKWebView on macOS, WebView2 on Windows, WebKitGTK on Linux). This keeps memory consumption under 180 MB even with multiple active repos and terminals.
+Unlike Electron which ships a bundled Chromium runtime and Node.js instance (~250–350 MB idle per window), Vantage utilizes **Tauri v2** with the native OS webview (WKWebView on macOS, WebView2 on Windows, WebKitGTK on Linux). This keeps memory consumption under 180 MB even with multiple active repos and terminals.
 
 ### 2.2 Concurrency & Process Semaphore
 To avoid thrashing the CPU when multiple repositories are added, `GitRunner` implements:

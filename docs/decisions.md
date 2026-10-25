@@ -1,8 +1,8 @@
-# Relay: Architectural & Design Decisions
+# Vantage: Architectural & Design Decisions
 
 ## 1. Stack & Runtime
 - **Desktop Shell**: Tauri v2 (`@tauri-apps/api` v2, `@tauri-apps/cli` v2) with Rust backend and native system webview. Keeps release binary lightweight and RAM under budget.
-- **Frontend**: Svelte 5 + TypeScript + Vite. Hand-written CSS using GitHub Primer and Relay design tokens.
+- **Frontend**: Svelte 5 + TypeScript + Vite. Hand-written CSS using GitHub Primer and Vantage design tokens.
 - **Git Interop**: Standard `tokio::process::Command` shelling out to the local `git` CLI with `GIT_OPTIONAL_LOCKS=0`, `LC_ALL=C`, and `GIT_TERMINAL_PROMPT=0`.
 - **Terminal**: `portable-pty` on Rust backend, `@xterm/xterm` + `@xterm/addon-fit` on frontend with 256 KB ring-buffer session replay.
 

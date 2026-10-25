@@ -525,7 +525,7 @@
       },
       {
         id: "cmd_remove_repo",
-        title: "Remove current repository from Relay…",
+        title: "Remove current repository from Vantage…",
         action: () => {
           $paletteOpen = false;
           const currentPanes = get(panes);

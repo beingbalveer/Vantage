@@ -402,7 +402,7 @@
       <button class="menu-item" onclick={handleCopyPath}>Copy path</button>
       <button class="menu-item" onclick={handleReveal}>Reveal in file manager</button>
       <div class="menu-divider"></div>
-      <button class="menu-item danger" onclick={handleRemove}>Remove from Relay…</button>
+      <button class="menu-item danger" onclick={handleRemove}>Remove from Vantage…</button>
     </div>
   {/if}
 

@@ -1,13 +1,13 @@
-# Relay: Product & Engineering Spec
+# Vantage: Product & Engineering Spec
 
-> Working name: **Relay** (placeholder, rename freely).
+> Product name: **Vantage**. (Originally prototyped under the working name "Relay"; identifiers such as the `refs/relay/backup/*` ref namespace and the legacy `relay_*` storage keys are intentionally kept for backward compatibility.)
 > Audience: an AI coding agent that will build this app end to end. Read this file fully, then read `DESIGN.md`. Build milestone by milestone (section 14). Do not add features that are not in this spec.
 
 ---
 
 ## 1. Summary
 
-Relay is a **lightweight, local, multi-repo Git client and read-only code viewer** for a solo developer who lets AI agents (Codex, Antigravity, etc.) write and commit the code. The human does not hand-edit code in this app. The human **reviews, understands, and steers**.
+Vantage is a **lightweight, local, multi-repo Git client and read-only code viewer** for a solo developer who lets AI agents (Codex, Antigravity, etc.) write and commit the code. The human does not hand-edit code in this app. The human **reviews, understands, and steers**.
 
 One line: *GitHub Desktop's calm simplicity, but multi-repo, history-first, with a "reviewed" marker, split panes, and a terminal per repo.*
 
@@ -52,8 +52,8 @@ No PR / issue / GitHub API integration. No merge, rebase, cherry-pick UI. No bra
 
 | Term | Definition |
 |---|---|
-| **Repo** | A local git repository registered in Relay by its absolute path. |
-| **Reviewed marker** | Per repo, a stored commit SHA meaning "I have reviewed everything up to here." Stored in Relay's own state file, never inside the repo. |
+| **Repo** | A local git repository registered in Vantage by its absolute path. |
+| **Reviewed marker** | Per repo, a stored commit SHA meaning "I have reviewed everything up to here." Stored in Vantage's own state file, never inside the repo. |
 | **New commits** | Commits reachable from `HEAD` but not from the marker: `git rev-list <marker>..HEAD`. Count shown as `+N` badge. |
 | **Review range** | A diff scope. Default scope when a repo has new commits: **marker to HEAD, combined** (net effect). Can also be one commit or a shift-selected range of commits. |
 | **Uncommitted pseudo-commit** | A virtual row pinned at the top of the history list when the working tree is dirty. Selecting it shows working tree changes and reveals the commit box. |
@@ -155,7 +155,7 @@ relay/
 
 - A **global semaphore (8)** limits concurrent `git` processes.
 - A **per-repo `tokio::sync::Mutex`** serializes *write* operations (commit, revert, reset, pull, push, checkout, discard). Read operations do not take it.
-- All read-only background `git` calls set env `GIT_OPTIONAL_LOCKS=0` so Relay never blocks the agent's own git operations with `index.lock`.
+- All read-only background `git` calls set env `GIT_OPTIONAL_LOCKS=0` so Vantage never blocks the agent's own git operations with `index.lock`.
 - Every `git` call has a **timeout** (default 20 s; 120 s for fetch/pull/push) and returns a typed error on expiry.
 - Always set env: `LC_ALL=C`, `GIT_TERMINAL_PROMPT=0` (no interactive prompts, fail fast), `GIT_PAGER=cat`, and pass `-c core.quotepath=off -c color.ui=never`.
 - Parse machine formats only (`-z`, `--porcelain=v2`, `--format` with `%x1f`/`%x1e` separators). Never parse human output.
@@ -313,7 +313,7 @@ Each feature has an ID. Acceptance criteria are in section 14.
 - **Add repo:** `Mod+O` (folder picker), drag and drop a folder onto the sidebar, or palette command "Add repository". Validate with `rev-parse`; if the folder is not a repo, toast: "That folder isn't a Git repository." If a parent folder contains repos, offer "Scan this folder for repositories" (depth 2, list with checkboxes).
 - **Duplicate** (same canonical path): select the existing one instead.
 - **First add:** marker initializes to current `HEAD` (nothing new). Dialog option: "Treat the last N commits as unreviewed" (N input, default 0).
-- **Remove:** context menu "Remove from Relay" (does not touch disk). Confirm only if the repo has review notes.
+- **Remove:** context menu "Remove from Vantage" (does not touch disk). Confirm only if the repo has review notes.
 - **Rename (display only), pin, reorder** (drag), "Reveal in file manager", "Copy path", "Open in external editor".
 - **Missing path** (folder deleted/moved): row shows a warning icon, dimmed; actions: "Locate…" (re-pick folder) or "Remove".
 - Order: pinned first (manual order), then by `last_activity_at` descending. A setting "Sort: Activity / Manual" (default Activity).
@@ -509,7 +509,7 @@ Goal: sidebar and history are live without burning CPU, even with 6 repos.
 
 1. **Commit/ref watcher (per registered repo, always on):** `notify` watching (non-recursive where possible) `.git/HEAD`, `.git/refs/` (recursive), `.git/logs/HEAD`, `.git/index`, `.git/packed-refs`. Debounce 250 ms. On event: refresh `RepoStatus` and, if HEAD moved, emit `repo://head-changed` with the new SHA. For worktrees or `.git` files (gitdir pointer), resolve the real git dir first.
 2. **Status poller:** `git status` per repo to refresh `dirty_count`:
-   - Visible repo: every **4 s** while the window is focused, and immediately on window focus, and after any Relay write op.
+   - Visible repo: every **4 s** while the window is focused, and immediately on window focus, and after any Vantage write op.
    - Non-visible repos: every **20 s** while focused; paused when the window is unfocused (resume on focus).
    - Skip a cycle if the previous status call for that repo is still running. If a status call exceeds 5 s, double that repo's interval (max 60 s) and show "Large repository: status updates slowed" in the repo row tooltip.
 3. **Activity:** `last_activity_at` = max(HEAD reflog mtime, newest `dirty` file mtime from the last status). No extra watching required.
@@ -584,11 +584,11 @@ If a budget is missed, fix it before moving to the next milestone (profile first
 
 ## 12. Error handling & edge cases
 
-- **`git` not found:** full-window first-run screen: "Relay needs Git. Install it from git-scm.com, then restart." with a Retry button (re-runs `env_check`).
+- **`git` not found:** full-window first-run screen: "Vantage needs Git. Install it from git-scm.com, then restart." with a Retry button (re-runs `env_check`).
 - **Repo path missing / permissions:** row warning state (F1). No crash.
 - **Detached HEAD:** branch shown as `HEAD detached at 7f3a2c1`; sync button hidden; marker logic still works.
 - **Empty repo (no commits):** History shows "No commits yet." Uncommitted pseudo-commit still works; first commit allowed. Marker is `None`.
-- **Marker missing (gc'd) or diverged (rebase/reset happened outside Relay):** `marker_state` set. Range header shows a yellow notice: "History was rewritten since you last reviewed." with buttons **Compare from merge-base** (uses `git merge-base {M} HEAD` if the marker still exists, else shows last 20 commits) and **Reset marker to HEAD**.
+- **Marker missing (gc'd) or diverged (rebase/reset happened outside Vantage):** `marker_state` set. Range header shows a yellow notice: "History was rewritten since you last reviewed." with buttons **Compare from merge-base** (uses `git merge-base {M} HEAD` if the marker still exists, else shows last 20 commits) and **Reset marker to HEAD**.
 - **Shallow clones / unborn branches / bare repos:** bare repos rejected on add ("Bare repositories aren't supported").
 - **Merge commits in log:** shown as normal rows with a small "merge" chip. Their diff uses first-parent (`-m --first-parent` for `git show`). Never crash on multiple parents.
 - **Rebase/merge in progress** (`.git/rebase-merge`, `MERGE_HEAD`): banner in the pane "Operation in progress. Finish it in the terminal." and write actions disabled.
@@ -712,7 +712,7 @@ Build in order. Each milestone ends with: all tests pass, `cargo clippy -- -D wa
 
 | Topic | Default |
 |---|---|
-| App name | Relay (placeholder) |
+| App name | Vantage |
 | Operating system | Cross-platform; confirm user's OS for first packaging |
 | Marker scope | Per repo (not per branch) |
 | Who pushes | User pushes manually; no auto-push/pull |
@@ -722,4 +722,4 @@ Build in order. Each milestone ends with: all tests pass, `cargo clippy -- -D wa
 
 ## 18. Kickoff prompt (give this to the AI agent)
 
-> You are building "Relay", a lightweight Tauri v2 + Rust + Svelte 5 desktop Git client for reviewing AI-written code across multiple repos. Read `PRODUCT_SPEC.md` and `DESIGN.md` completely before writing code. Work strictly milestone by milestone (section 14), starting at M0. After each milestone: run tests, clippy, fmt, verify the acceptance criteria, update `docs/decisions.md`, and commit. Do not implement features outside the spec. Keep the app lightweight (budgets in section 11 are requirements). When finished with a milestone, summarize what you did, what you verified, and any deviations, then continue to the next.
+> You are building "Vantage", a lightweight Tauri v2 + Rust + Svelte 5 desktop Git client for reviewing AI-written code across multiple repos. Read `PRODUCT_SPEC.md` and `DESIGN.md` completely before writing code. Work strictly milestone by milestone (section 14), starting at M0. After each milestone: run tests, clippy, fmt, verify the acceptance criteria, update `docs/decisions.md`, and commit. Do not implement features outside the spec. Keep the app lightweight (budgets in section 11 are requirements). When finished with a milestone, summarize what you did, what you verified, and any deviations, then continue to the next.

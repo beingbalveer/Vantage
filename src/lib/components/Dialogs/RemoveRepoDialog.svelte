@@ -43,12 +43,12 @@
 
 <Modal
   open={isStoreActive && !!repo}
-  title="Remove from Relay"
+  title="Remove from Vantage"
   onclose={handleClose}
 >
   <div class="remove-dialog-content">
     <p class="text-base text-strong">
-      Remove "{repo?.name}{repo?.branch ? ` (${repo.branch})` : ""}" from Relay?
+      Remove "{repo?.name}{repo?.branch ? ` (${repo.branch})` : ""}" from Vantage?
     </p>
     <p class="text-sm text-muted">
       Your repository files on disk will not be touched.
@@ -69,7 +69,7 @@
       disabled={isRemoving}
       loading={isRemoving}
     >
-      {isRemoving ? "Removing…" : "Remove from Relay"}
+      {isRemoving ? "Removing…" : "Remove from Vantage"}
     </Button>
   {/snippet}
 </Modal>
