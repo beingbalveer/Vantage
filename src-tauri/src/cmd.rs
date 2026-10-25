@@ -1,4 +1,5 @@
 use crate::error::AppError;
+use crate::git::binary::{get_file_diff_meta, FileDiffMeta};
 use crate::git::blob::{get_blob_lines, get_blob_text, get_tree_list, BlobTextResult};
 use crate::git::coauthors::{recent_contributors as git_recent_contributors, Contributor};
 use crate::git::diff::{get_scope_file_diff, get_scope_files};
@@ -686,6 +687,36 @@ pub async fn tree_list(
     };
 
     get_tree_list(&state.runner, &repo_path, &rev).await
+}
+
+/// Old/new sizes (and bounded image previews) for one changed file. Lets the
+/// diff viewer show an honest binary state instead of "No changes in this file".
+#[tauri::command]
+pub async fn file_diff_meta(
+    state: State<'_, AppState>,
+    id: String,
+    scope: DiffScope,
+    path: String,
+    old_path: Option<String>,
+) -> Result<FileDiffMeta, AppError> {
+    let repo_path = {
+        let data = state.data.lock().await;
+        let entry = data
+            .repos
+            .iter()
+            .find(|r| r.id == id)
+            .ok_or_else(|| AppError::not_found("Repository not found"))?;
+        PathBuf::from(&entry.path)
+    };
+
+    get_file_diff_meta(
+        &state.runner,
+        &repo_path,
+        &scope,
+        &path,
+        old_path.as_deref(),
+    )
+    .await
 }
 
 #[tauri::command]

@@ -1,7 +1,21 @@
 <script lang="ts">
-  import type { DiffFile, DiffMode, Hunk, DiffLine, NoteSide } from "../../types";
+  import { tick } from "svelte";
+  import { isFeatureEnabled } from "../../featureFlags";
   import type { NormalizedError } from "../../asyncState";
   import { emptyDiffMessage } from "../../asyncState";
+  import Skeleton from "../common/Skeleton.svelte";
+  import EmptyState from "../common/EmptyState.svelte";
+  import Banner from "../common/Banner.svelte";
+  import type {
+    DiffFile,
+    DiffMode,
+    DiffScope,
+    FileChange,
+    FileDiffMeta,
+    Hunk,
+    DiffLine,
+    NoteSide,
+  } from "../../types";
   import { getLanguageFromPath, highlightCodeLines } from "../../highlight";
   import * as api from "../../api";
   import { repos, activeRepoId } from "../../stores/repos";
@@ -9,9 +23,10 @@
   import { addToast } from "../../stores/ui";
   import { settings, updateSettings } from "../../stores/settings";
   import Icon from "../common/Icon.svelte";
-  import Skeleton from "../common/Skeleton.svelte";
-  import EmptyState from "../common/EmptyState.svelte";
-  import Banner from "../common/Banner.svelte";
+  import BinaryDiff from "./BinaryDiff.svelte";
+  import ImageDiff from "./ImageDiff.svelte";
+  import { classifyDiffContent } from "../../diff-content";
+  import { buildSplitRows, type SplitRow, type SplitCell } from "../../diff-split";
 
   interface Props {
     diffFile: DiffFile | null;
@@ -23,6 +38,10 @@
     pending?: boolean;
     error?: NormalizedError | null;
     onretry?: () => void;
+    /** Active diff scope; needed to resolve old/new revisions for binary previews. */
+    scope?: DiffScope | null;
+    /** Matching file-list entry, used for the authoritative binary flag/status. */
+    fileChange?: FileChange | null;
     onexpandcontext?: (oldStart: number, count: number) => void;
     onviewfile?: (path: string) => void;
     onloadforce?: () => void;
@@ -38,14 +57,30 @@
     pending = false,
     error = null,
     onretry,
+    scope = null,
+    fileChange = null,
     onexpandcontext,
     onviewfile,
     onloadforce,
   }: Props = $props();
 
-  // Distinct copy for a genuinely empty diff vs a binary file (the binary
-  // *rendering* is owned elsewhere; this only names the state). (ALPH-150)
-  let emptyCopy = $derived(emptyDiffMessage(Boolean(diffFile?.change.binary)));
+  /** File-list metadata wins when it describes the same path (numstat is the
+   *  source of truth for `binary`); the standalone diff fills in the rest. */
+  let effectiveChange = $derived(
+    fileChange && diffFile && fileChange.path === diffFile.change.path
+      ? fileChange
+      : (diffFile?.change ?? null)
+  );
+
+  /** text | binary | image — images win by extension, else git's binary flag. */
+  let contentKind = $derived(
+    effectiveChange
+      ? classifyDiffContent(
+          effectiveChange.path,
+          effectiveChange.binary || Boolean(diffFile?.change.binary)
+        )
+      : "text"
+  );
 
   // Active repo ID resolution
   let effectiveRepoId = $derived(
@@ -56,8 +91,124 @@
     Boolean(diffFile && (diffFile.truncated || (diffFile as any).isTruncated))
   );
 
+  // Binary / image metadata (sizes + bounded previews). Fetched lazily only for
+  // non-text content, guarded so a stale response never clobbers a newer file.
+  let fileMeta = $state<FileDiffMeta | null>(null);
+  let fileMetaLoading = $state(false);
+  let fileMetaError = $state(false);
+  let fileMetaGen = 0;
+
+  $effect(() => {
+    const df = diffFile;
+    const change = effectiveChange;
+    const sc = scope;
+    const kind = contentKind;
+    const repo = effectiveRepoId;
+    if (!df || !repo || (kind !== "binary" && kind !== "image")) {
+      fileMeta = null;
+      fileMetaLoading = false;
+      fileMetaError = false;
+      return;
+    }
+    const gen = ++fileMetaGen;
+    const path = change?.path ?? df.change.path;
+    const oldPath = change?.oldPath ?? null;
+    const activeScope: DiffScope = sc ?? { type: "commit", sha: rev };
+    fileMeta = null;
+    fileMetaLoading = true;
+    fileMetaError = false;
+    (async () => {
+      try {
+        const meta = await api.fileDiffMeta(repo, activeScope, path, oldPath);
+        if (gen !== fileMetaGen) return;
+        fileMeta = meta;
+      } catch (e) {
+        if (gen !== fileMetaGen) return;
+        console.error("Failed to load binary/image metadata:", e);
+        fileMeta = null;
+        fileMetaError = true;
+      } finally {
+        if (gen === fileMetaGen) fileMetaLoading = false;
+      }
+    })();
+  });
+
+  // Preserve the reader's place when switching unified ↔ split; the two modes
+  // have different row heights, so keep the relative scroll position.
+  let textBodyEl = $state<HTMLDivElement | null>(null);
+
+  async function setDiffMode(mode: DiffMode) {
+    if (mode === diffMode) return;
+    const el = textBodyEl;
+    const ratio =
+      el && el.scrollHeight > el.clientHeight
+        ? el.scrollTop / (el.scrollHeight - el.clientHeight)
+        : null;
+
+    const saving = updateSettings({ ...$settings, diffMode: mode });
+    await tick();
+    if (el && textBodyEl && ratio != null) {
+      textBodyEl.scrollTop = ratio * (textBodyEl.scrollHeight - textBodyEl.clientHeight);
+    }
+    await saving;
+  }
+
+  // ---- Split (side-by-side) helpers ----
+
+  /** Pair a row's left/right cells with their side so markup can be shared. */
+  function cellPairs(row: SplitRow): [("old" | "new"), SplitCell][] {
+    if (row.type !== "line") return [];
+    return [
+      ["old", row.left],
+      ["new", row.right],
+    ];
+  }
+
+  function isCellSelected(cell: SplitCell, side: "old" | "new"): boolean {
+    if (!selectedRange || cell.kind === "empty") return false;
+    if (selectedRange.side !== side) return false;
+    const num = side === "old" ? cell.oldNo : cell.newNo;
+    if (num == null) return false;
+    return num >= selectedRange.start && num <= selectedRange.end;
+  }
+
+  function splitGutterNumber(cell: SplitCell, side: "old" | "new"): number | null {
+    return side === "old" ? cell.oldNo : cell.newNo;
+  }
+
+  function splitSign(cell: SplitCell, side: "old" | "new"): string {
+    if (cell.kind === "context") return "\u00a0";
+    if (side === "old" && cell.kind === "del") return "−";
+    if (side === "new" && cell.kind === "add") return "+";
+    return "\u00a0";
+  }
+
+  function statusLabel(kind: string): string {
+    switch (kind) {
+      case "added":
+        return "added";
+      case "deleted":
+        return "deleted";
+      case "renamed":
+        return "renamed";
+      case "untracked":
+        return "added";
+      default:
+        return "modified";
+    }
+  }
+
+  function statusHasOld(kind: string): boolean {
+    return kind !== "added" && kind !== "untracked";
+  }
+
+  function statusHasNew(kind: string): boolean {
+    return kind !== "deleted";
+  }
+
   // Local reactive copy of hunks for context expansion
   let localHunks = $state<Hunk[]>([]);
+  let emptyCopy = $derived(emptyDiffMessage(Boolean(diffFile?.change.binary)));
 
   $effect(() => {
     if (diffFile && diffFile.hunks) {
@@ -327,6 +478,11 @@
         e.preventDefault();
         expandAllContext();
       }
+    } else if (e.key === "s" || e.key === "S") {
+      if (!e.metaKey && !e.ctrlKey && !e.altKey) {
+        e.preventDefault();
+        setDiffMode(diffMode === "split" ? "unified" : "split");
+      }
     } else if (e.key === "Escape") {
       selectedRange = null;
     }
@@ -389,6 +545,47 @@
 
 <svelte:window onkeydown={handleKeydown} />
 
+{#snippet expandAboveRow(hIdx: number, gapAbove: number)}
+  <div class="expand-row font-mono text-xs">
+    <span class="expand-label flex items-center gap-1">
+      <Icon name="arrow-up-down" size={11} strokeWidth={2.2} />
+      <span>{gapAbove} hidden lines</span>
+    </span>
+    {#if gapAbove <= 20}
+      <button class="expand-btn" onclick={() => expandAboveHunk(hIdx, gapAbove)}>
+        Show all {gapAbove} hidden lines
+      </button>
+    {:else}
+      <button
+        class="expand-btn inline-flex items-center gap-1"
+        onclick={() => expandAboveHunk(hIdx, 20)}
+      >
+        <span>Show 20 lines above</span>
+        <Icon name="arrow-up" size={11} strokeWidth={2.2} />
+      </button>
+      <button class="expand-btn" onclick={() => expandAboveHunk(hIdx, gapAbove)}>
+        Show all {gapAbove} lines
+      </button>
+    {/if}
+  </div>
+{/snippet}
+
+{#snippet expandBelowRow(hIdx: number)}
+  <div class="expand-row font-mono text-xs">
+    <span class="expand-label flex items-center gap-1">
+      <Icon name="arrow-up-down" size={11} strokeWidth={2.2} />
+      <span>Next hidden lines</span>
+    </span>
+    <button
+      class="expand-btn inline-flex items-center gap-1"
+      onclick={() => expandBelowHunk(hIdx, 20)}
+    >
+      <span>Show 20 lines below</span>
+      <Icon name="arrow-down" size={11} strokeWidth={2.2} />
+    </button>
+  </div>
+{/snippet}
+
 <div class="diff-view-container">
   {#if loading}
     <div class="diff-loading">
@@ -400,8 +597,7 @@
       <span class="text-sm text-muted">Couldn't load this diff.</span>
     </div>
   {:else if !diffFile && pending}
-    <!-- A file is selected but its diff has not arrived yet; stay blank rather
-         than flashing "Select a file". -->
+    <!-- A file is selected but its diff has not arrived yet -->
   {:else if !diffFile}
     <div class="empty-diff">
       <span class="text-muted">Select a file to view changes</span>
@@ -419,28 +615,139 @@
     <div class="file-header">
       <div class="file-path-group">
         <span class="file-path" title={diffFile.change.path}>{diffFile.change.path}</span>
-        {#if diffFile.change.additions > 0 || diffFile.change.deletions > 0}
+        {#if (effectiveChange?.additions ?? 0) > 0 || (effectiveChange?.deletions ?? 0) > 0}
           <span class="file-stats text-xs font-mono">
-            {#if diffFile.change.additions > 0}
-              <span class="stat-add">+{diffFile.change.additions}</span>
+            {#if (effectiveChange?.additions ?? 0) > 0}
+              <span class="stat-add">+{effectiveChange?.additions}</span>
             {/if}
-            {#if diffFile.change.deletions > 0}
-              <span class="stat-del">−{diffFile.change.deletions}</span>
+            {#if (effectiveChange?.deletions ?? 0) > 0}
+              <span class="stat-del">−{effectiveChange?.deletions}</span>
             {/if}
           </span>
         {/if}
       </div>
 
+      {#if contentKind === "text" && localHunks.length > 0}
+        <div class="mode-toggle" role="group" aria-label="Diff layout">
+          <button
+            class="mode-btn"
+            class:active={diffMode === "unified"}
+            aria-pressed={diffMode === "unified"}
+            title="Unified diff (S to toggle)"
+            onclick={() => setDiffMode("unified")}
+          >Unified</button>
+          <button
+            class="mode-btn"
+            class:active={diffMode === "split"}
+            aria-pressed={diffMode === "split"}
+            title="Side-by-side diff (S to toggle)"
+            onclick={() => setDiffMode("split")}
+          >Split</button>
+        </div>
+      {/if}
     </div>
 
+    {#if isFeatureEnabled("ALPH_158_SPLIT_IMAGE_DIFF") && contentKind === "image"}
+      <!-- Image diff: old vs new side by side, sizes/dimensions per side. -->
+      <div class="diff-body">
+        <ImageDiff
+          path={diffFile.change.path}
+          oldImage={fileMeta?.oldImage ?? null}
+          newImage={fileMeta?.newImage ?? null}
+          oldSize={fileMeta?.oldSize ?? null}
+          newSize={fileMeta?.newSize ?? null}
+          oldExists={fileMeta?.oldExists ??
+            statusHasOld(effectiveChange?.status ?? diffFile.change.status)}
+          newExists={fileMeta?.newExists ??
+            statusHasNew(effectiveChange?.status ?? diffFile.change.status)}
+          oldTooLarge={fileMeta?.oldTooLarge ?? false}
+          newTooLarge={fileMeta?.newTooLarge ?? false}
+          capBytes={fileMeta?.capBytes ?? 4 * 1024 * 1024}
+          status={statusLabel(effectiveChange?.status ?? diffFile.change.status)}
+          loading={fileMetaLoading || (!fileMeta && !fileMetaError)}
+          error={fileMetaError}
+        />
+      </div>
+    {:else if isFeatureEnabled("ALPH_158_SPLIT_IMAGE_DIFF") && contentKind === "binary"}
+      <!-- Binary diff: honest size report instead of "No changes in this file". -->
+      <div class="diff-body">
+        <BinaryDiff
+          path={diffFile.change.path}
+          oldSize={fileMeta?.oldSize ?? null}
+          newSize={fileMeta?.newSize ?? null}
+          oldExists={fileMeta?.oldExists ??
+            statusHasOld(effectiveChange?.status ?? diffFile.change.status)}
+          newExists={fileMeta?.newExists ??
+            statusHasNew(effectiveChange?.status ?? diffFile.change.status)}
+          status={statusLabel(effectiveChange?.status ?? diffFile.change.status)}
+          loading={fileMetaLoading || (!fileMeta && !fileMetaError)}
+          detail={fileMetaError ? "Couldn't read blob sizes from Git for this file." : undefined}
+        />
+      </div>
+    {:else}
     <!-- Hunks Body -->
-    <div class="diff-body">
+    <div class="diff-body" bind:this={textBodyEl}>
         {#if localHunks.length === 0}
           <EmptyState
             icon={diffFile.change.binary ? "binary" : "check"}
             title={emptyCopy.title}
             description={emptyCopy.description}
           />
+        {:else if diffMode === "split"}
+          <!-- Split (side-by-side) rendering -->
+          <div class="split-grid">
+            {#each localHunks as hunk, hIdx (hIdx)}
+              {@const prevEnd = hIdx > 0 ? getHunkNewEnd(localHunks[hIdx - 1]) : 0}
+              {@const gapAbove = hunk.newStart - 1 - prevEnd}
+              {#if gapAbove > 0}
+                {@render expandAboveRow(hIdx, gapAbove)}
+              {/if}
+
+              <div class="hunk-header font-mono text-xs">
+                {hunkLabel(hunk)}
+              </div>
+
+              {#each buildSplitRows(hunk.lines) as row}
+                {#if row.type === "note"}
+                  <div class="split-note font-mono text-xs">{row.text}</div>
+                {:else}
+                  {#each cellPairs(row) as [side, cell]}
+                    <div
+                      class="split-cell {side} {cell.kind}"
+                      class:selected={isCellSelected(cell, side)}
+                      class:empty={cell.kind === "empty"}
+                    >
+                      {#if cell.kind === "empty"}
+                        <div class="empty-hatch"></div>
+                      {:else}
+                        <div
+                          class="gutter-num font-mono"
+                          role="button"
+                          tabindex="0"
+                          onclick={(e) => handleLineClick(splitGutterNumber(cell, side), side, e)}
+                          onkeydown={(e) =>
+                            e.key === "Enter" &&
+                            handleLineClick(splitGutterNumber(cell, side), side, e as any)}
+                        >{splitGutterNumber(cell, side) ?? ""}</div>
+                        <div class="sign font-mono">{splitSign(cell, side)}</div>
+                        <div class="code-text font-mono" title={cell.text}>
+                          {@html renderWordDiff(
+                            cell.text,
+                            cell.wordRanges,
+                            cell.kind === "del" ? "del" : cell.kind === "add" ? "add" : "context"
+                          )}
+                        </div>
+                      {/if}
+                    </div>
+                  {/each}
+                {/if}
+              {/each}
+
+              {#if hIdx === localHunks.length - 1}
+                {@render expandBelowRow(hIdx)}
+              {/if}
+            {/each}
+          </div>
         {:else}
           {#each localHunks as hunk, hIdx (hIdx)}
             <!-- Gap above hunk -->
@@ -537,9 +844,10 @@
           {/each}
         {/if}
     </div>
+    {/if}
 
     <!-- Floating Action Bar for Range Selection -->
-    {#if selectedRange}
+    {#if selectedRange && contentKind === "text"}
       <div class="floating-action-bar">
         <span class="range-badge font-mono text-xs">
           L{selectedRange.start}{selectedRange.start !== selectedRange.end ? `–L${selectedRange.end}` : ""}
@@ -582,20 +890,6 @@
     align-items: center;
     justify-content: center;
     height: 200px;
-  }
-
-  .diff-loading {
-    flex: 1;
-    overflow: hidden;
-    padding-top: 43px;
-  }
-
-  .diff-state-fill {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    flex: 1;
-    padding: 24px;
   }
 
   .truncated-card {
@@ -664,6 +958,44 @@
   }
   .stat-del {
     color: var(--danger);
+  }
+
+  /* Unified ↔ split segmented control (DESIGN.md §2.6). */
+  .mode-toggle {
+    display: inline-flex;
+    align-items: center;
+    gap: 2px;
+    padding: 2px;
+    background-color: var(--bg-subtle);
+    border: 1px solid var(--border);
+    border-radius: var(--r-sm);
+    flex-shrink: 0;
+  }
+
+  .mode-btn {
+    height: 22px;
+    padding: 0 10px;
+    border: none;
+    border-radius: var(--r-sm);
+    background-color: transparent;
+    color: var(--text-muted);
+    font-size: 11px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: background-color 80ms linear, color 80ms linear;
+  }
+  .mode-btn:hover {
+    background-color: var(--bg-muted);
+    color: var(--text);
+  }
+  .mode-btn.active {
+    background-color: var(--bg);
+    color: var(--text);
+    box-shadow: 0 1px 2px var(--border);
+  }
+  .mode-btn:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 1px;
   }
 
 
@@ -855,6 +1187,110 @@
     color: #353c44;
   }
 
+
+  /* Split (side-by-side) diff: one grid so every row's two cells stay aligned. */
+  .split-grid {
+    display: grid;
+    grid-template-columns: minmax(320px, 1fr) minmax(320px, 1fr);
+    min-width: 100%;
+    align-items: stretch;
+  }
+
+  .split-grid > .hunk-header,
+  .split-grid > .expand-row,
+  .split-grid > .split-note {
+    grid-column: 1 / -1;
+    width: 100%;
+    min-width: 0;
+  }
+  .split-grid > .hunk-header {
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .split-note {
+    height: 25px;
+    line-height: 25px;
+    padding-left: 105px;
+    background-color: var(--bg);
+    color: var(--text-muted);
+    font-size: 11px;
+  }
+
+  .split-cell {
+    display: flex;
+    align-items: stretch;
+    min-height: 25px;
+    line-height: 25px;
+    min-width: 0;
+    overflow: hidden;
+    font-size: 12px;
+    letter-spacing: -0.1px;
+    tab-size: 4;
+    background-color: var(--bg);
+    border-right: 1px solid var(--border-subtle);
+  }
+  .split-cell.new {
+    border-right: none;
+  }
+  .split-cell.add {
+    background-color: var(--diff-add-bg);
+  }
+  .split-cell.del {
+    background-color: var(--diff-del-bg);
+  }
+  .split-cell.selected {
+    background-color: var(--accent-bg);
+  }
+  .split-cell.empty {
+    background-color: var(--bg-subtle);
+  }
+
+  /* The split panes scroll as a whole, so the gutters are not sticky here. */
+  .split-cell .gutter-num,
+  .split-cell .sign {
+    position: static;
+    border-color: var(--border-subtle);
+  }
+  .split-cell.add .gutter-num {
+    color: var(--success);
+    background-color: var(--diff-gutter-add);
+  }
+  .split-cell.del .gutter-num {
+    color: var(--danger);
+    background-color: var(--diff-gutter-del);
+  }
+  .split-cell.add .sign {
+    color: var(--success);
+    background-color: var(--diff-add-bg);
+  }
+  .split-cell.del .sign {
+    color: var(--danger);
+    background-color: var(--diff-del-bg);
+  }
+
+  .split-cell .code-text {
+    min-width: 0;
+    padding-right: 12px;
+    color: var(--text);
+    /* Split panes wrap instead of clipping: every character stays readable and
+       both sides of a row still share one grid row. */
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+  }
+
+  .empty-hatch {
+    flex: 1;
+    height: 100%;
+    background-image: repeating-linear-gradient(
+      135deg,
+      var(--bg-subtle) 0,
+      var(--bg-subtle) 5px,
+      var(--bg-muted) 5px,
+      var(--bg-muted) 6px
+    );
+  }
 
   :global(.diff-add-word) {
     background-color: var(--diff-add-word);

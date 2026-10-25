@@ -1,3 +1,4 @@
+pub mod binary;
 pub mod blob;
 pub mod clone;
 pub mod coauthors;

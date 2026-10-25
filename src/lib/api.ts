@@ -16,6 +16,7 @@ import type {
   FileChange,
   HeadCommitInfo,
   HistoryPage,
+  FileDiffMeta,
   Layout,
   RepoEntry,
   RepoStatus,
@@ -174,6 +175,15 @@ export async function blobText(
 
 export async function treeList(id: string, rev: string): Promise<string[]> {
   return invoke("tree_list", { id, rev });
+}
+
+export async function fileDiffMeta(
+  id: string,
+  scope: DiffScope,
+  path: string,
+  oldPath?: string | null
+): Promise<FileDiffMeta> {
+  return invoke("file_diff_meta", { id, scope, path, oldPath: oldPath ?? null });
 }
 
 export async function blameLine(

@@ -247,6 +247,19 @@ export interface BlobTextResult {
   binary: boolean;
 }
 
+/** Old/new metadata for a single changed file (sizes + bounded image previews). */
+export interface FileDiffMeta {
+  oldSize: number | null;
+  newSize: number | null;
+  oldExists: boolean;
+  newExists: boolean;
+  oldImage: string | null;
+  newImage: string | null;
+  oldTooLarge: boolean;
+  newTooLarge: boolean;
+  capBytes: number;
+}
+
 export interface EnvInfo {
   gitVersion: string;
   shell: string;
