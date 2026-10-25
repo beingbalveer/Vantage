@@ -1,8 +1,9 @@
 <script lang="ts">
-  import { onMount } from "svelte";
+  import { onMount, onDestroy } from "svelte";
   import { loadRepos, repos, statuses, initRepoListeners } from "./lib/stores/repos";
   import { loadSettings } from "./lib/stores/settings";
   import { panes, focusedPaneIndex, setPaneTab } from "./lib/stores/panes";
+  import { dispatchMenuCommand } from "./lib/menu";
   import {
     paletteOpen,
     addRepoDialogOpen,
@@ -38,6 +39,7 @@
 
   let gitVersion = $state("");
   let statusText = $state("Ready");
+  let unlistenMenu: (() => void) | undefined;
 
   // Persistent, non-transient surfacing of a missing/failed Git environment
   // (ALPH-150): the status bar shows the failure with a details affordance and
@@ -94,6 +96,11 @@
   }
 
   onMount(async () => {
+    // Native menu clicks arrive as ids and reuse the palette/shortcut stores.
+    unlistenMenu = await api.onMenuCommand((command) => {
+      void dispatchMenuCommand(command);
+    });
+
     await loadSettings();
     await loadRepos();
     initRepoListeners();
@@ -112,6 +119,10 @@
 
     // Check for updates silently on startup
     checkForAppUpdates(false).catch(() => {});
+  });
+
+  onDestroy(() => {
+    unlistenMenu?.();
   });
 
   function handleGlobalKeydown(e: KeyboardEvent) {

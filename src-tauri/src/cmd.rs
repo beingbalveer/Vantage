@@ -32,6 +32,7 @@ use dunce::canonicalize;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::AtomicU64;
 use std::sync::Arc;
 use tauri::{AppHandle, State};
 use tokio::sync::Mutex;
@@ -44,12 +45,23 @@ pub struct AppState {
     pub watcher_mgr: RepoWatcherManager,
     pub data: Arc<Mutex<PersistedState>>,
     pub startup_warning: Option<String>,
+    /// Bumped by every move/resize and invalidated on quit so only the newest
+    /// debounced window-bounds write lands.
+    pub window_bounds_seq: Arc<AtomicU64>,
+    /// Geometry loaded from disk before the window exists. `layout` is the
+    /// source of truth; the top-level field is a legacy mirror.
+    pub startup_window_bounds: Option<WindowBounds>,
 }
 
 impl AppState {
     pub fn new() -> Result<Self, AppError> {
         let persistence = StatePersistence::new()?;
         let (data, startup_warning) = persistence.load();
+        let startup_window_bounds = data
+            .layout
+            .window_bounds
+            .clone()
+            .or_else(|| data.window_bounds.clone());
         Ok(Self {
             runner: Arc::new(GitRunner::new()),
             persistence,
@@ -57,6 +69,8 @@ impl AppState {
             watcher_mgr: RepoWatcherManager::new(),
             data: Arc::new(Mutex::new(data)),
             startup_warning,
+            window_bounds_seq: Arc::new(AtomicU64::new(0)),
+            startup_window_bounds,
         })
     }
 }
@@ -1424,7 +1438,20 @@ pub async fn layout_get(state: State<'_, AppState>) -> Result<Layout, AppError> 
 #[tauri::command]
 pub async fn layout_set(state: State<'_, AppState>, layout: Layout) -> Result<(), AppError> {
     let mut data = state.data.lock().await;
-    data.layout = layout;
+
+    // MERGE RULE: `windowBounds` is owned by the native window event path in
+    // `window.rs`, not by the frontend. The frontend builds `Layout` with
+    // `windowBounds: null`, so a `null` here means "no opinion" and MUST
+    // preserve the stored geometry. Only an explicit `Some(bounds)` replaces
+    // it. Do not blanket-assign `data.layout = layout` again; that silently
+    // clobbers restored window geometry.
+    let merged = crate::window::apply_layout_window_bounds(&data.layout, layout);
+    data.layout = merged;
+    // Keep the legacy mirror in sync when a caller explicitly supplies bounds.
+    if let Some(bounds) = data.layout.window_bounds.clone() {
+        data.window_bounds = Some(bounds);
+    }
+
     state.persistence.save(&data)?;
     Ok(())
 }
