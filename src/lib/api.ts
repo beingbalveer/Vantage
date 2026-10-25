@@ -23,6 +23,7 @@ import type {
   Settings,
   StashEntry,
   StashPushResult,
+  TagInfo,
   TriageFlag,
   RecentContributor,
   UndoCommitResult,
@@ -317,6 +318,29 @@ export async function branchDelete(id: string, name: string, force = false): Pro
 
 export async function branchIsMerged(id: string, name: string): Promise<boolean> {
   return invoke("branch_is_merged", { id, name });
+}
+
+// Tags
+export async function tagList(id: string): Promise<TagInfo[]> {
+  return invoke("tag_list", { id });
+}
+
+export async function tagCreate(
+  id: string,
+  name: string,
+  target: string,
+  annotated: boolean,
+  message?: string
+): Promise<void> {
+  return invoke("tag_create", { id, name, target, annotated, message });
+}
+
+export async function tagPush(id: string, name: string): Promise<void> {
+  return invoke("tag_push", { id, name });
+}
+
+export async function tagPushAll(id: string): Promise<void> {
+  return invoke("tag_push_all", { id });
 }
 
 export async function syncFetch(id: string): Promise<void> {

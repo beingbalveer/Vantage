@@ -6,6 +6,7 @@
   import { panes, focusedPaneIndex, focusPane, setPaneTab } from "../../stores/panes";
   import { addToast, openDialog, activeDialog, paletteOpen, settingsOpen, shortcutsHelpOpen, addRepoDialogOpen, scanFolderDialogOpen, composerRequest } from "../../stores/ui";
   import { refreshSingleStatus } from "../../stores/repos";
+  import { tagsByRepo, loadTags, groupTagsByTarget } from "../../stores/tags";
   import { navigationTarget, navigateTo } from "../../stores/navigation";
   import {
     HISTORY_PAGE_SIZE,
@@ -167,6 +168,17 @@
     loaded: commits.length,
   });
   let historyFooterLabel = $derived(formatHistoryFooter(historyMeta, historyFilterActive));
+
+  // Tags for the current repo, indexed by the commit they point at (ALPH-157).
+  let repoTags = $derived(repo ? $tagsByRepo[repo.id] || [] : []);
+  let tagsByTarget = $derived(groupTagsByTarget(repoTags));
+
+  $effect(() => {
+    const currentId = repo?.id || "";
+    if (currentId) {
+      untrack(() => loadTags(currentId));
+    }
+  });
 
   let unpushedShas = $derived.by(() => {
     const ahead = status?.ahead || 0;
@@ -895,8 +907,10 @@
                   isLocal={unpushedShas.has(commit.sha)}
                   isMenuOpen={isCommitMenuOpen(commit.sha)}
                   flags={flagsBySha[commit.sha] ?? []}
+                  repoId={repo ? repo.id : ""}
+                  tags={tagsByTarget.get(commit.sha) || []}
                   onselect={() => selectCommit(commit.sha)}
-                  onmenu={(pos) => openCommitMenu(commit, pos)}
+                  onmenu={(pos: { x: number; y: number }) => openCommitMenu(commit, pos)}
                 />
               {/each}
 
@@ -942,7 +956,11 @@
         <!-- Detail Layout: Files and Diff columns -->
         <div class="detail-layout">
           {#if selectedCommit && !isUncommittedSelected && showCommitDetails}
-            <CommitHeader commit={selectedCommit} />
+            <CommitHeader
+              commit={selectedCommit}
+              repoId={repo.id}
+              tags={tagsByTarget.get(selectedCommit.sha) || []}
+            />
           {/if}
 
           <div class="detail-split">

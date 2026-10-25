@@ -35,6 +35,10 @@
   import CreateBranchDialog from "./lib/components/Dialogs/CreateBranchDialog.svelte";
   import RenameBranchDialog from "./lib/components/Dialogs/RenameBranchDialog.svelte";
   import DeleteBranchDialog from "./lib/components/Dialogs/DeleteBranchDialog.svelte";
+
+  import TagCreateDialog from "./lib/components/Dialogs/TagCreateDialog.svelte";
+  import TagDetailsDialog from "./lib/components/Dialogs/TagDetailsDialog.svelte";
+
   import ToastContainer from "./lib/components/common/ToastContainer.svelte";
 
   let gitVersion = $state("");
@@ -243,6 +247,10 @@
   <CreateBranchDialog />
   <RenameBranchDialog />
   <DeleteBranchDialog />
+
+  <TagCreateDialog />
+  <TagDetailsDialog />
+
   <ToastContainer />
 </div>
 

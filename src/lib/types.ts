@@ -202,6 +202,18 @@ export interface CheckoutResult {
 
 export type DirtyAction = "leave" | "bring" | "stash";
 
+
+export interface TagInfo {
+  name: string;
+  /** Peeled commit/object SHA the tag points at. */
+  target: string;
+  annotated: boolean;
+  /** Annotation message subject line; null for lightweight tags. */
+  message: string | null;
+  date: string | null;
+}
+
+
 export interface BackupInfo {
   ref: string;
   createdAt: string;

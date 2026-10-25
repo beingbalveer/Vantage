@@ -25,6 +25,7 @@
     addToast,
     sidebarCollapsed,
     openDialog,
+    openTagCreateDialog,
     addRepoInitialTab,
     openSettingsAt,
     stashDialogOpen,
@@ -176,6 +177,40 @@
             await runUndoLastCommit(focusedRepoId);
           } catch (e: any) {
             addToast({ message: e.message || "Failed to undo last commit", kind: "error" });
+          }
+        },
+      },
+      {
+        id: "cmd_create_tag",
+        title: "Create tag…",
+        action: () => {
+          $paletteOpen = false;
+          if (!focusedRepoId) {
+            addToast({ message: "No focused repository to tag", kind: "info" });
+            return;
+          }
+          const branch = focusedRepo?.branch;
+          openTagCreateDialog({
+            repoId: focusedRepoId,
+            target: "HEAD",
+            targetLabel: branch ? `HEAD (${branch})` : "HEAD",
+          });
+        },
+      },
+      {
+        id: "cmd_push_tags",
+        title: "Push tags to origin",
+        action: async () => {
+          $paletteOpen = false;
+          if (!focusedRepoId) {
+            addToast({ message: "No focused repository to push tags to", kind: "info" });
+            return;
+          }
+          try {
+            await api.tagPushAll(focusedRepoId);
+            addToast({ message: "Pushed tags to origin", kind: "success" });
+          } catch (e: any) {
+            addToast({ message: e.message || "Failed to push tags", kind: "error" });
           }
         },
       },

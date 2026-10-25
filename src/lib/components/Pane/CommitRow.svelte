@@ -1,6 +1,7 @@
 <script lang="ts">
   import type { ComponentProps } from "svelte";
-  import type { CommitSummary, FlagKind, TriageFlag } from "../../types";
+  import type { CommitSummary, FlagKind, TriageFlag, TagInfo } from "../../types";
+  import { isFeatureEnabled } from "../../featureFlags";
   import { formatRelativeTime } from "../../format";
   import {
     formatFlagAriaLabel,
@@ -8,6 +9,7 @@
     sortFlagsBySeverity,
   } from "../../triage";
   import Icon from "../common/Icon.svelte";
+  import TagChip from "./TagChip.svelte";
 
   type IconName = ComponentProps<typeof Icon>["name"];
 
@@ -29,6 +31,8 @@
     isLocal?: boolean;
     isMenuOpen?: boolean;
     flags?: TriageFlag[];
+    repoId?: string;
+    tags?: TagInfo[];
     onselect?: () => void;
     onclick?: () => void;
     onmenu?: (pos: { x: number; y: number }) => void;
@@ -40,12 +44,16 @@
     isLocal = false,
     isMenuOpen = false,
     flags = [],
+    repoId = "",
+    tags = [],
     onselect,
     onclick,
     onmenu,
   }: Props = $props();
 
   let isMerge = $derived(commit.parents && commit.parents.length > 1);
+  let visibleTags = $derived(tags.slice(0, 2));
+  let hiddenTagCount = $derived(Math.max(0, tags.length - visibleTags.length));
 
   // Most urgent rule first; show at most 3 icons then a "+N" overflow chip.
   let flagList = $derived(sortFlagsBySeverity(flags));
@@ -125,6 +133,21 @@
           <span class="flag-overflow">+{flagOverflow}</span>
         {/if}
       </span>
+    {/if}
+    {#if isFeatureEnabled("ALPH_157_TAGS") && visibleTags.length > 0}
+      <span class="tag-chips">
+        {#each visibleTags as tag (tag.name)}
+          <TagChip {tag} {repoId} compact />
+        {/each}
+        {#if hiddenTagCount > 0}
+          <span class="more-tags" title="{hiddenTagCount} more tag{hiddenTagCount === 1 ? '' : 's'}">
+            +{hiddenTagCount}
+          </span>
+        {/if}
+      </span>
+    {/if}
+    {#if isMerge}
+      <span class="merge-badge">merge</span>
     {/if}
     {#if isLocal}
       <span class="unpushed-icon" title="Unpushed commit (local)" aria-label="Unpushed commit">
@@ -281,6 +304,24 @@
     gap: 3px;
     height: 20px;
     flex-shrink: 0;
+  }
+  .tag-chips {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+  }
+  .more-tags {
+    font-size: 10px;
+    color: var(--text-faint, #8c959f);
+    white-space: nowrap;
+  }
+  .merge-badge {
+    flex-shrink: 0;
+    padding: 2px 5px;
+    border-radius: 4px;
+    background: var(--bg-surface, #edf0f3);
+    color: var(--text-muted, #929aa3);
+    font-size: 10px;
   }
   .flag-icon {
     display: inline-flex;

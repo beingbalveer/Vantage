@@ -204,3 +204,41 @@ export function openDialog(dialog: ActiveDialog) {
 export function closeDialog() {
   activeDialog.set(null);
 }
+
+// Tag dialogs (create + view/push)
+export interface TagDialogRequest {
+  repoId: string;
+  /** Commit SHA or ref the tag will point at (e.g. a full SHA or "HEAD"). */
+  target: string;
+  /** Human-friendly label for the target (short SHA or "HEAD"). */
+  targetLabel: string;
+}
+
+export const tagCreateRequest = writable<TagDialogRequest | null>(null);
+
+export function openTagCreateDialog(request: TagDialogRequest) {
+  tagCreateRequest.set(request);
+}
+
+export function closeTagCreateDialog() {
+  tagCreateRequest.set(null);
+}
+
+export interface TagDetailsRequest {
+  repoId: string;
+  name: string;
+  annotated: boolean;
+  message: string | null;
+  date: string | null;
+  target: string;
+}
+
+export const tagDetailsRequest = writable<TagDetailsRequest | null>(null);
+
+export function openTagDetailsDialog(request: TagDetailsRequest) {
+  tagDetailsRequest.set(request);
+}
+
+export function closeTagDetailsDialog() {
+  tagDetailsRequest.set(null);
+}

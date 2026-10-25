@@ -50,4 +50,5 @@ export type IconName =
   | "alert"
   | "wrap"
   | "file"
-  | "files";
+  | "files"
+  | "tag";
