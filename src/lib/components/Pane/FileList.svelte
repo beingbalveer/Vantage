@@ -3,6 +3,7 @@
   import type { FileChange } from "../../types";
   import type { NormalizedError } from "../../asyncState";
   import { splitPath } from "../../format";
+  import { addToast } from "../../stores/ui";
   import Icon from "../common/Icon.svelte";
   import Skeleton from "../common/Skeleton.svelte";
   import EmptyState from "../common/EmptyState.svelte";
@@ -24,6 +25,7 @@
     emptyDescription?: string;
     onretry?: () => void;
     menuOpenPath?: string | null;
+    expandedFile?: string | null;
     onbrowseall?: () => void;
     oncommitrequest?: () => void;
     ondiscardrequest?: () => void;
@@ -33,6 +35,8 @@
     ontogglepath?: (path: string) => void;
     ontoggleall?: (select: boolean) => void;
     onfilemenu?: (file: FileChange, pos: { x: number; y: number }) => void;
+    onexpandwholefile?: (path: string) => void;
+    oncollapsecontext?: (path: string) => void;
   }
 
   let {
@@ -51,6 +55,7 @@
     emptyDescription = "",
     onretry,
     menuOpenPath = null,
+    expandedFile = null,
     ontogglefocusdiff,
     onselectfile,
     ontogglepath,
@@ -60,6 +65,8 @@
     ondiscardrequest,
     ontogglecommitdetails,
     onfilemenu,
+    onexpandwholefile,
+    oncollapsecontext,
   }: Props = $props();
 
   let allChecked = $derived(
@@ -698,5 +705,49 @@
     .path-wrap {
       font-size: 11.5px;
     }
+  }
+
+  /* Per-file context menu (right-click / Shift+F10). The backdrop is invisible
+     and only dismisses on outside click or Escape. */
+  .ctx-backdrop {
+    position: fixed;
+    inset: 0;
+    z-index: 99;
+    background: transparent;
+  }
+
+  .ctx-menu {
+    position: fixed;
+    z-index: 100;
+    min-width: 200px;
+    padding: 4px;
+    background: var(--bg);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--r-md);
+    box-shadow: var(--shadow-pop);
+    outline: none;
+  }
+
+  .ctx-item {
+    display: block;
+    width: 100%;
+    padding: 7px 8px;
+    text-align: left;
+    font-size: 12px;
+    background: none;
+    border: 0;
+    color: var(--text);
+    border-radius: var(--r-sm);
+    cursor: pointer;
+  }
+  .ctx-item:hover,
+  .ctx-item:focus-visible {
+    background: var(--bg-muted);
+  }
+
+  .ctx-divider {
+    height: 1px;
+    margin: 4px 2px;
+    background: var(--border-subtle);
   }
 </style>

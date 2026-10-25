@@ -38,11 +38,12 @@
     pending?: boolean;
     error?: NormalizedError | null;
     onretry?: () => void;
-    /** Active diff scope; needed to resolve old/new revisions for binary previews. */
     scope?: DiffScope | null;
-    /** Matching file-list entry, used for the authoritative binary flag/status. */
     fileChange?: FileChange | null;
+    fullContext?: boolean;
     onexpandcontext?: (oldStart: number, count: number) => void;
+    onexpandwholefile?: () => void;
+    oncollapsecontext?: () => void;
     onviewfile?: (path: string) => void;
     onloadforce?: () => void;
   }
@@ -59,7 +60,10 @@
     onretry,
     scope = null,
     fileChange = null,
+    fullContext = false,
     onexpandcontext,
+    onexpandwholefile,
+    oncollapsecontext,
     onviewfile,
     onloadforce,
   }: Props = $props();
@@ -402,63 +406,17 @@
     localHunks = merged;
   }
 
-  async function expandAllContext() {
-    if (!diffFile || !effectiveRepoId) return;
-    try {
-      const res = await api.blobText(effectiveRepoId, rev, diffFile.change.path);
-      if (!res || !res.text) return;
-      const allLines = res.text.split("\n");
-      if (allLines.length === 0) return;
-
-      const mergedLines: DiffLine[] = [];
-      let currentLineNo = 1;
-
-      for (const hunk of localHunks) {
-        while (currentLineNo < hunk.newStart && currentLineNo <= allLines.length) {
-          mergedLines.push({
-            kind: "context",
-            oldNo: currentLineNo,
-            newNo: currentLineNo,
-            text: allLines[currentLineNo - 1],
-            wordRanges: null,
-          });
-          currentLineNo++;
-        }
-
-        for (const line of hunk.lines) {
-          mergedLines.push(line);
-          if (line.newNo != null) {
-            currentLineNo = Math.max(currentLineNo, line.newNo + 1);
-          }
-        }
-      }
-
-      while (currentLineNo <= allLines.length) {
-        mergedLines.push({
-          kind: "context",
-          oldNo: currentLineNo,
-          newNo: currentLineNo,
-          text: allLines[currentLineNo - 1],
-          wordRanges: null,
-        });
-        currentLineNo++;
-      }
-
-      localHunks = [
-        {
-          oldStart: 1,
-          oldLines: mergedLines.filter((l) => l.kind !== "add").length,
-          newStart: 1,
-          newLines: mergedLines.filter((l) => l.kind !== "del").length,
-          header: "Entire file context",
-          lines: mergedLines,
-        },
-      ];
-
-      onexpandcontext?.(1, allLines.length);
-      addToast({ message: "Expanded all context", kind: "info" });
-    } catch (e) {
-      console.error("Failed to expand all context:", e);
+  /**
+   * Toggle whole-file context. Expansion is fetched from the backend (a single
+   * diff command with large context) rather than merged client-side, so the
+   * expanded hunks are always exact and the state is owned by the pane's
+   * diff-generation guard.
+   */
+  function toggleWholeFile() {
+    if (fullContext) {
+      oncollapsecontext?.();
+    } else {
+      onexpandwholefile?.();
     }
   }
 
@@ -476,7 +434,7 @@
     if (e.key === "e" || e.key === "E") {
       if (!e.metaKey && !e.ctrlKey && !e.altKey) {
         e.preventDefault();
-        expandAllContext();
+        toggleWholeFile();
       }
     } else if (e.key === "s" || e.key === "S") {
       if (!e.metaKey && !e.ctrlKey && !e.altKey) {
@@ -602,16 +560,9 @@
     <div class="empty-diff">
       <span class="text-muted">Select a file to view changes</span>
     </div>
-  {:else if isTruncated}
-    <div class="truncated-card">
-      <span class="text-strong">Large diff</span>
-      <span class="text-sm text-muted">
-        This file has a very large diff that was hidden to keep performance instant.
-      </span>
-      <button class="load-btn" onclick={onloadforce}>Load diff anyway</button>
-    </div>
   {:else}
-    <!-- File Header -->
+    <!-- File Header: always rendered so whole-file state stays reachable even
+         when a diff is capped. -->
     <div class="file-header">
       <div class="file-path-group">
         <span class="file-path" title={diffFile.change.path}>{diffFile.change.path}</span>
@@ -627,28 +578,65 @@
         {/if}
       </div>
 
-      {#if contentKind === "text" && localHunks.length > 0}
-        <div class="mode-toggle" role="group" aria-label="Diff layout">
-          <button
-            class="mode-btn"
-            class:active={diffMode === "unified"}
-            aria-pressed={diffMode === "unified"}
-            title="Unified diff (S to toggle)"
-            onclick={() => setDiffMode("unified")}
-          >Unified</button>
-          <button
-            class="mode-btn"
-            class:active={diffMode === "split"}
-            aria-pressed={diffMode === "split"}
-            title="Side-by-side diff (S to toggle)"
-            onclick={() => setDiffMode("split")}
-          >Split</button>
-        </div>
-      {/if}
+      <div class="header-actions">
+        {#if isFeatureEnabled("ALPH_159_EXPAND_WHOLE_FILE")}
+          {#if fullContext}
+            <span class="whole-file-chip text-xs" title="Showing the whole file">Whole file</span>
+            <button
+              class="header-icon-btn"
+              type="button"
+              title="Collapse to default context (e)"
+              aria-label="Collapse to default context"
+              onclick={() => oncollapsecontext?.()}
+            >
+              <Icon name="fold" size={14} />
+            </button>
+          {:else}
+            <button
+              class="expand-whole-btn"
+              type="button"
+              title="Expand whole file (e)"
+              aria-label="Expand whole file"
+              onclick={() => onexpandwholefile?.()}
+            >
+              <Icon name="unfold" size={13} />
+              <span>Expand whole file</span>
+            </button>
+          {/if}
+        {/if}
+
+        {#if contentKind === "text" && localHunks.length > 0 && isFeatureEnabled("ALPH_158_SPLIT_IMAGE_DIFF")}
+          <div class="mode-toggle" role="group" aria-label="Diff layout">
+            <button
+              class="mode-btn"
+              class:active={diffMode === "unified"}
+              aria-pressed={diffMode === "unified"}
+              title="Unified diff (S to toggle)"
+              onclick={() => setDiffMode("unified")}
+            >Unified</button>
+            <button
+              class="mode-btn"
+              class:active={diffMode === "split"}
+              aria-pressed={diffMode === "split"}
+              title="Side-by-side diff (S to toggle)"
+              onclick={() => setDiffMode("split")}
+            >Split</button>
+          </div>
+        {/if}
+      </div>
     </div>
 
-    {#if isFeatureEnabled("ALPH_158_SPLIT_IMAGE_DIFF") && contentKind === "image"}
-      <!-- Image diff: old vs new side by side, sizes/dimensions per side. -->
+    {#if isTruncated}
+      <div class="truncated-card">
+        <span class="text-strong">Large diff</span>
+        <span class="text-sm text-muted">
+          {fullContext
+            ? "This file is too large to expand fully. Load it anyway to see every change."
+            : "This file has a very large diff that was hidden to keep performance instant."}
+        </span>
+        <button class="load-btn" onclick={onloadforce}>Load diff anyway</button>
+      </div>
+    {:else if isFeatureEnabled("ALPH_158_SPLIT_IMAGE_DIFF") && contentKind === "image"}
       <div class="diff-body">
         <ImageDiff
           path={diffFile.change.path}
@@ -669,7 +657,6 @@
         />
       </div>
     {:else if isFeatureEnabled("ALPH_158_SPLIT_IMAGE_DIFF") && contentKind === "binary"}
-      <!-- Binary diff: honest size report instead of "No changes in this file". -->
       <div class="diff-body">
         <BinaryDiff
           path={diffFile.change.path}
@@ -1026,6 +1013,35 @@
   }
   .header-icon-btn:active {
     background-color: var(--bg-muted);
+  }
+
+  .expand-whole-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    height: 24px;
+    padding: 0 8px;
+    background-color: var(--bg-subtle);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--r-sm);
+    color: var(--text-muted);
+    font-size: 11px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: background-color 80ms linear, color 80ms linear;
+    white-space: nowrap;
+  }
+  .expand-whole-btn:hover {
+    background-color: var(--bg-muted);
+    color: var(--text);
+  }
+
+  .whole-file-chip {
+    color: var(--text-faint);
+    background-color: var(--bg-muted);
+    border-radius: var(--r-sm);
+    padding: 1px 6px;
+    white-space: nowrap;
   }
 
   .diff-body {

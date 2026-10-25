@@ -605,6 +605,7 @@ pub async fn scope_file_diff(
     ctx_lines: u32,
     ignore_ws: bool,
     force: bool,
+    full_context: bool,
 ) -> Result<DiffFile, AppError> {
     let repo_path = {
         let data = state.data.lock().await;
@@ -624,6 +625,7 @@ pub async fn scope_file_diff(
         ctx_lines,
         ignore_ws,
         force,
+        full_context,
     )
     .await
 }

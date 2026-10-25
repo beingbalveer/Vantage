@@ -163,12 +163,46 @@ pub fn merge_changes_with_status(
     changes
 }
 
+/// Line/byte ceilings that keep a single file diff from freezing the UI.
+/// The defaults guard every normal request; [`FULL_CONTEXT_DIFF_LIMITS`] is more
+/// generous so "expand whole file" can show a whole real-world source file
+/// while still refusing a pathologically large one.
+#[derive(Clone, Copy)]
+pub struct DiffLimits {
+    pub max_lines: usize,
+    pub max_bytes: usize,
+}
+
+pub const DEFAULT_DIFF_LIMITS: DiffLimits = DiffLimits {
+    max_lines: 2000,
+    max_bytes: 1_000_000,
+};
+
+pub const FULL_CONTEXT_DIFF_LIMITS: DiffLimits = DiffLimits {
+    max_lines: 20_000,
+    max_bytes: 4_000_000,
+};
+
+/// Context value passed to `git -U` for "expand whole file". Git has no true
+/// unlimited mode, so we hand it a value larger than any realistic file; the
+/// parser's line/byte ceiling still caps pathological cases (and the UI offers
+/// an explicit "Load diff anyway" escape hatch).
+pub const FULL_CONTEXT_LINES: u32 = 1_000_000;
+
 pub fn parse_unified_diff(diff_text: &str, change: FileChange, force: bool) -> DiffFile {
+    parse_unified_diff_with_limits(diff_text, change, force, DEFAULT_DIFF_LIMITS)
+}
+
+pub fn parse_unified_diff_with_limits(
+    diff_text: &str,
+    change: FileChange,
+    force: bool,
+    limits: DiffLimits,
+) -> DiffFile {
     let total_lines = diff_text.lines().count();
     let total_bytes = diff_text.len();
 
-    // Check budget thresholds: > 2000 lines or > 1 MB
-    if !force && (total_lines > 2000 || total_bytes > 1_000_000) {
+    if !force && (total_lines > limits.max_lines || total_bytes > limits.max_bytes) {
         return DiffFile {
             change,
             hunks: Vec::new(),
@@ -488,8 +522,16 @@ pub async fn get_scope_file_diff(
     context_lines: u32,
     ignore_whitespace: bool,
     force: bool,
+    full_context: bool,
 ) -> Result<DiffFile, AppError> {
-    let ctx_flag = format!("-U{}", context_lines);
+    // "Expand whole file" asks git for effectively unlimited context. Everything
+    // else requests the user's configured context.
+    let ctx = if full_context {
+        FULL_CONTEXT_LINES
+    } else {
+        context_lines
+    };
+    let ctx_flag = format!("-U{}", ctx);
     let mut args = vec!["-M", &ctx_flag, "--no-color", "--no-ext-diff"];
     if ignore_whitespace {
         args.push("-w");
@@ -550,7 +592,18 @@ pub async fn get_scope_file_diff(
         new_mode: None,
     };
 
-    Ok(parse_unified_diff(&diff_text, change, force))
+    let limits = if full_context {
+        FULL_CONTEXT_DIFF_LIMITS
+    } else {
+        DEFAULT_DIFF_LIMITS
+    };
+
+    Ok(parse_unified_diff_with_limits(
+        &diff_text,
+        change,
+        force,
+        limits,
+    ))
 }
 
 #[cfg(test)]
@@ -606,6 +659,39 @@ mod tests {
         let diff_file = parse_unified_diff(&raw_diff, change, false);
         assert!(diff_file.truncated);
         assert!(diff_file.hunks.is_empty());
+    }
+
+    #[test]
+    fn test_parse_unified_diff_with_custom_limits() {
+        let mut raw_diff = String::from("@@ -1,50 +1,50 @@\n");
+        for i in 0..50 {
+            raw_diff.push_str(&format!("+line {}\n", i));
+        }
+        let make_change = || FileChange {
+            path: "big.txt".to_string(),
+            old_path: None,
+            status: FileStatus::Added,
+            additions: 50,
+            deletions: 0,
+            binary: false,
+            old_mode: None,
+            new_mode: None,
+        };
+
+        let limits = DiffLimits {
+            max_lines: 10,
+            max_bytes: 1_000_000,
+        };
+
+        // Over the ceiling: no hunks, flagged truncated.
+        let capped = parse_unified_diff_with_limits(&raw_diff, make_change(), false, limits);
+        assert!(capped.truncated);
+        assert!(capped.hunks.is_empty());
+
+        // force bypasses the ceiling so the escape hatch still works.
+        let forced = parse_unified_diff_with_limits(&raw_diff, make_change(), true, limits);
+        assert!(!forced.truncated);
+        assert_eq!(forced.hunks.len(), 1);
     }
 
     #[test]
@@ -704,6 +790,56 @@ mod tests {
             .expect("head commit files");
         assert_eq!(head_files.len(), 1);
         assert_eq!(head_files[0].path, "file2.txt");
+    }
+
+    #[tokio::test]
+    async fn test_full_context_expands_whole_file() {
+        let runner = GitRunner::new();
+        let repo = TempTestRepo::new(&runner).await;
+
+        let file = repo.path.join("big.txt");
+        let original: String = (1..=60).map(|i| format!("line {}\n", i)).collect();
+        std::fs::write(&file, &original).unwrap();
+        runner
+            .run_write(&repo.path, &["add", "big.txt"], 10)
+            .await
+            .unwrap();
+        runner
+            .run_write(&repo.path, &["commit", "-m", "add big"], 10)
+            .await
+            .unwrap();
+
+        // Change a single line in the middle of the file.
+        std::fs::write(&file, original.replace("line 30\n", "line 30 changed\n")).unwrap();
+
+        let scope = DiffScope::Working;
+
+        // Default context: only the configured few lines around the change.
+        let default_diff = get_scope_file_diff(
+            &runner, &repo.path, &scope, "big.txt", 1, false, false, false,
+        )
+        .await
+        .expect("default diff");
+        let default_lines: usize = default_diff.hunks.iter().map(|h| h.lines.len()).sum();
+        assert!(
+            default_lines < 10,
+            "default context should stay small, got {} lines",
+            default_lines
+        );
+
+        // Whole-file context: one hunk starting at line 1 that contains every line.
+        let full_diff = get_scope_file_diff(
+            &runner, &repo.path, &scope, "big.txt", 1, false, false, true,
+        )
+        .await
+        .expect("full-context diff");
+        assert!(!full_diff.truncated);
+        assert_eq!(full_diff.hunks.len(), 1);
+        let hunk = &full_diff.hunks[0];
+        assert_eq!(hunk.old_start, 1);
+        assert_eq!(hunk.new_start, 1);
+        // 59 unchanged context lines + 1 deletion + 1 addition.
+        assert_eq!(hunk.lines.len(), 61);
     }
 
     #[test]

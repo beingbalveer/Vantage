@@ -37,7 +37,7 @@ export const SHORTCUTS: Shortcut[] = [
   { id: "prev_file", key: "[", description: "Previous file in diff", category: "Diff" },
   { id: "next_hunk", key: "n", description: "Next change hunk", category: "Diff" },
   { id: "prev_hunk", key: "p", description: "Previous change hunk", category: "Diff" },
-  { id: "expand_context", key: "e", description: "Expand all context in current file", category: "Diff" },
+  { id: "expand_context", key: "e", description: "Expand whole file (all context)", category: "Diff" },
   { id: "toggle_whitespace", key: "w", description: "Toggle ignore whitespace", category: "Diff" },
   { id: "toggle_diff_mode", key: "s", description: "Toggle unified / split diff", category: "Diff" },
   { id: "copy_sha", key: "c", description: "Copy SHA of selected commit", category: "Review" },

@@ -209,6 +209,9 @@
   let selectedFilePath = $state<string | null>(null);
   let currentDiffFile = $state<DiffFile | null>(null);
   let checkedPaths = $state<string[]>([]);
+  // True when the currently shown diff was fetched with whole-file context.
+  // Reset on repo/scope/file change so the expanded state never leaks.
+  let diffIsFullContext = $state(false);
 
   /** File-list record for the selection (authoritative binary/status/rename). */
   let selectedFileChange = $derived(
@@ -231,6 +234,7 @@
       lastLoadedRepoId = currentId;
       flagsBySha = {};
       untrack(() => {
+        diffIsFullContext = false;
         if (currentId) {
           historyFilter = "";
           historyFilterApplied = "";
@@ -616,10 +620,19 @@
     }
   }
 
-  async function selectFile(path: string, scope?: DiffScope) {
+  async function selectFile(
+    path: string,
+    scope?: DiffScope,
+    opts: { force?: boolean; fullContext?: boolean } = {}
+  ) {
     if (!repo) return;
+    const force = opts.force ?? false;
+    const fullContext = opts.fullContext ?? false;
     const gen = ++diffGen;
     selectedFilePath = path;
+    // Reflect the intended state immediately so a scope/file switch never shows
+    // a stale "Whole file" indicator while the new request is in flight.
+    diffIsFullContext = fullContext;
     const activeScope = scope || currentScope;
 
     try {
@@ -629,7 +642,8 @@
         path,
         $settings.contextLines,
         $settings.ignoreWhitespace,
-        false
+        force,
+        fullContext
       );
       if (gen !== diffGen) return;
       currentDiffFile = diff;
@@ -638,6 +652,18 @@
       console.error("Failed to load file diff:", e);
       addToast({ message: e.message || "Failed to load diff", kind: "error" });
     }
+  }
+
+  /** Re-request the current file's diff with all context (whole file). */
+  function expandWholeFile(path?: string) {
+    const target = path || selectedFilePath;
+    if (target) selectFile(target, undefined, { fullContext: true });
+  }
+
+  /** Re-request the current file's diff with the configured context. */
+  function collapseContext(path?: string) {
+    const target = path || selectedFilePath;
+    if (target) selectFile(target, undefined, { fullContext: false });
   }
 
   function toggleCheckedPath(path: string) {
@@ -1008,6 +1034,9 @@
                 hasCommitDetails={!!selectedCommit && !isUncommittedSelected}
                 {showCommitDetails}
                 menuOpenPath={openMenuFilePath}
+                expandedFile={diffIsFullContext ? selectedFilePath : null}
+                onexpandwholefile={expandWholeFile}
+                oncollapsecontext={collapseContext}
                 ontogglecommitdetails={() => (showCommitDetails = !showCommitDetails)}
                 ontogglefocusdiff={() => (focusDiff = !focusDiff)}
                 onselectfile={(path: string) => selectFile(path)}
@@ -1062,7 +1091,10 @@
                 rev={selectedCommitSha || repo.branch || "HEAD"}
                 scope={currentScope}
                 fileChange={selectedFileChange}
-                onviewfile={(path) => {
+                fullContext={diffIsFullContext}
+                onexpandwholefile={() => expandWholeFile()}
+                oncollapsecontext={() => collapseContext()}
+                onviewfile={(path: string) => {
                   navigateTo({
                     repoId: repo.id,
                     tab: "files",
@@ -1070,7 +1102,12 @@
                   });
                 }}
                 onloadforce={() => {
-                  if (selectedFilePath) selectFile(selectedFilePath);
+                  if (selectedFilePath) {
+                    selectFile(selectedFilePath, undefined, {
+                      force: true,
+                      fullContext: diffIsFullContext,
+                    });
+                  }
                 }}
               />
             </div>
