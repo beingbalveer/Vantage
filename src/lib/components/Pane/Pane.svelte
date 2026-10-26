@@ -14,7 +14,7 @@
   } from "../../types";
   import * as api from "../../api";
   import { settings } from "../../stores/settings";
-  import { panes, focusedPaneIndex, focusPane, setPaneTab } from "../../stores/panes";
+  import { panes, paneCount, focusedPaneIndex, focusPane, setPaneTab } from "../../stores/panes";
   import { addToast, openDialog, activeDialog, paletteOpen, settingsOpen, shortcutsHelpOpen, addRepoDialogOpen, scanFolderDialogOpen, composerRequest } from "../../stores/ui";
   import { refreshSingleStatus } from "../../stores/repos";
   import { tagsByRepo, loadTags, groupTagsByTarget } from "../../stores/tags";
@@ -59,6 +59,8 @@
 
   let currentPane = $derived($panes[paneIndex]);
   let isFocused = $derived($focusedPaneIndex === paneIndex);
+  // The accent rail is only meaningful when more than one pane is on screen.
+  let showFocusRail = $derived(isFocused && isFeatureEnabled("ALPH_144_MULTI_PANE") && $paneCount > 1);
 
   // Column Resizing & Focus Diff
   let focusDiff = $state(false);
@@ -1149,7 +1151,8 @@
 <svelte:window onkeydown={handlePaneKeydown} />
 
 <div
-  class="pane-container {isFocused ? 'focused' : ''}"
+  class="pane-container"
+  class:focused={showFocusRail}
   bind:this={paneEl}
   onpointerdown={() => focusPane(paneIndex)}
   onfocusin={() => focusPane(paneIndex)}
@@ -1502,6 +1505,19 @@
     background-color: var(--bg);
     position: relative;
     overflow: hidden;
+  }
+
+  /* Accent rail marks the focused pane while 2-3 panes are visible. */
+  .pane-container.focused::before {
+    content: "";
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    left: 0;
+    width: 3px;
+    background-color: var(--accent);
+    z-index: 10;
+    pointer-events: none;
   }
 
   .pane-content {
