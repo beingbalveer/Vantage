@@ -197,6 +197,9 @@
         role="separator"
         aria-orientation="vertical"
         aria-label="Resize repositories pane"
+        aria-valuemin={160}
+        aria-valuemax={450}
+        aria-valuenow={Math.round(sidebarWidth)}
         tabindex="0"
         title="Drag to resize sidebar (Double-click to reset, Arrow keys to nudge)"
         onpointerdown={startSidebarResize}
@@ -299,7 +302,8 @@
     transition: background-color 100ms ease;
   }
   .split-handle:hover::after,
-  .split-handle:active::after {
+  .split-handle:active::after,
+  .split-handle:focus-visible::after {
     background-color: var(--accent);
   }
 

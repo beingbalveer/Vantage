@@ -25,18 +25,20 @@
   --border: #dedfe2;
   --border-subtle: #e6e8eb;
   --text: #242628;
-  --text-muted: #737982;
-  --text-faint: #89929b;
-  --accent: #1873d5;
+  /* Metadata tokens are tuned to >= 4.5:1 on --bg, --bg-subtle, --bg-muted
+     and --bg-inset (WCAG 1.4.3). See docs/COMPARISON_GITHUB_DESKTOP.md #21. */
+  --text-muted: #5f6872;
+  --text-faint: #646d77;
+  --accent: #1266c2;
   --accent-bg: #e2f0fc;
   --accent-fg: #ffffff;
   --success: #357242;
   --success-bg: #e4f8e9;
   --success-fg: #357242;
-  --danger: #bc494c;
+  --danger: #b6474a;
   --danger-bg: #ffebed;
-  --danger-fg: #bc494c;
-  --warning: #a38622;
+  --danger-fg: #b6474a;
+  --warning: #82690f;
   --warning-bg: #fff8e0;
   --diff-add-bg: #e4f8e9;
   --diff-add-word: #c7eed0;
@@ -69,9 +71,9 @@
   --border: #3d444d;
   --border-subtle: #2f353d;
   --text: #d1d7e0;
-  --text-muted: #9198a1;
-  --text-faint: #6e7681;
-  --accent: #4493f8;
+  --text-muted: #9aa2ad;
+  --text-faint: #939ba6;
+  --accent: #4d9cf9;
   --accent-bg: #16314f;
   --accent-fg: #0d1117;
   --success: #3fb950;

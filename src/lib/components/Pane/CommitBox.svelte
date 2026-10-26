@@ -322,6 +322,7 @@
   <button
     type="button"
     class="desc-toggle"
+    aria-expanded={showDescription}
     onclick={() => (showDescription = !showDescription)}
   >
     {showDescription ? "▾" : "▸"} Description
@@ -477,7 +478,6 @@
     display: flex;
     flex-direction: column;
     gap: 8px;
-    user-select: none;
   }
 
   .amend-toggle {

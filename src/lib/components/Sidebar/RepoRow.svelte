@@ -14,6 +14,7 @@
   import * as api from "../../api";
   import { get } from "svelte/store";
   import Icon from "../common/Icon.svelte";
+  import { Modal } from "../common";
   import RepoIcon from "./RepoIcon.svelte";
   import { formatCount, pluralize } from "../../format";
 
@@ -293,6 +294,7 @@
   role="button"
   tabindex="0"
   aria-label={rowAriaLabel}
+  aria-current={isOpenInFocused ? "page" : undefined}
   title={rowTitle}
 >
   <div class="repo-icon-wrapper">
@@ -330,7 +332,10 @@
       class:menu-open={showMenu}
       title="Repository options"
       onclick={handleMenuBtnClick}
+      onkeydown={(e) => e.stopPropagation()}
       aria-label="Repository options"
+      aria-haspopup="menu"
+      aria-expanded={showMenu}
     >
       <Icon name="more-horizontal" size={15} />
     </button>
@@ -403,6 +408,7 @@
       style={menuPos ? `position: fixed; top: ${menuPos.top}px; left: ${menuPos.left}px;` : ""}
       onclick={(e) => e.stopPropagation()}
       onkeydown={(e) => {
+        e.stopPropagation();
         if (e.key === "Escape") {
           showMenu = false;
           menuPos = null;
@@ -424,87 +430,62 @@
   {/if}
 
   <!-- Add branch view modal -->
-  {#if showBranchModal}
-    <div
-      class="modal-backdrop"
-      role="presentation"
-      onclick={() => (showBranchModal = false)}
-    >
-      <div
-        class="branch-dialog"
-        role="dialog"
-        aria-modal="true"
-        tabindex="-1"
-        onclick={(e) => e.stopPropagation()}
+  <Modal
+    open={showBranchModal}
+    title={`Add branch view — ${repo.name}`}
+    description="Add another view of this repository for a different branch."
+    width={380}
+    onclose={() => (showBranchModal = false)}
+  >
+    <div class="dialog-search">
+      <input
+        type="text"
+        placeholder="Search or enter branch name…"
+        aria-label="Search or enter branch name"
+        bind:value={branchFilter}
+        class="dialog-branch-input"
         onkeydown={(e) => {
-          if (e.key === "Escape") showBranchModal = false;
-          e.stopPropagation();
+          if (e.key === "Enter" && branchFilter.trim()) {
+            e.preventDefault();
+            handleAddBranch(branchFilter.trim());
+          }
         }}
-      >
-        <div class="dialog-title">
-          <span class="text-strong">Add branch view — {repo.name}</span>
-          <button
-            class="dialog-close-btn"
-            onclick={() => (showBranchModal = false)}
-            aria-label="Close"
-          >
-            <Icon name="close" size={14} />
-          </button>
-        </div>
-        <p class="dialog-desc text-xs text-muted">
-          Add another view of this repository for a different branch.
-        </p>
-
-        <div class="dialog-search">
-          <input
-            type="text"
-            placeholder="Search or enter branch name…"
-            bind:value={branchFilter}
-            class="dialog-branch-input"
-            onkeydown={(e) => {
-              if (e.key === "Enter" && branchFilter.trim()) {
-                e.preventDefault();
-                handleAddBranch(branchFilter.trim());
-              }
-            }}
-          />
-          {#if branchFilter.trim() && !availableBranches.some((b) => b.name === branchFilter.trim())}
-            <button class="add-branch-btn primary" onclick={() => handleAddBranch(branchFilter.trim())}>
-              Add "{branchFilter.trim()}"
-            </button>
-          {/if}
-        </div>
-
-        <div class="branches-container">
-          {#if isLoadingBranches}
-            <div class="branch-loading text-xs text-muted">Loading branches…</div>
-          {:else}
-            {@const filtered = availableBranches.filter(
-              (b) => !branchFilter || b.name.toLowerCase().includes(branchFilter.toLowerCase())
-            )}
-            {#if filtered.length === 0}
-              <div class="empty-branches text-xs text-muted">
-                No matching branches found. Press enter to add "{branchFilter}".
-              </div>
-            {:else}
-              {#each filtered as b (b.name)}
-                <div class="branch-picker-item" class:is-head={b.isHead}>
-                  <span class="branch-picker-name font-mono text-xs">
-                    <Icon name="git-branch" size={12} class="mr-1 inline-block" />
-                    {b.name}
-                    {#if b.isHead}
-                      <span class="head-pill text-xs">current</span>
-                    {/if}
-                  </span>
-                  <button class="pick-btn" onclick={() => handleAddBranch(b.name)}>Add view</button>
-                </div>
-              {/each}
-            {/if}
-          {/if}
-        </div>
-      </div>
+      />
+      {#if branchFilter.trim() && !availableBranches.some((b) => b.name === branchFilter.trim())}
+        <button class="add-branch-btn primary" onclick={() => handleAddBranch(branchFilter.trim())}>
+          Add "{branchFilter.trim()}"
+        </button>
+      {/if}
     </div>
-  {/if}
+
+    <div class="branches-container">
+      {#if isLoadingBranches}
+        <div class="branch-loading text-xs text-muted" role="status">Loading branches…</div>
+      {:else}
+        {@const filtered = availableBranches.filter(
+          (b) => !branchFilter || b.name.toLowerCase().includes(branchFilter.toLowerCase())
+        )}
+        {#if filtered.length === 0}
+          <div class="empty-branches text-xs text-muted">
+            No matching branches found. Press enter to add "{branchFilter}".
+          </div>
+        {:else}
+          {#each filtered as b (b.name)}
+            <div class="branch-picker-item" class:is-head={b.isHead}>
+              <span class="branch-picker-name font-mono text-xs">
+                <Icon name="git-branch" size={12} class="mr-1 inline-block" />
+                {b.name}
+                {#if b.isHead}
+                  <span class="head-pill text-xs">current</span>
+                {/if}
+              </span>
+              <button class="pick-btn" onclick={() => handleAddBranch(b.name)}>Add view</button>
+            </div>
+          {/each}
+        {/if}
+      {/if}
+    </div>
+  </Modal>
 </div>
 
 <style>
@@ -762,7 +743,7 @@
     margin-left: auto;
     font-size: 10px;
     font-weight: 400;
-    color: #969ba0;
+    color: var(--text-faint);
     flex-shrink: 0;
   }
   .hover-line {
@@ -776,11 +757,11 @@
     white-space: nowrap;
   }
   .hover-line :global(svg) {
-    color: #999fa5;
+    color: var(--text-muted);
     flex-shrink: 0;
   }
   .hover-line.branch :global(svg) {
-    color: #9b6bd1;
+    color: var(--accent);
   }
   .hover-line.error-line {
     color: var(--warning);
@@ -790,7 +771,7 @@
   }
   .hover-path {
     font-size: 11px;
-    color: #969ca3;
+    color: var(--text-faint);
     margin: 11px 0 0 25px;
     overflow: hidden;
     text-overflow: ellipsis;
@@ -846,53 +827,6 @@
     height: 1px;
     background-color: var(--border-subtle);
     margin: 3px 0;
-  }
-
-  .modal-backdrop {
-    position: fixed;
-    inset: 0;
-    background-color: rgba(0, 0, 0, 0.45);
-    z-index: 500;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-  }
-
-  .branch-dialog {
-    width: 380px;
-    max-height: 480px;
-    background-color: var(--bg);
-    border: 1px solid var(--border);
-    border-radius: var(--r-lg);
-    box-shadow: var(--shadow-pop);
-    padding: 16px;
-    display: flex;
-    flex-direction: column;
-    gap: 12px;
-  }
-
-  .dialog-title {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-  }
-
-  .dialog-close-btn {
-    background: transparent;
-    border: none;
-    cursor: pointer;
-    color: var(--text-muted);
-    font-size: 14px;
-    padding: 2px 6px;
-    border-radius: var(--r-sm);
-  }
-  .dialog-close-btn:hover {
-    background-color: var(--bg-muted);
-    color: var(--text);
-  }
-
-  .dialog-desc {
-    line-height: 1.4;
   }
 
   .dialog-search {

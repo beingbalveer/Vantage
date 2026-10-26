@@ -490,7 +490,7 @@
     background: none;
   }
   .add-actions .cancel-btn {
-    color: #737b84;
+    color: var(--text-muted);
     background: none;
   }
   .add-actions .cancel-btn:hover:not(:disabled) {

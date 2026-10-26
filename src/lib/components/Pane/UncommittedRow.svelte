@@ -115,6 +115,6 @@
     margin-top: 6px;
     font-size: 12px;
     line-height: 17px;
-    color: #737982;
+    color: var(--text-muted);
   }
 </style>

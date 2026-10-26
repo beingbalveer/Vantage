@@ -765,9 +765,20 @@
 
   $effect(() => {
     if ($paletteOpen) {
+      const opener =
+        document.activeElement instanceof HTMLElement &&
+        document.activeElement !== document.body
+          ? document.activeElement
+          : null;
       query = "";
       selectedIndex = 0;
-      setTimeout(() => inputEl?.focus(), 50);
+      const timer = setTimeout(() => inputEl?.focus(), 50);
+      return () => {
+        clearTimeout(timer);
+        if (opener?.isConnected && typeof opener.focus === "function") {
+          opener.focus();
+        }
+      };
     }
   });
 
@@ -811,6 +822,7 @@
       class="palette-modal"
       role="dialog"
       aria-modal="true"
+      aria-label="Command palette"
       tabindex="-1"
       onclick={(e) => e.stopPropagation()}
       onkeydown={handleKeydown}
@@ -832,6 +844,12 @@
           bind:this={inputEl}
           bind:value={query}
           type="text"
+          role="combobox"
+          aria-label="Search repositories, commands, files, and commits"
+          aria-autocomplete="list"
+          aria-controls="palette-results"
+          aria-expanded="true"
+          aria-activedescendant={items[selectedIndex] ? `palette-item-${selectedIndex}` : undefined}
           placeholder={mode === 'commands'
             ? 'Type a command...'
             : mode === 'files'
@@ -853,7 +871,7 @@
       </div>
 
       <!-- Results list -->
-      <div class="results-list" role="listbox">
+      <div class="results-list" id="palette-results" role="listbox">
         {#if items.length === 0}
           <div class="empty-results text-sm text-muted">
             {#if (mode === 'files' || mode === 'commits') && !focusedRepoId}
@@ -866,9 +884,13 @@
           {#each items as item, idx (item.id)}
             <div
               class="result-row {idx === selectedIndex ? 'selected' : ''}"
+              id={`palette-item-${idx}`}
               onclick={() => item.action(false)}
               onkeydown={(e) => {
-                if (e.key === 'Enter') item.action(e.metaKey || e.ctrlKey);
+                if (e.key === 'Enter' || e.key === ' ') {
+                  e.preventDefault();
+                  item.action(e.metaKey || e.ctrlKey);
+                }
               }}
               role="option"
               aria-selected={idx === selectedIndex}

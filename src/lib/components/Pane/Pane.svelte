@@ -1155,6 +1155,7 @@
   onfocusin={() => focusPane(paneIndex)}
   role="region"
   aria-label="Repository Pane {paneIndex + 1}"
+  aria-current={isFocused ? "true" : undefined}
 >
   <!-- Pane Body -->
   <div class="pane-content">
@@ -1307,6 +1308,9 @@
             role="separator"
             aria-orientation="vertical"
             aria-label="Resize commit list"
+            aria-valuemin={180}
+            aria-valuemax={700}
+            aria-valuenow={Math.round(commitsColWidth)}
             tabindex="0"
             title="Drag to resize commits column (Double-click to reset, Arrow keys to nudge)"
             onpointerdown={startCommitsResize}
@@ -1379,6 +1383,9 @@
               role="separator"
               aria-orientation="vertical"
               aria-label="Resize file list"
+              aria-valuemin={160}
+              aria-valuemax={600}
+              aria-valuenow={Math.round(filesColWidth)}
               tabindex="0"
               title="Drag to resize files column (Double-click to reset, Arrow keys to nudge)"
               onpointerdown={startFilesResize}
@@ -1720,9 +1727,8 @@
   .history-footer {
     flex-shrink: 0;
     padding: 16px 19px;
-    color: #7c847a;
+    color: var(--text-faint);
     font-size: 11px;
-    user-select: none;
   }
 
   .history-flagged {

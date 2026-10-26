@@ -371,6 +371,7 @@
             checked={isChecked}
             aria-label="Select {file.path} for commit"
             onclick={(e) => e.stopPropagation()}
+            onkeydown={(e) => e.stopPropagation()}
             onchange={() => ontogglepath?.(file.path)}
             class="row-cb"
           />
@@ -618,7 +619,7 @@
     color: #30363d;
   }
   .dir-text {
-    color: #717b86;
+    color: var(--text-muted);
     overflow: hidden;
     text-overflow: ellipsis;
     min-width: 0;
@@ -679,8 +680,8 @@
     justify-content: center;
     width: 13px;
     height: 13px;
-    border: 1.5px solid #a38622;
-    color: #a38622;
+    border: 1.5px solid var(--warning);
+    color: var(--warning);
     border-radius: 1px;
     font-size: 12px;
     line-height: 1;
@@ -689,8 +690,8 @@
   .status-badge.added,
   .status-badge.untracked,
   .status-badge.copied {
-    color: #44824a;
-    border-color: #44824a;
+    color: var(--success);
+    border-color: var(--success);
   }
   .status-badge.deleted,
   .status-badge.conflicted {

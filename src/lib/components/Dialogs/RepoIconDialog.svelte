@@ -171,7 +171,7 @@
   }
 
   .auto-badge {
-    color: #10b981;
+    color: var(--success);
   }
 
   .auto-badge strong {

@@ -280,7 +280,7 @@
     margin-top: 6px;
     font-size: 12px;
     line-height: 17px;
-    color: #737982;
+    color: var(--text-muted);
   }
   .commit-meta .author {
     overflow: hidden;
@@ -317,10 +317,10 @@
   }
   .merge-badge {
     flex-shrink: 0;
-    padding: 2px 5px;
-    border-radius: 4px;
-    background: var(--bg-surface, #edf0f3);
-    color: var(--text-muted, #929aa3);
+    padding: 3px 6px;
+    border-radius: 5px;
+    background: var(--bg-muted);
+    color: var(--text-muted);
     font-size: 10px;
   }
   .flag-icon {

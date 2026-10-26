@@ -4,6 +4,7 @@
   import type { BlameInfo, DefHit } from "../../types";
   import { highlightCodeLines, getLanguageFromPath } from "../../highlight";
   import { formatRelativeTime } from "../../format";
+  import { scrollBehavior } from "../../motion";
   import { isMac } from "../../keys";
   import { addToast } from "../../stores/ui";
   import { registerHandler, registerDismiss, ownsPaneKeyboard } from "../../commands";
@@ -144,7 +145,7 @@
     const lineIdx = lineNo - 1;
     const el = lineRowEls[lineIdx];
     if (el) {
-      el.scrollIntoView({ block: "center", behavior: "smooth" });
+      el.scrollIntoView({ block: "center", behavior: scrollBehavior() });
     }
     setTimeout(() => {
       if (highlightedLineNo === lineNo) {
@@ -225,7 +226,7 @@
     if (!match) return;
     const el = lineRowEls[match.lineIdx];
     if (el) {
-      el.scrollIntoView({ block: "center", behavior: "smooth" });
+      el.scrollIntoView({ block: "center", behavior: scrollBehavior() });
     }
   }
 
@@ -395,6 +396,7 @@
         type="button"
         class="viewer-icon-btn"
         class:active={isWrapped}
+        aria-pressed={isWrapped}
         onclick={() => (isWrapped = !isWrapped)}
         title="Toggle word wrap (Alt+Z) · Currently {isWrapped ? 'On' : 'Off'}"
         aria-label="Toggle word wrap"
@@ -433,6 +435,7 @@
         type="text"
         class="find-input font-mono text-xs"
         placeholder="Find..."
+        aria-label="Find in file"
         bind:value={searchQuery}
         onkeydown={(e) => {
           if (e.key === "Enter") {
@@ -462,7 +465,7 @@
   <!-- Code Body -->
   <div class="code-body" bind:this={viewerBodyEl}>
     {#if isLoading}
-      <div class="loading-state text-sm text-muted">Loading file…</div>
+      <div class="loading-state text-sm text-muted" role="status">Loading file…</div>
     {:else}
       <div class="lines-container font-mono" class:wrapped={isWrapped}>
         {#each lines as lineHtml, idx (idx)}
@@ -534,8 +537,14 @@
             class="peek-item"
             role="button"
             tabindex="0"
+            aria-label={`${hit.path} line ${hit.line}`}
             onclick={() => handleCandidateClick(hit)}
-            onkeydown={(e) => e.key === "Enter" && handleCandidateClick(hit)}
+            onkeydown={(e) => {
+              if (e.key === "Enter" || e.key === " ") {
+                e.preventDefault();
+                handleCandidateClick(hit);
+              }
+            }}
           >
             <div class="peek-path font-mono text-xs">{hit.path}:{hit.line}</div>
             <pre class="peek-code font-mono text-xs">{hit.lineText}</pre>

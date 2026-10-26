@@ -14,6 +14,7 @@
   import { registerDismiss } from "../../commands";
   import * as api from "../../api";
   import Icon from "../common/Icon.svelte";
+  import { Modal } from "../common";
 
   let currentPane = $derived($panes[$focusedPaneIndex]);
   let currentTab = $derived(currentPane?.tab || "history");
@@ -576,7 +577,7 @@
   }
   .menu-shortcut {
     margin-left: auto;
-    color: #8b9096;
+    color: var(--text-muted);
     font-size: 11px;
   }
 
