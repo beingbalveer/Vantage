@@ -201,7 +201,7 @@ impl RepoWatcherManager {
         runner: Arc<GitRunner>,
         state_data: Arc<Mutex<crate::persist::PersistedState>>,
     ) {
-        tokio::spawn(async move {
+        tauri::async_runtime::spawn(async move {
             let mut last_fetch: HashMap<String, tokio::time::Instant> = HashMap::new();
             let in_flight: Arc<Mutex<HashSet<String>>> = Arc::new(Mutex::new(HashSet::new()));
             let mut ticker = tokio::time::interval(Duration::from_secs(5));
@@ -255,7 +255,7 @@ impl RepoWatcherManager {
                     let app = app_handle.clone();
                     let r = runner.clone();
                     let flags = in_flight.clone();
-                    tokio::spawn(async move {
+                    tauri::async_runtime::spawn(async move {
                         let repo_path = PathBuf::from(&path);
                         // Errors (offline, auth, no remote) stay silent: the
                         // next interval retries and the status row remains the
@@ -291,7 +291,7 @@ impl RepoWatcherManager {
         let active_poll = self.active_poll.clone();
         let last_known_head = self.last_known_head.clone();
 
-        tokio::spawn(async move {
+        tauri::async_runtime::spawn(async move {
             let mut last_polled: HashMap<String, tokio::time::Instant> = HashMap::new();
             let running: Arc<Mutex<std::collections::HashSet<String>>> =
                 Arc::new(Mutex::new(std::collections::HashSet::new()));
@@ -373,7 +373,7 @@ impl RepoWatcherManager {
                     let slow_flag = slow_intervals.clone();
                     let head_tracker = last_known_head.clone();
 
-                    tokio::spawn(async move {
+                    tauri::async_runtime::spawn(async move {
                         {
                             let mut set = run_flag.lock().await;
                             set.insert(r_id.clone());
