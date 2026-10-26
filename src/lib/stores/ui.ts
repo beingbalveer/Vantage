@@ -130,7 +130,8 @@ export type SettingsSection =
   | "terminal"
   | "integrations"
   | "recovery"
-  | "about";
+  | "about"
+  | "flags";
 
 export const settingsSection = writable<SettingsSection>("general");
 export const settingsRecoveryRepoId = writable<string | null>(null);

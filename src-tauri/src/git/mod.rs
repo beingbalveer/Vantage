@@ -4,6 +4,7 @@ pub mod clone;
 pub mod coauthors;
 pub mod diff;
 pub mod grep;
+pub mod identity;
 pub mod log;
 pub mod ops;
 pub mod patch;

@@ -7,7 +7,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", default)]
 pub struct PersistedState {
     pub version: u32,
     pub repos: Vec<RepoEntry>,
@@ -114,5 +114,75 @@ impl StatePersistence {
         fs::write(&temp_path, json)?;
         fs::rename(&temp_path, &self.file_path)?;
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs;
+
+    fn temp_state_path(name: &str) -> PathBuf {
+        std::env::temp_dir().join(format!(
+            "vantage_state_test_{}_{}.json",
+            name,
+            uuid::Uuid::new_v4()
+        ))
+    }
+
+    #[test]
+    fn loads_old_state_file_and_defaults_new_settings() {
+        let path = temp_state_path("old");
+        fs::write(
+            &path,
+            r#"{
+                "version": 1,
+                "repos": [],
+                "layout": { "paneCount": 1, "panes": [{ "repoId": null, "tab": "history", "widths": null }], "sidebarWidth": 232, "sidebarCollapsed": false, "terminalHeight": 240, "terminalOpen": false, "windowBounds": null },
+                "settings": { "theme": "dark", "diffMode": "unified", "ignoreWhitespace": false, "contextLines": 3, "autoFetchMinutes": 5, "shell": null, "externalEditorCmd": null, "commitMessageCmd": null, "terminalFontSize": 13, "uiScale": 1.0 },
+                "windowBounds": null
+            }"#,
+        )
+        .unwrap();
+
+        let persistence = StatePersistence::with_path(path.clone());
+        let (state, warning) = persistence.load();
+        assert!(warning.is_none(), "old state should not be corrupt");
+        assert_eq!(state.settings.theme, crate::state::Theme::Dark);
+        assert_eq!(state.settings.default_branch, "main");
+        assert_eq!(state.settings.tab_size, 4);
+        assert!(state.settings.confirm_terminal_close);
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn loads_partial_state_and_preserves_unknown_fields() {
+        let path = temp_state_path("partial");
+        fs::write(
+            &path,
+            r#"{ "version": 1, "settings": { "theme": "light" }, "futureTopLevel": 42 }"#,
+        )
+        .unwrap();
+
+        let persistence = StatePersistence::with_path(path.clone());
+        let (state, warning) = persistence.load();
+        assert!(warning.is_none(), "partial state must not brick startup");
+        assert_eq!(state.settings.theme, crate::state::Theme::Light);
+        assert_eq!(state.settings.terminal_font_size, 13);
+        assert_eq!(state.extra.get("futureTopLevel").unwrap(), 42);
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn corrupt_state_is_backed_up_and_defaults_are_used() {
+        let path = temp_state_path("corrupt");
+        fs::write(&path, "{ not json").unwrap();
+
+        let persistence = StatePersistence::with_path(path.clone());
+        let (state, warning) = persistence.load();
+        assert!(warning.is_some());
+        assert_eq!(state.settings.auto_fetch_minutes, 5);
+        assert!(!path.exists(), "corrupt file must be renamed away");
+        let _ = fs::remove_file(path);
     }
 }

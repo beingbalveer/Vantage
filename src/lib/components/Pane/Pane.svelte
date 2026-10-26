@@ -1392,7 +1392,6 @@
             <div class="diff-col" tabindex="-1">
               <DiffView
                 diffFile={currentDiffFile}
-                diffMode={$settings.diffMode}
                 ignoreWhitespace={$settings.ignoreWhitespace}
                 repoId={repo.id}
                 rev={selectedCommitSha || repo.branch || "HEAD"}

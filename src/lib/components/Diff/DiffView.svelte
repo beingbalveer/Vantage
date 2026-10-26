@@ -1529,7 +1529,7 @@
     font-size: 12px;
     color: #353c44;
     letter-spacing: -0.1px;
-    tab-size: 4;
+    tab-size: var(--code-tab-size, 4);
     min-width: 100%;
     width: max-content;
   }

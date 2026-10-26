@@ -17,6 +17,7 @@ import type {
   HeadCommitInfo,
   HistoryPage,
   FileDiffMeta,
+  GitIdentity,
   Layout,
   LineSelection,
   RepoEntry,
@@ -502,6 +503,20 @@ export async function runCommitMessageCmd(
 
 export async function envCheck(): Promise<EnvInfo> {
   return invoke("env_check");
+}
+
+// Git identity
+export async function gitIdentityGet(id?: string): Promise<GitIdentity> {
+  return invoke("git_identity_get", { id: id || undefined });
+}
+
+export async function gitIdentitySet(
+  id: string | undefined,
+  scope: "global" | "repo",
+  name: string | null,
+  email: string | null
+): Promise<GitIdentity> {
+  return invoke("git_identity_set", { id: id || undefined, scope, name, email });
 }
 
 // Event Listeners

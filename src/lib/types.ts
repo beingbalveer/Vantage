@@ -173,6 +173,10 @@ export interface Settings {
   commitMessageCmd: string | null;
   terminalFontSize: number;
   uiScale: number;
+  defaultBranch: string;
+  tabSize: number;
+  confirmTerminalClose: boolean;
+  confirmTerminalRestart: boolean;
 }
 
 export interface PaneLayout {
@@ -278,6 +282,26 @@ export interface EnvInfo {
   gitVersion: string;
   shell: string;
   startupWarning?: string | null;
+  defaultShell: string;
+  shells: DetectedApp[];
+  editors: DetectedApp[];
+}
+
+export interface DetectedApp {
+  id: string;
+  label: string;
+  command: string;
+}
+
+export interface GitIdentity {
+  globalName: string | null;
+  globalEmail: string | null;
+  localName: string | null;
+  localEmail: string | null;
+  effectiveName: string | null;
+  effectiveEmail: string | null;
+  nameSource: "repo" | "global" | "system" | "unset";
+  emailSource: "repo" | "global" | "system" | "unset";
 }
 
 export interface HeadCommitInfo {

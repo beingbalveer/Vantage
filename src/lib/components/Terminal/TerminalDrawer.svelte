@@ -4,6 +4,7 @@
   import { FitAddon } from "@xterm/addon-fit";
   import "@xterm/xterm/css/xterm.css";
   import * as api from "../../api";
+  import { settings } from "../../stores/settings";
   import type { UnlistenFn } from "@tauri-apps/api/event";
   import Icon from "../common/Icon.svelte";
 
@@ -26,10 +27,15 @@
   let themeObserver: MutationObserver | null = null;
   let isExited = $state(false);
   let isRestarting = $state(false);
+  let pendingAction = $state<"hide" | "restart" | null>(null);
 
   let displayPath = $derived.by(() => {
     return repoPath.replace(/^\/Users\/[^/]+/, "~");
   });
+
+  function fontSizeSetting(): number {
+    return Math.max(10, Math.min(20, $settings.terminalFontSize || 13));
+  }
 
   function getTerminalTheme(isDark: boolean) {
     if (isDark) {
@@ -99,7 +105,7 @@
     term = new Terminal({
       cursorBlink: true,
       cursorStyle: "block",
-      fontSize: 12.5,
+      fontSize: fontSizeSetting(),
       lineHeight: 1.3,
       fontFamily: '"SF Mono", "SFMono-Regular", ui-monospace, Menlo, Monaco, "Cascadia Code", "Liberation Mono", monospace',
       letterSpacing: 0,
@@ -189,6 +195,20 @@
     if (term) term.dispose();
   });
 
+  // Apply font-size changes immediately, then refit the PTY so the shell sees
+  // the new column/row count.
+  $effect(() => {
+    const size = fontSizeSetting();
+    if (!term || term.options.fontSize === size) return;
+    term.options.fontSize = size;
+    setTimeout(() => {
+      if (fitAddon && term) {
+        fitAddon.fit();
+        api.termResize(repoId, term.cols, term.rows);
+      }
+    }, 0);
+  });
+
   function handleClear(e?: MouseEvent) {
     if (e) {
       e.preventDefault();
@@ -208,6 +228,7 @@
     if (isRestarting) return;
     isRestarting = true;
     isExited = false;
+    pendingAction = null;
     term?.reset();
     try {
       const res = await api.termRestart(repoId);
@@ -226,12 +247,35 @@
     }
   }
 
-  function handleClose(e?: MouseEvent) {
+  function requestHide(e?: MouseEvent) {
     if (e) {
       e.preventDefault();
       e.stopPropagation();
     }
+    if ($settings.confirmTerminalClose && !isExited) {
+      pendingAction = "hide";
+      return;
+    }
     onclose?.();
+  }
+
+  function requestRestart(e?: MouseEvent) {
+    if (e) {
+      e.preventDefault();
+      e.stopPropagation();
+    }
+    if ($settings.confirmTerminalRestart && !isExited) {
+      pendingAction = "restart";
+      return;
+    }
+    handleRestart();
+  }
+
+  function confirmPending() {
+    const action = pendingAction;
+    pendingAction = null;
+    if (action === "hide") onclose?.();
+    else if (action === "restart") handleRestart();
   }
 </script>
 
@@ -262,35 +306,47 @@
           Exited
         </span>
       {/if}
-      <button
-        type="button"
-        class="term-icon-btn"
-        onclick={handleClear}
-        title="Clear Terminal (⌘K)"
-        aria-label="Clear Terminal"
-      >
-        <Icon name="trash" size={14} />
-      </button>
-      <button
-        type="button"
-        class="term-icon-btn"
-        class:is-loading={isRestarting}
-        disabled={isRestarting}
-        onclick={handleRestart}
-        title="Restart Terminal"
-        aria-label="Restart Terminal"
-      >
-        <Icon name="refresh" size={14} class={isRestarting ? 'spin' : ''} />
-      </button>
-      <button
-        type="button"
-        class="term-icon-btn"
-        onclick={handleClose}
-        title="Hide Terminal (⌘`)"
-        aria-label="Hide Terminal"
-      >
-        <Icon name="chevron-down" size={14} />
-      </button>
+      {#if pendingAction}
+        <span class="confirm-text">
+          {pendingAction === "hide" ? "Hide running terminal?" : "Restart the shell?"}
+        </span>
+        <button class="term-btn confirm" onclick={confirmPending} title="Confirm">
+          {pendingAction === "hide" ? "Hide" : "Restart"}
+        </button>
+        <button class="term-btn" onclick={() => (pendingAction = null)} title="Cancel">
+          Cancel
+        </button>
+      {:else}
+        <button
+          type="button"
+          class="term-icon-btn"
+          onclick={handleClear}
+          title="Clear Terminal (⌘K)"
+          aria-label="Clear Terminal"
+        >
+          <Icon name="trash" size={14} />
+        </button>
+        <button
+          type="button"
+          class="term-icon-btn"
+          class:is-loading={isRestarting}
+          disabled={isRestarting}
+          onclick={requestRestart}
+          title="Restart Terminal"
+          aria-label="Restart Terminal"
+        >
+          <Icon name="refresh" size={14} class={isRestarting ? 'spin' : ''} />
+        </button>
+        <button
+          type="button"
+          class="term-icon-btn"
+          onclick={requestHide}
+          title="Hide Terminal (⌘`)"
+          aria-label="Hide Terminal"
+        >
+          <Icon name="chevron-down" size={14} />
+        </button>
+      {/if}
     </div>
   </div>
 
@@ -452,6 +508,18 @@
   @keyframes term-spin {
     from { transform: rotate(0deg); }
     to { transform: rotate(360deg); }
+  }
+
+  .term-btn.confirm {
+    background-color: var(--accent);
+    border-color: var(--accent);
+    color: var(--accent-fg);
+  }
+
+  .confirm-text {
+    font-size: 11px;
+    color: var(--text-muted);
+    white-space: nowrap;
   }
 
   .term-body {
