@@ -4,6 +4,7 @@
   import type { NormalizedError } from "../../asyncState";
   import { splitPath } from "../../format";
   import { addToast } from "../../stores/ui";
+  import { registerDismiss } from "../../commands";
   import Icon from "../common/Icon.svelte";
   import Skeleton from "../common/Skeleton.svelte";
   import EmptyState from "../common/EmptyState.svelte";
@@ -213,6 +214,15 @@
     const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
     openFileMenu(file, rect.left, rect.bottom + 4);
   }
+
+  $effect(() => {
+    const unregister = registerDismiss(() => {
+      if (!showOptions) return false;
+      showOptions = false;
+      return true;
+    });
+    return unregister;
+  });
 </script>
 
 <div class="file-list-container">
@@ -347,6 +357,7 @@
       <div
         class="file-row {isSelected ? 'selected' : ''} {menuOpenPath === file.path ? 'menu-open' : ''}"
         class:conflicted={isFeatureEnabled("ALPH_156_CONFLICT_FLOW") && file.status === "conflicted"}
+        data-file-path={file.path}
         onclick={() => onselectfile?.(file.path)}
         onkeydown={(e) => handleRowKeydown(e, file)}
         oncontextmenu={(e) => handleRowContextMenu(e, file)}

@@ -13,8 +13,10 @@
     addToast,
   } from "./lib/stores/ui";
   import { operationStatus } from "./lib/stores/operation";
-  import { viewportPaneWidths, savedPaneWidth } from "./lib/layout";
+  import { isFeatureEnabled } from "./lib/featureFlags";
   import { matchShortcut } from "./lib/keys";
+  import { viewportPaneWidths, savedPaneWidth } from "./lib/layout";
+  import { dispatchKeyboard } from "./lib/commands";
   import * as api from "./lib/api";
   import { checkForAppUpdates } from "./lib/updater";
   import { createHorizontalResizer, createHorizontalResizerKeyboard } from "./lib/resizer";
@@ -130,6 +132,11 @@
   });
 
   function handleGlobalKeydown(e: KeyboardEvent) {
+    if (isFeatureEnabled("ALPH_161_SHORTCUT_REGISTRY")) {
+      dispatchKeyboard(e);
+      return;
+    }
+
     const isInput =
       e.target instanceof HTMLInputElement ||
       e.target instanceof HTMLTextAreaElement ||

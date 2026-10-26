@@ -11,6 +11,7 @@
   import { paletteOpen, settingsOpen, shortcutsHelpOpen, sidebarCollapsed, addToast } from "../../stores/ui";
   import { setOperationRunning, setOperationSuccess, setOperationError } from "../../stores/operation";
   import { formatRelativeTime } from "../../format";
+  import { registerDismiss } from "../../commands";
   import * as api from "../../api";
   import Icon from "../common/Icon.svelte";
 
@@ -154,6 +155,17 @@
       if (showMore) showMore = false;
     }
   }
+
+  $effect(() => {
+    const unregister = registerDismiss(() => {
+      if (showMore) {
+        showMore = false;
+        return true;
+      }
+      return false;
+    });
+    return unregister;
+  });
 
   onDestroy(() => {
     showMore = false;

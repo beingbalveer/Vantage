@@ -26,6 +26,7 @@
     isEditableTarget,
   } from "../../history";
   import { findFlaggedCommitIndex, matchShortcut } from "../../keys";
+  import { registerHandler, markRepoReviewed, ownsPaneKeyboard } from "../../commands";
   import type { MenuItem } from "../../menu";
   import ContextMenu from "../common/ContextMenu.svelte";
   import UncommittedRow from "./UncommittedRow.svelte";
@@ -233,6 +234,12 @@
   );
   let workingPart = $state<WorkingPart>("unstaged");
   let workingCounts = $state<WorkingPartCounts | null>(null);
+
+  // Registry navigation state (ALPH-161)
+  let paneEl = $state<HTMLElement | null>(null);
+  let selectionAnchorSha: string | null = null;
+  let extendedShas = $state<Set<string>>(new Set());
+  let flagsScanInFlight = false;
 
   // Generation IDs to avoid stale async overwrites (R11)
   let historyGen = 0;
@@ -591,7 +598,13 @@
       void jumpToFlag("next");
     }
   }
+
+  function clearExtendedSelection() {
+    if (extendedShas.size > 0) extendedShas = new Set();
+    selectionAnchorSha = null;
+  }
   function selectUncommitted() {
+    clearExtendedSelection();
     isUncommittedSelected = true;
     selectedCommitSha = null;
     currentScope = { type: "working" };
@@ -602,6 +615,7 @@
   }
 
   function selectCommit(sha: string) {
+    clearExtendedSelection();
     selectedCommitSha = sha;
     isUncommittedSelected = false;
     currentScope = { type: "commit", sha };
@@ -903,12 +917,240 @@
     loadHistory(true);
   }
 
+  // ---- Registry-driven navigation (ALPH-161) -------------------------------
+
+  function scrollCommitIntoView(sha: string) {
+    queueMicrotask(() => {
+      paneEl
+        ?.querySelector<HTMLElement>(`[data-sha="${sha}"]`)
+        ?.scrollIntoView({ block: "nearest" });
+    });
+  }
+
+  function moveList(delta: 1 | -1, extend = false): boolean {
+    if (!ownsPaneKeyboard(paneIndex) || focusDiff) return false;
+
+    // j/k follow the focused list: the commit list or the changed-file list.
+    const active = document.activeElement as HTMLElement | null;
+    if (!extend && active?.closest(".files-col")) {
+      return moveFile(delta);
+    }
+
+    if (commits.length === 0) return false;
+
+    const current = isUncommittedSelected
+      ? -1
+      : selectedCommitSha
+        ? commits.findIndex((c) => c.sha === selectedCommitSha)
+        : -1;
+
+    let next = current + delta;
+    next = Math.max(-1, Math.min(commits.length - 1, next));
+
+    if (!extend) {
+      if (next === -1) {
+        selectUncommitted();
+      } else {
+        selectCommit(commits[next].sha);
+        scrollCommitIntoView(commits[next].sha);
+      }
+      return true;
+    }
+
+    // Extending cannot include the uncommitted row.
+    if (next === -1) next = 0;
+    const anchorSha =
+      selectionAnchorSha ||
+      selectedCommitSha ||
+      commits[0]?.sha;
+    if (!anchorSha) return false;
+
+    const anchorIdx = commits.findIndex((c) => c.sha === anchorSha);
+    if (anchorIdx < 0) return false;
+
+    selectionAnchorSha = anchorSha;
+    const lo = Math.min(anchorIdx, next);
+    const hi = Math.max(anchorIdx, next);
+    extendedShas = new Set(commits.slice(lo, hi + 1).map((c) => c.sha));
+
+    const sha = commits[next].sha;
+    selectedCommitSha = sha;
+    isUncommittedSelected = false;
+    isRangeSelected = false;
+    currentScope = { type: "commit", sha };
+    commitMode = false;
+    showCommitDetails = false;
+    loadScopeFiles(currentScope);
+    scrollCommitIntoView(sha);
+    return true;
+  }
+
+  async function jumpToFlagged(direction: "next" | "prev"): Promise<boolean> {
+    if (!ownsPaneKeyboard(paneIndex) || !repo || commits.length === 0) return false;
+
+    // `log_page` returns empty flag arrays; compute triage flags on demand the
+    // first time the user asks to jump. (Rendering flags is owned elsewhere.)
+    if (!commits.some((c) => c.flags && c.flags.length > 0) && !flagsScanInFlight) {
+      flagsScanInFlight = true;
+      addToast({ message: "Checking triage flags…", kind: "info" });
+      try {
+        const map = await api.commitFlags(
+          repo.id,
+          commits.map((c) => c.sha)
+        );
+        commits = commits.map((c) => ({ ...c, flags: map[c.sha] ?? c.flags ?? [] }));
+      } catch (e: any) {
+        addToast({ message: e.message || "Failed to load triage flags", kind: "error" });
+        return true;
+      } finally {
+        flagsScanInFlight = false;
+      }
+    }
+
+    const current = commits.findIndex((c) => c.sha === selectedCommitSha);
+    const target = findFlaggedCommitIndex(commits, current, direction);
+    if (target < 0 || target === current) {
+      addToast({
+        message: direction === "next" ? "No next flagged commit" : "No previous flagged commit",
+        kind: "info",
+      });
+      return true;
+    }
+
+    selectCommit(commits[target].sha);
+    scrollCommitIntoView(commits[target].sha);
+    return true;
+  }
+
+  async function markReviewedHere(): Promise<boolean> {
+    if (!ownsPaneKeyboard(paneIndex) || !repo) return false;
+    if (extendedShas.size > 1) {
+      // Newest commit in the selected range (history is newest-first).
+      const newest = commits.find((c) => extendedShas.has(c.sha));
+      if (!newest) return false;
+      await markRepoReviewed(repo.id, newest.sha);
+      clearExtendedSelection();
+      return true;
+    }
+    await markRepoReviewed(repo.id);
+    return true;
+  }
+
+  async function copySelectedSha(): Promise<boolean> {
+    if (!ownsPaneKeyboard(paneIndex) || !repo) return false;
+    const active = document.activeElement as HTMLElement | null;
+    const focusedSha = active?.closest<HTMLElement>("[data-sha]")?.dataset.sha;
+    const commit = commits.find((c) => c.sha === (focusedSha || selectedCommitSha));
+    if (!commit) {
+      addToast({ message: "Select a commit to copy its SHA", kind: "info" });
+      return true;
+    }
+    try {
+      await navigator.clipboard.writeText(commit.sha);
+      addToast({ message: `Copied ${commit.short}`, kind: "info" });
+    } catch (e: any) {
+      addToast({ message: e.message || "Failed to copy SHA", kind: "error" });
+    }
+    return true;
+  }
+
+  function moveFile(delta: 1 | -1): boolean {
+    if (!ownsPaneKeyboard(paneIndex) || scopeFilesList.length === 0) return false;
+    const current = selectedFilePath
+      ? scopeFilesList.findIndex((f) => f.path === selectedFilePath)
+      : -1;
+    const next = Math.max(
+      0,
+      Math.min(scopeFilesList.length - 1, (current < 0 ? 0 : current) + delta)
+    );
+    const path = scopeFilesList[next]?.path;
+    if (!path) return false;
+    selectFile(path);
+    queueMicrotask(() => {
+      paneEl
+        ?.querySelector<HTMLElement>(`[data-file-path="${CSS.escape(path)}"]`)
+        ?.scrollIntoView({ block: "nearest" });
+    });
+    return true;
+  }
+
+  function focusNextRegion(): boolean {
+    if (!ownsPaneKeyboard(paneIndex) || !paneEl) return false;
+    const active = document.activeElement as HTMLElement | null;
+
+    const commitRow = active?.closest<HTMLElement>(".commit-item, .change-item");
+    if (commitRow && paneEl.contains(commitRow)) {
+      const sha = commitRow.dataset.sha;
+      if (sha && sha !== selectedCommitSha) {
+        selectCommit(sha);
+      }
+      const row =
+        paneEl.querySelector<HTMLElement>(".file-row.selected") ||
+        paneEl.querySelector<HTMLElement>(".file-row");
+      if (row) {
+        row.focus();
+        return true;
+      }
+      return false;
+    }
+
+    const fileRow = active?.closest<HTMLElement>(".file-row");
+    if (fileRow && paneEl.contains(fileRow)) {
+      const diff =
+        paneEl.querySelector<HTMLElement>(".diff-body") ||
+        paneEl.querySelector<HTMLElement>(".diff-col");
+      if (diff) {
+        diff.focus();
+        return true;
+      }
+      return false;
+    }
+
+    // Enter on an unrelated control (toolbar button, menu trigger) must keep
+    // its native activation. Only an unfocused surface advances focus.
+    const isSurface =
+      active === document.body ||
+      active === document.documentElement ||
+      active?.classList.contains("diff-body") ||
+      active?.classList.contains("diff-col") ||
+      active?.classList.contains("pane-container");
+    if (!isSurface) return false;
+
+    const first =
+      paneEl.querySelector<HTMLElement>(".commit-item.active") ||
+      paneEl.querySelector<HTMLElement>(".change-item.active") ||
+      paneEl.querySelector<HTMLElement>("[data-sha]") ||
+      paneEl.querySelector<HTMLElement>("[data-uncommitted]");
+    if (first) {
+      first.focus();
+      return true;
+    }
+    return false;
+  }
+
+  $effect(() => {
+    const unregister = [
+      registerHandler("list_down", () => moveList(1), "history"),
+      registerHandler("list_up", () => moveList(-1), "history"),
+      registerHandler("extend_down", () => moveList(1, true), "history"),
+      registerHandler("extend_up", () => moveList(-1, true), "history"),
+      registerHandler("next_flag", () => jumpToFlagged("next"), "history"),
+      registerHandler("prev_flag", () => jumpToFlagged("prev"), "history"),
+      registerHandler("mark_reviewed", markReviewedHere, "history"),
+      registerHandler("copy_sha", copySelectedSha, "history"),
+      registerHandler("enter_focus", focusNextRegion, "history"),
+      registerHandler("next_file", () => moveFile(1), "diff"),
+      registerHandler("prev_file", () => moveFile(-1), "diff"),
+    ];
+    return () => unregister.forEach((off) => off());
+  });
 </script>
 
 <svelte:window onkeydown={handlePaneKeydown} />
 
 <div
   class="pane-container {isFocused ? 'focused' : ''}"
+  bind:this={paneEl}
   onpointerdown={() => focusPane(paneIndex)}
   onfocusin={() => focusPane(paneIndex)}
   role="region"
@@ -1026,7 +1268,7 @@
               {#each commits as commit (commit.sha)}
                 <CommitRow
                   {commit}
-                  isSelected={selectedCommitSha === commit.sha}
+                  isSelected={selectedCommitSha === commit.sha || extendedShas.has(commit.sha)}
                   isLocal={unpushedShas.has(commit.sha)}
                   isMenuOpen={isCommitMenuOpen(commit.sha)}
                   flags={flagsBySha[commit.sha] ?? []}
@@ -1147,7 +1389,7 @@
               }}
             ></div>
 
-            <div class="diff-col">
+            <div class="diff-col" tabindex="-1">
               <DiffView
                 diffFile={currentDiffFile}
                 diffMode={$settings.diffMode}
@@ -1164,6 +1406,7 @@
                 {workingCounts}
                 onchangepart={changeWorkingPart}
                 onrefresh={handlePartialRefresh}
+                {paneIndex}
                 onviewfile={(path: string) => {
                   navigateTo({
                     repoId: repo.id,
@@ -1521,6 +1764,7 @@
     height: 100%;
     background-color: var(--bg);
     overflow: hidden;
+    outline: none;
   }
 
   /* Thin separator with a wider invisible grab target (RELAY-UI · UI-08). */

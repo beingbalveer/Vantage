@@ -25,9 +25,10 @@
 
 <div
   class="change-item {isSelected ? 'active' : ''}"
+  data-uncommitted
   onclick={handleTrigger}
   onkeydown={(e) => {
-    if (e.key === "Enter" || e.key === " ") {
+    if (e.key === " ") {
       e.preventDefault();
       handleTrigger(e);
     }

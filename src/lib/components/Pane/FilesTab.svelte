@@ -7,6 +7,7 @@
   import FileTree from "./FileTree.svelte";
   import BranchDropdown from "./BranchDropdown.svelte";
   import { createHorizontalResizer } from "../../resizer";
+  import { registerHandler, ownsPaneKeyboard } from "../../commands";
   import Icon from "../common/Icon.svelte";
   import Skeleton from "../common/Skeleton.svelte";
   import Banner from "../common/Banner.svelte";
@@ -145,6 +146,38 @@
       fileTreeRef?.focusSearch();
     }
   }
+
+  function selectFileAt(index: number) {
+    const file = fileList[index];
+    if (!file) return;
+    selectedFile = file;
+    activeTargetLine = null;
+  }
+
+  function moveFile(delta: 1 | -1): boolean {
+    if (!ownsPaneKeyboard(paneIndex) || fileList.length === 0) return false;
+    const current = selectedFile ? fileList.indexOf(selectedFile) : -1;
+    const next = Math.max(0, Math.min(fileList.length - 1, (current < 0 ? 0 : current) + delta));
+    selectFileAt(next);
+    return true;
+  }
+
+  $effect(() => {
+    const unregister = [
+      registerHandler(
+        "filter_files",
+        () => {
+          if (!ownsPaneKeyboard(paneIndex)) return false;
+          fileTreeRef?.focusSearch?.();
+          return true;
+        },
+        "files"
+      ),
+      registerHandler("list_down", () => moveFile(1), "files"),
+      registerHandler("list_up", () => moveFile(-1), "files"),
+    ];
+    return () => unregister.forEach((off) => off());
+  });
 </script>
 
 <svelte:window onkeydown={handleKeydown} />
@@ -226,6 +259,7 @@
         path={selectedFile}
         rev={rev || "HEAD"}
         targetLine={activeTargetLine || undefined}
+        {paneIndex}
         onopenineditor={openInEditor}
         onnavigatetofile={(filePath, line) => {
           selectedFile = filePath;

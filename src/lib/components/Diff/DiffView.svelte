@@ -25,6 +25,7 @@
   import { panes, focusedPaneIndex } from "../../stores/panes";
   import { addToast } from "../../stores/ui";
   import { settings, updateSettings } from "../../stores/settings";
+  import { registerHandler, registerDismiss, ownsPaneKeyboard } from "../../commands";
   import Icon from "../common/Icon.svelte";
   import { Modal, Button } from "../common";
   import BinaryDiff from "./BinaryDiff.svelte";
@@ -50,6 +51,7 @@
     workingCounts?: WorkingPartCounts | null;
     onchangepart?: (part: WorkingPart) => void;
     onrefresh?: () => void;
+    paneIndex?: number;
     onexpandcontext?: (oldStart: number, count: number) => void;
     onexpandwholefile?: () => void;
     oncollapsecontext?: () => void;
@@ -75,6 +77,7 @@
     workingCounts = null,
     onchangepart,
     onrefresh,
+    paneIndex = 0,
     onexpandcontext,
     onexpandwholefile,
     oncollapsecontext,
@@ -562,6 +565,75 @@
     }
   }
 
+  let activeHunkIndex = $state(-1);
+
+  $effect(() => {
+    // Reset hunk cursor whenever the displayed file changes.
+    void diffFile;
+    activeHunkIndex = -1;
+  });
+
+  function moveHunk(direction: 1 | -1): boolean {
+    if (!textBodyEl || localHunks.length === 0) return false;
+    const headers = Array.from(
+      textBodyEl.querySelectorAll<HTMLElement>("[data-hunk-index]")
+    );
+    if (headers.length === 0) return false;
+
+    if (activeHunkIndex < 0) {
+      activeHunkIndex = direction > 0 ? 0 : headers.length - 1;
+    } else {
+      activeHunkIndex = Math.max(
+        0,
+        Math.min(headers.length - 1, activeHunkIndex + direction)
+      );
+    }
+    headers[activeHunkIndex]?.scrollIntoView({ block: "start", behavior: "smooth" });
+    return true;
+  }
+
+  $effect(() => {
+    const unregister = [
+      registerHandler(
+        "expand_context",
+        () => {
+          if (!ownsPaneKeyboard(paneIndex) || !diffFile) return false;
+          toggleWholeFile();
+          return true;
+        },
+        "diff"
+      ),
+      registerHandler(
+        "next_hunk",
+        () => (ownsPaneKeyboard(paneIndex) ? moveHunk(1) : false),
+        "diff"
+      ),
+      registerHandler(
+        "prev_hunk",
+        () => (ownsPaneKeyboard(paneIndex) ? moveHunk(-1) : false),
+        "diff"
+      ),
+      registerHandler(
+        "toggle_diff_mode",
+        () => {
+          if (!ownsPaneKeyboard(paneIndex)) return false;
+          void setDiffMode(diffMode === "split" ? "unified" : "split");
+          return true;
+        },
+        "diff"
+      ),
+      registerDismiss(() => {
+        if (!ownsPaneKeyboard(paneIndex)) return false;
+        if (selectedRange) {
+          selectedRange = null;
+          return true;
+        }
+        return false;
+      }),
+    ];
+    return () => unregister.forEach((off) => off());
+  });
+
   function handleKeydown(e: KeyboardEvent) {
     const target = e.target as HTMLElement | null;
     if (
@@ -587,7 +659,6 @@
       selectedRange = null;
     }
   }
-
   /** Normalized hunk label. The backend already stores context (text after the
    *  second `@@`), so we only strip a leading range if one slipped through,
    *  which prevents printing `@@ … @@` twice (RELAY-UI · UI-06). */
@@ -836,7 +907,7 @@
       </div>
     {:else}
     <!-- Hunks Body -->
-    <div class="diff-body" bind:this={textBodyEl}>
+    <div class="diff-body" bind:this={textBodyEl} tabindex="-1">
         {#if localHunks.length === 0}
           {#if stagingEnabled}
             <div class="empty-diff">
@@ -954,7 +1025,7 @@
             {/if}
 
             <!-- Hunk Header -->
-            <div class="hunk-header font-mono text-xs">
+            <div class="hunk-header font-mono text-xs" data-hunk-index={hIdx}>
               <span class="hunk-label">{hunkLabel(hunk)}</span>
               {#if stagingEnabled}
                 <button
@@ -1354,6 +1425,7 @@
     flex: 1;
     overflow: auto;
     min-width: 100%;
+    outline: none;
   }
 
   .expand-row {

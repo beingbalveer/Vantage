@@ -1,28 +1,11 @@
 <script lang="ts">
   import { get } from "svelte/store";
-  import { paletteOpen } from "../../stores/ui";
-  import { repos, loadRepos, refreshSingleStatus, refreshAllStatuses, activeRepoId, removeRepo } from "../../stores/repos";
   import {
-    openRepoInFocusedPane,
-    openRepoInNextPane,
-    cyclePaneCount,
-    setPaneCount,
-    paneCount,
-    closePane,
-    panes,
-    focusedPaneIndex,
-    setPaneTab,
-    toggleTerminalInPane,
-  } from "../../stores/panes";
-  import { settings, updateSettings } from "../../stores/settings";
-  import { SHORTCUTS, formatKey } from "../../keys";
-  import { fuzzyScore } from "../../fuzzy";
-  import { formatRelativeTime } from "../../format";
-  import {
+    paletteOpen,
+    addToast,
     addRepoDialogOpen,
     settingsOpen,
     shortcutsHelpOpen,
-    addToast,
     sidebarCollapsed,
     openDialog,
     openTagCreateDialog,
@@ -31,6 +14,25 @@
     stashDialogOpen,
     composerRequest,
   } from "../../stores/ui";
+  import { repos, activeRepoId, loadRepos, refreshAllStatuses, refreshSingleStatus } from "../../stores/repos";
+  import {
+    openRepoInFocusedPane,
+    openRepoInNextPane,
+    panes,
+    focusedPaneIndex,
+    setPaneTab,
+    paneCount,
+    setPaneCount,
+    closePane,
+    cyclePaneCount,
+    toggleTerminalInPane,
+  } from "../../stores/panes";
+  import { settings, updateSettings } from "../../stores/settings";
+  import { formatKey, SHORTCUTS } from "../../keys";
+  import { paletteCommands, runCommand, getBaseContexts, applyNamedLayout } from "../../commands";
+  import { isFeatureEnabled } from "../../featureFlags";
+  import { fuzzyScore } from "../../fuzzy";
+  import { formatRelativeTime } from "../../format";
   import type { Layout, CommitSummary } from "../../types";
   import * as api from "../../api";
   import { runUndoLastCommit } from "../../undoCommit";
@@ -115,17 +117,19 @@
   let items = $derived.by(() => {
     const list: PaletteItem[] = [];
 
-    // Commands definition
-    const commands: Omit<PaletteItem, "type" | "score">[] = [
-      {
-        id: "cmd_add_repo",
-        title: "Add repository…",
-        shortcut: "Mod+O",
-        action: () => {
-          $paletteOpen = false;
-          $addRepoDialogOpen = true;
-        },
+    // Commands come from the single shortcut registry so labels and
+    // keybindings cannot drift between the palette, Help and the router.
+    const registryCommands: Omit<PaletteItem, "type" | "score">[] = paletteCommands(getBaseContexts()).map((c) => ({
+      id: c.id,
+      title: c.label,
+      shortcut: c.keys.length > 0 ? c.keys.map((k) => formatKey(k)).join(" / ") : undefined,
+      action: () => {
+        $paletteOpen = false;
+        runCommand(c.id);
       },
+    }));
+
+    const extraCommands: Omit<PaletteItem, "type" | "score">[] = [
       {
         id: "cmd_clone_repo",
         title: "Clone repository…",
@@ -579,34 +583,23 @@
       },
     ];
 
-    // Add named layouts if present
+    const commands: Omit<PaletteItem, "type" | "score">[] = [
+      ...registryCommands,
+      ...extraCommands,
+    ];
+
+    // Add named layouts if present. These are user data, not registry
+    // commands; they still route through the layout command's applier.
     try {
       const raw = localStorage.getItem("vantage_saved_layouts") || localStorage.getItem("relay_saved_layouts") || "{}";
       const saved = JSON.parse(raw);
       for (const name of Object.keys(saved)) {
         commands.push({
-          id: `cmd_load_layout_${name}`,
+          id: `load_layout_${name}`,
           title: `Load layout: ${name}`,
           action: () => {
             $paletteOpen = false;
-            const targetLayout = saved[name];
-            if (targetLayout) {
-              const targetCount = Math.max(1, Math.min(3, targetLayout.paneCount || 1));
-              setPaneCount(targetCount);
-              panes.update((list) => {
-                return list.map((p, i) => {
-                  if (i < targetCount && targetLayout.panes?.[i]) {
-                    return {
-                      ...p,
-                      repoId: targetLayout.panes[i].repoId,
-                      tab: targetLayout.panes[i].tab || "history",
-                    };
-                  }
-                  return p;
-                });
-              });
-              addToast({ message: `Loaded layout "${name}"`, kind: "success" });
-            }
+            applyNamedLayout(name, saved[name]);
           },
         });
       }
@@ -779,7 +772,16 @@
   });
 
   function handleKeydown(e: KeyboardEvent) {
-    if (e.key === "Escape") {
+    const mod = e.metaKey || e.ctrlKey;
+    if (
+      (mod && e.key.toLowerCase() === "k") ||
+      (e.ctrlKey && e.shiftKey && e.key.toLowerCase() === "p")
+    ) {
+      // The registry also carries this binding, but the palette input is an
+      // editable target and must not be intercepted by the global router.
+      e.preventDefault();
+      $paletteOpen = false;
+    } else if (e.key === "Escape") {
       $paletteOpen = false;
     } else if (e.key === "ArrowDown") {
       e.preventDefault();
@@ -892,7 +894,7 @@
 
               {#if item.shortcut}
                 <span class="row-shortcut font-mono text-xs">
-                  {formatKey(item.shortcut)}
+                  {item.shortcut}
                 </span>
               {/if}
 

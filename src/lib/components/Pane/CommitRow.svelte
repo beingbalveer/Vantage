@@ -81,7 +81,7 @@
       openMenuAt(rect.left + 16, rect.top + 16);
       return;
     }
-    if (e.key === "Enter" || e.key === " ") {
+    if (e.key === " ") {
       e.preventDefault();
       handleTrigger(e);
     }
