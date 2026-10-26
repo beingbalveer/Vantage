@@ -6,19 +6,61 @@ export const repos = writable<RepoEntry[]>([]);
 export const statuses = writable<Record<string, RepoStatus>>({});
 export const activeRepoId = writable<string | null>(null);
 
-// Derived sorted repos (pinned first, then by lastActivityAt descending)
+export type RepoSelection =
+  | { type: "uncommitted" }
+  | { type: "commit"; sha: string };
+
+export const repoSelections = writable<Record<string, RepoSelection>>({});
+
+export function setRepoSelection(repoId: string, selection: RepoSelection) {
+  repoSelections.update((prev) => ({ ...prev, [repoId]: selection }));
+}
+
+export function getRepoSelection(repoId: string): RepoSelection | undefined {
+  return get(repoSelections)[repoId];
+}
+
+// Derived sorted repos (pinned first, then by manual order, then lastActivityAt)
 export const sortedRepos = derived([repos, statuses], ([$repos, $statuses]) => {
   return [...$repos].sort((a, b) => {
     if (a.pinned !== b.pinned) {
       return a.pinned ? -1 : 1;
     }
+    const orderA = a.order ?? 0;
+    const orderB = b.order ?? 0;
+    if (orderA !== orderB) {
+      return orderA - orderB;
+    }
     const statA = $statuses[a.id];
     const statB = $statuses[b.id];
     const timeA = statA?.lastActivityAt ? new Date(statA.lastActivityAt).getTime() : 0;
     const timeB = statB?.lastActivityAt ? new Date(statB.lastActivityAt).getTime() : 0;
-    return timeB - timeA;
+    if (timeB !== timeA) {
+      return timeB - timeA;
+    }
+    return a.name.localeCompare(b.name);
   });
 });
+
+export async function reorderRepos(reorderedList: RepoEntry[]): Promise<void> {
+  const updated = reorderedList.map((repo, idx) => ({
+    ...repo,
+    order: idx,
+  }));
+  repos.set(updated);
+
+  try {
+    await api.repoReorder(
+      updated.map((r) => ({
+        id: r.id,
+        order: r.order,
+        pinned: r.pinned,
+      }))
+    );
+  } catch (e) {
+    console.error("Failed to persist repo order:", e);
+  }
+}
 
 export async function loadRepos() {
   try {

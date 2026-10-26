@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onMount, onDestroy, tick, untrack } from "svelte";
+  import { get } from "svelte/store";
   import { isFeatureEnabled } from "../../featureFlags";
   import type {
     RepoEntry,
@@ -16,7 +17,7 @@
   import { settings } from "../../stores/settings";
   import { panes, paneCount, focusedPaneIndex, focusPane, setPaneTab } from "../../stores/panes";
   import { addToast, openDialog, activeDialog, paletteOpen, settingsOpen, shortcutsHelpOpen, addRepoDialogOpen, scanFolderDialogOpen, composerRequest } from "../../stores/ui";
-  import { refreshSingleStatus } from "../../stores/repos";
+  import { refreshSingleStatus, loadRepos, setRepoSelection, getRepoSelection, statuses } from "../../stores/repos";
   import { tagsByRepo, loadTags, groupTagsByTarget } from "../../stores/tags";
   import { navigationTarget, navigateTo } from "../../stores/navigation";
   import {
@@ -36,7 +37,6 @@
   import FileList from "./FileList.svelte";
   import CommitBox from "./CommitBox.svelte";
   import ConflictBanner from "./ConflictBanner.svelte";
-  import { loadRepos } from "../../stores/repos";
   import DiffView from "../Diff/DiffView.svelte";
   import FilesTab from "./FilesTab.svelte";
   import TerminalDrawer from "../Terminal/TerminalDrawer.svelte";
@@ -355,7 +355,10 @@
 
         const s = await api.onRepoStatus((st: RepoStatus) => {
           if (!active || !repo || st.repoId !== repo.id) return;
-          if (isUncommittedSelected) {
+          const lastSel = getRepoSelection(repo.id);
+          if (st.dirtyCount > 0 && (!lastSel || lastSel.type === "uncommitted") && !isUncommittedSelected) {
+            selectUncommitted(false);
+          } else if (isUncommittedSelected) {
             loadScopeFiles({ type: "working" }, true);
           }
         });
@@ -397,14 +400,33 @@
         if (query) {
           // Filtering: land on the newest match, or clear when nothing matches.
           if (page.commits.length > 0) {
-            selectCommit(page.commits[0].sha);
+            selectCommit(page.commits[0].sha, false);
           } else {
             clearSelection();
           }
-        } else if (status?.dirtyCount && status.dirtyCount > 0) {
-          selectUncommitted();
-        } else if (page.commits.length > 0) {
-          selectCommit(page.commits[0].sha);
+        } else {
+          const lastSel = repo ? getRepoSelection(repo.id) : undefined;
+          const statusDirty =
+            Boolean(status?.dirtyCount && status.dirtyCount > 0) ||
+            Boolean(repo && get(statuses)[repo.id]?.dirtyCount && get(statuses)[repo.id].dirtyCount > 0);
+
+          if (statusDirty) {
+            selectUncommitted(false);
+          } else if (lastSel) {
+            if (lastSel.type === "uncommitted") {
+              selectUncommitted(false);
+            } else if (
+              lastSel.type === "commit" &&
+              page.commits.some((c) => c.sha === lastSel.sha)
+            ) {
+              selectCommit(lastSel.sha, false);
+            } else {
+              selectUncommitted(false);
+            }
+          } else {
+            // Default when switching repo: uncommitted changes (never auto-select first commit)
+            selectUncommitted(false);
+          }
         }
       } else {
         // If current selection is commit, reload files; if uncommitted, reload files
@@ -605,7 +627,10 @@
     if (extendedShas.size > 0) extendedShas = new Set();
     selectionAnchorSha = null;
   }
-  function selectUncommitted() {
+  function selectUncommitted(record = true) {
+    if (record && repo) {
+      setRepoSelection(repo.id, { type: "uncommitted" });
+    }
     clearExtendedSelection();
     isUncommittedSelected = true;
     selectedCommitSha = null;
@@ -616,7 +641,10 @@
     loadScopeFiles(currentScope);
   }
 
-  function selectCommit(sha: string) {
+  function selectCommit(sha: string, record = true) {
+    if (record && repo) {
+      setRepoSelection(repo.id, { type: "commit", sha });
+    }
     clearExtendedSelection();
     selectedCommitSha = sha;
     isUncommittedSelected = false;

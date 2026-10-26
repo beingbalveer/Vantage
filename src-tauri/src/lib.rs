@@ -141,6 +141,7 @@ pub fn run() {
             repo_scan,
             repo_remove,
             repo_update,
+            repo_reorder,
             repo_relocate,
             repo_list,
             repo_status,

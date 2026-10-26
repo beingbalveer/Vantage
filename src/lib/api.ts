@@ -78,6 +78,12 @@ export async function repoUpdate(
   return invoke("repo_update", { id, update });
 }
 
+export async function repoReorder(
+  items: { id: string; order: number; pinned?: boolean }[]
+): Promise<void> {
+  return invoke("repo_reorder", { items });
+}
+
 export async function repoRelocate(id: string, newPath: string): Promise<RepoEntry> {
   return invoke("repo_relocate", { id, newPath });
 }

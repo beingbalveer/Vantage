@@ -365,6 +365,33 @@ pub async fn repo_update(
     Ok(cloned)
 }
 
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RepoReorderItem {
+    pub id: String,
+    pub order: u32,
+    pub pinned: Option<bool>,
+}
+
+#[tauri::command]
+pub async fn repo_reorder(
+    state: State<'_, AppState>,
+    items: Vec<RepoReorderItem>,
+) -> Result<(), AppError> {
+    let mut data = state.data.lock().await;
+    for item in items {
+        if let Some(entry) = data.repos.iter_mut().find(|r| r.id == item.id) {
+            entry.order = item.order;
+            if let Some(p) = item.pinned {
+                entry.pinned = p;
+            }
+        }
+    }
+    data.repos.sort_by_key(|r| (if r.pinned { 0 } else { 1 }, r.order));
+    state.persistence.save(&data)?;
+    Ok(())
+}
+
 #[tauri::command]
 pub async fn repo_relocate(
     state: State<'_, AppState>,
@@ -2437,5 +2464,34 @@ mod tests {
         assert_eq!(split_command_template("my\\ editor {full}"), vec!["my editor", "{full}"]);
         assert!(split_command_template("   ").is_empty());
         assert_eq!(split_command_template("open \"\""), vec!["open", ""]);
+    }
+
+    #[test]
+    fn reorders_repos_by_order_and_pinned() {
+        let mut repos = vec![
+            crate::state::RepoEntry {
+                id: "1".into(),
+                path: "/a".into(),
+                name: "a".into(),
+                branch: None,
+                pinned: false,
+                order: 0,
+                marker: None,
+                notes: vec![],
+            },
+            crate::state::RepoEntry {
+                id: "2".into(),
+                path: "/b".into(),
+                name: "b".into(),
+                branch: None,
+                pinned: true,
+                order: 1,
+                marker: None,
+                notes: vec![],
+            },
+        ];
+        repos.sort_by_key(|r| (if r.pinned { 0 } else { 1 }, r.order));
+        assert_eq!(repos[0].id, "2");
+        assert_eq!(repos[1].id, "1");
     }
 }

@@ -21,9 +21,26 @@
   interface Props {
     repo: RepoEntry;
     status?: RepoStatus;
+    isDragging?: boolean;
+    dropIndicator?: "before" | "after" | null;
+    ondragstart?: (e: DragEvent) => void;
+    ondragover?: (e: DragEvent) => void;
+    ondragleave?: (e: DragEvent) => void;
+    ondrop?: (e: DragEvent) => void;
+    ondragend?: (e: DragEvent) => void;
   }
 
-  let { repo, status }: Props = $props();
+  let {
+    repo,
+    status,
+    isDragging = false,
+    dropIndicator = null,
+    ondragstart,
+    ondragover,
+    ondragleave,
+    ondrop,
+    ondragend,
+  }: Props = $props();
 
   let showMenu = $state(false);
   let menuPos = $state<{ top: number; left: number } | null>(null);
@@ -274,11 +291,34 @@
     menuPos = null;
     openDialog({ type: "change_icon", repoId: repo.id, data: { repo } });
   }
+
+  function handleRowDragStart(e: DragEvent) {
+    if (showMenu || showBranchModal) {
+      e.preventDefault();
+      return;
+    }
+    stopHover();
+    if (e.dataTransfer) {
+      e.dataTransfer.effectAllowed = "move";
+      e.dataTransfer.setData("application/x-vantage-repo-id", repo.id);
+      e.dataTransfer.setData("text/plain", repo.name);
+    }
+    ondragstart?.(e);
+  }
 </script>
 
 <div
   class="repo-row {isOpenInFocused ? 'active' : ''} {$sidebarCollapsed ? 'collapsed' : ''}"
   class:error={hasError}
+  class:dragging={isDragging}
+  class:drop-before={dropIndicator === "before"}
+  class:drop-after={dropIndicator === "after"}
+  draggable={true}
+  ondragstart={handleRowDragStart}
+  ondragover={(e) => ondragover?.(e)}
+  ondragleave={(e) => ondragleave?.(e)}
+  ondrop={(e) => ondrop?.(e)}
+  ondragend={(e) => ondragend?.(e)}
   onclick={handleClick}
   onpointerenter={startHover}
   onpointerleave={stopHover}
@@ -516,6 +556,36 @@
   }
   :global(:root[data-theme="dark"]) .repo-row.active {
     background-color: rgba(255, 255, 255, 0.1);
+  }
+
+  .repo-row.dragging {
+    opacity: 0.4;
+  }
+
+  .repo-row.drop-before::before {
+    content: "";
+    position: absolute;
+    top: -2px;
+    left: 4px;
+    right: 4px;
+    height: 3px;
+    background: #1a73e8;
+    border-radius: 2px;
+    z-index: 20;
+    pointer-events: none;
+  }
+
+  .repo-row.drop-after::after {
+    content: "";
+    position: absolute;
+    bottom: -2px;
+    left: 4px;
+    right: 4px;
+    height: 3px;
+    background: #1a73e8;
+    border-radius: 2px;
+    z-index: 20;
+    pointer-events: none;
   }
 
   /* Collapsed View */
