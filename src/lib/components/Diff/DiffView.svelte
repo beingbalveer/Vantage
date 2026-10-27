@@ -1,6 +1,6 @@
 <script lang="ts">
   import { tick } from "svelte";
-  import { isFeatureEnabled } from "../../featureFlags";
+  import { isFeatureEnabled } from "../../featureFlags.svelte";
   import type { NormalizedError } from "../../asyncState";
   import { emptyDiffMessage } from "../../asyncState";
   import Skeleton from "../common/Skeleton.svelte";
@@ -230,6 +230,10 @@
   // Local reactive copy of hunks for context expansion
   let localHunks = $state<Hunk[]>([]);
   let emptyCopy = $derived(emptyDiffMessage(Boolean(diffFile?.change.binary)));
+
+  // Split-view pairing is expensive (word ranges, placeholders). Recompute it
+  // only when the hunks change, not on every selection/hover re-render.
+  let splitRowsByHunk = $derived(localHunks.map((hunk) => buildSplitRows(hunk.lines)));
 
   $effect(() => {
     if (diffFile && diffFile.hunks) {
@@ -947,7 +951,7 @@
                 {/if}
               </div>
 
-              {#each buildSplitRows(hunk.lines) as row}
+              {#each splitRowsByHunk[hIdx] ?? [] as row}
                 {#if row.type === "note"}
                   <div class="split-note font-mono text-xs">{row.text}</div>
                 {:else}
@@ -1253,7 +1257,7 @@
     min-height: 43px;
     flex-shrink: 0;
     background-color: var(--bg);
-    border-bottom: 1px solid #dcdfe3;
+    border-bottom: 1px solid var(--border);
     display: flex;
     align-items: center;
     justify-content: space-between;
@@ -1272,7 +1276,7 @@
     font-family: var(--font-ui);
     font-size: 12px;
     font-weight: 400;
-    color: #30363d;
+    color: var(--text);
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
@@ -1471,7 +1475,7 @@
     padding-left: 105px;
     padding-right: 12px;
     background-color: var(--bg);
-    color: #64758a;
+    color: var(--text-muted);
     font-size: 11px;
     user-select: none;
     position: sticky;
@@ -1527,11 +1531,24 @@
     height: 25px;
     line-height: 25px;
     font-size: 12px;
-    color: #353c44;
+    color: var(--text);
     letter-spacing: -0.1px;
     tab-size: var(--code-tab-size, 4);
     min-width: 100%;
     width: max-content;
+  }
+
+  /* Skip layout/paint for rows far outside the viewport. `auto` remembers the
+     real size once a row has been rendered, so scrollbars stay accurate. */
+  .diff-line,
+  .split-cell,
+  .split-note {
+    content-visibility: auto;
+    contain-intrinsic-size: auto 25px;
+  }
+  .expand-row {
+    content-visibility: auto;
+    contain-intrinsic-size: auto 28px;
   }
 
   .diff-line.add {
@@ -1561,7 +1578,7 @@
     line-height: 25px;
     color: var(--text-muted);
     background-color: var(--bg);
-    border-right: 1px solid #dce2e9;
+    border-right: 1px solid var(--border-subtle);
     user-select: none;
     flex-shrink: 0;
     cursor: pointer;
@@ -1624,7 +1641,7 @@
     padding-right: 20px;
     font-size: 12px;
     line-height: 25px;
-    color: #353c44;
+    color: var(--text);
   }
 
 

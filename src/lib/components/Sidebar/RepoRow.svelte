@@ -28,6 +28,8 @@
     ondragleave?: (e: DragEvent) => void;
     ondrop?: (e: DragEvent) => void;
     ondragend?: (e: DragEvent) => void;
+    /** Keyboard reorder: -1 moves up, +1 moves down. */
+    onmove?: (delta: -1 | 1) => void;
   }
 
   let {
@@ -40,6 +42,7 @@
     ondragleave,
     ondrop,
     ondragend,
+    onmove,
   }: Props = $props();
 
   let showMenu = $state(false);
@@ -164,7 +167,7 @@
     const sync = `${displayBranch || "HEAD"}${aheadCount ? ` ↑${aheadCount}` : ""}${
       behindCount ? ` ↓${behindCount}` : ""
     }`;
-    const lines = [`${repo.name} · ${sync}`, repo.path];
+    const lines = [`${repo.name} · ${sync}`, repo.path, "Alt+↑/↓ to reorder"];
     if (hasError) {
       lines.push(status?.error || "Repository error");
     } else {
@@ -326,6 +329,13 @@
   onblur={stopHover}
   oncontextmenu={handleContextMenu}
   onkeydown={(e) => {
+    // Alt+Arrow reorders without a pointer. Plain arrows stay available for
+    // scrolling the dock, matching the drag-and-drop affordance.
+    if (e.altKey && (e.key === "ArrowUp" || e.key === "ArrowDown")) {
+      e.preventDefault();
+      onmove?.(e.key === "ArrowUp" ? -1 : 1);
+      return;
+    }
     if (e.key === "Enter" || e.key === " ") {
       e.preventDefault();
       handleClick();
@@ -333,7 +343,9 @@
   }}
   role="button"
   tabindex="0"
+  data-repo-id={repo.id}
   aria-label={rowAriaLabel}
+  aria-keyshortcuts="Alt+ArrowUp Alt+ArrowDown"
   aria-current={isOpenInFocused ? "page" : undefined}
   title={rowTitle}
 >
@@ -569,7 +581,7 @@
     left: 4px;
     right: 4px;
     height: 3px;
-    background: #1a73e8;
+    background: var(--accent);
     border-radius: 2px;
     z-index: 20;
     pointer-events: none;
@@ -582,7 +594,7 @@
     left: 4px;
     right: 4px;
     height: 3px;
-    background: #1a73e8;
+    background: var(--accent);
     border-radius: 2px;
     z-index: 20;
     pointer-events: none;
@@ -621,8 +633,8 @@
     display: flex;
     align-items: center;
     justify-content: center;
-    background-color: #ffffff;
-    border: 1px solid #e1e4e8;
+    background-color: var(--bg);
+    border: 1px solid var(--border-subtle);
     box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04);
     flex-shrink: 0;
     box-sizing: border-box;
@@ -716,7 +728,7 @@
     white-space: nowrap;
     flex: 1 1 auto;
     min-width: 0;
-    color: #1a1c1f;
+    color: var(--text);
     font-size: 14px;
     font-weight: 500;
     line-height: 1.25;
@@ -733,7 +745,7 @@
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
-    color: #5f6368;
+    color: var(--text-muted);
     font-size: 12px;
     font-weight: 400;
     line-height: 1.25;
@@ -752,7 +764,7 @@
     border-radius: var(--r-sm, 4px);
     background: transparent;
     border: none;
-    color: #66686a;
+    color: var(--text-muted);
     display: inline-flex;
     align-items: center;
     justify-content: center;
@@ -771,7 +783,7 @@
   .row-menu-btn.menu-open {
     opacity: 1 !important;
     background-color: rgba(0, 0, 0, 0.08);
-    color: #1a1c1f;
+    color: var(--text);
   }
   :global([data-theme="dark"]) .row-menu-btn {
     color: var(--text-muted);
@@ -788,12 +800,12 @@
     width: 310px;
     padding: 15px 17px;
     background: var(--bg);
-    border: 1px solid #dedfe1;
+    border: 1px solid var(--border);
     border-radius: 14px;
     box-shadow: 0 9px 28px rgba(0, 0, 0, 0.075);
     z-index: 100;
     pointer-events: none;
-    color: #34383d;
+    color: var(--text);
     font-size: 13px;
   }
   .hover-title {
@@ -821,7 +833,7 @@
     align-items: center;
     gap: 9px;
     margin-top: 9px;
-    color: #555c63;
+    color: var(--text-muted);
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;

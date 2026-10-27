@@ -53,6 +53,10 @@
   // Find in File state
   let findOpen = $state(false);
   let searchQuery = $state("");
+  // Debounced copy of the query: typing should not rescan every line and retag
+  // the whole file on each keystroke.
+  let appliedQuery = $state("");
+  let findTimer: ReturnType<typeof setTimeout> | undefined;
   let currentMatchIdx = $state(0);
   let findInputEl = $state<HTMLInputElement | null>(null);
 
@@ -69,10 +73,20 @@
     matchIdxInLine: number;
   }
 
+  $effect(() => {
+    const query = searchQuery;
+    clearTimeout(findTimer);
+    findTimer = setTimeout(() => {
+      appliedQuery = query;
+      currentMatchIdx = 0;
+    }, 120);
+    return () => clearTimeout(findTimer);
+  });
+
   let matches = $derived.by<MatchPos[]>(() => {
-    if (!searchQuery.trim()) return [];
+    if (!appliedQuery.trim()) return [];
     const list: MatchPos[] = [];
-    const qLower = searchQuery.toLowerCase();
+    const qLower = appliedQuery.toLowerCase();
 
     for (let l = 0; l < rawLines.length; l++) {
       const lineLower = rawLines[l].toLowerCase();
@@ -92,7 +106,7 @@
   let matchCountText = $derived(
     matches.length > 0
       ? `${currentMatchIdx + 1} of ${matches.length}`
-      : searchQuery.trim()
+      : appliedQuery.trim()
         ? "No matches"
         : ""
   );
@@ -101,6 +115,13 @@
     matches.length > 0 && currentMatchIdx < matches.length
       ? matches[currentMatchIdx]
       : null
+  );
+
+  // Cache the highlighted HTML for every line. Without this the marker
+  // injection (split + scan + `<mark>` wrapping) ran for every visible line on
+  // every render, including unrelated hover/blame updates.
+  let highlightedLines = $derived(
+    lines.map((html, idx) => renderLineWithMatches(html, idx, appliedQuery, activeMatch))
   );
 
   $effect(() => {
@@ -498,7 +519,7 @@
                 if (sel) handlePeekDef(sel);
               }}
             >
-              {@html renderLineWithMatches(lineHtml, idx, searchQuery, activeMatch)}
+              {@html highlightedLines[idx] ?? lineHtml}
             </div>
           </div>
         {/each}
@@ -635,12 +656,12 @@
   .viewer-icon-btn.active {
     background: rgba(59, 130, 246, 0.15);
     border-color: rgba(59, 130, 246, 0.35);
-    color: #3b82f6;
+    color: var(--accent);
   }
   :global([data-theme="dark"]) .viewer-icon-btn.active {
     background: rgba(59, 130, 246, 0.25);
     border-color: rgba(59, 130, 246, 0.45);
-    color: #60a5fa;
+    color: var(--accent);
   }
 
   /* Find Bar */
@@ -742,6 +763,10 @@
     height: 20px;
     min-width: 100%;
     width: max-content;
+    /* Skip layout/paint for rows outside the viewport; `auto` remembers the
+       measured size after first render so the scrollbar stays stable. */
+    content-visibility: auto;
+    contain-intrinsic-size: auto 20px;
   }
   .lines-container.wrapped .code-row {
     width: 100%;
@@ -755,7 +780,7 @@
 
   .code-row.target-highlight {
     background-color: rgba(59, 130, 246, 0.15);
-    border-left: 2px solid #3b82f6;
+    border-left: 2px solid var(--accent);
     transition: background-color 0.4s ease;
   }
 

@@ -183,7 +183,8 @@ export interface ActiveDialog {
     | "remove_repo"
     | "branch_create"
     | "branch_rename"
-    | "branch_delete";
+    | "branch_delete"
+    | "layout";
   repoId: string;
   data?: any;
 }

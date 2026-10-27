@@ -441,14 +441,50 @@ pub async fn repo_status(state: State<'_, AppState>, id: String) -> Result<RepoS
 
 #[tauri::command]
 pub async fn repo_refresh_all(state: State<'_, AppState>) -> Result<Vec<RepoStatus>, AppError> {
-    let data = state.data.lock().await;
+    // Snapshot the repos and release the state lock before doing any Git work.
+    // The previous implementation held `data` for the whole sequential sweep,
+    // so a slow repository blocked every unrelated command (diff, commit,
+    // terminal, settings) until the refresh finished.
+    let specs: Vec<(String, PathBuf, Option<String>, Option<String>)> = {
+        let data = state.data.lock().await;
+        data.repos
+            .iter()
+            .map(|r| {
+                (
+                    r.id.clone(),
+                    PathBuf::from(&r.path),
+                    r.branch.clone(),
+                    r.marker.as_ref().map(|m| m.sha.clone()),
+                )
+            })
+            .collect()
+    };
+
+    // Refresh in parallel. `JoinSet` bounds nothing by itself but the repo
+    // count is small and each task is independent; this is still far better
+    // than serializing them behind one mutex.
+    let runner = state.runner.clone();
+    let mut tasks = tokio::task::JoinSet::new();
+    for (id, path, branch, marker) in specs {
+        let runner = runner.clone();
+        tasks.spawn(async move {
+            query_repo_status(
+                &runner,
+                &id,
+                &path,
+                branch.as_deref(),
+                marker.as_deref(),
+            )
+            .await
+        });
+    }
+
     let mut statuses = Vec::new();
-    for r in &data.repos {
-        let path = PathBuf::from(&r.path);
-        let m = r.marker.as_ref().map(|m| m.sha.as_str());
-        let b = r.branch.as_deref();
-        let s = query_repo_status(&state.runner, &r.id, &path, b, m).await;
-        statuses.push(s);
+    while let Some(result) = tasks.join_next().await {
+        match result {
+            Ok(status) => statuses.push(status),
+            Err(error) => eprintln!("repo status refresh task failed: {error}"),
+        }
     }
     Ok(statuses)
 }
@@ -591,23 +627,34 @@ pub async fn commit_flags(
         PathBuf::from(&entry.path)
     };
 
-    let mut results = HashMap::new();
-    for sha in shas {
-        let files_res = get_scope_files(
-            &state.runner,
-            &repo_path,
-            &DiffScope::Commit { sha: sha.clone() },
-            false,
-        )
-        .await;
+    // Each SHA needs two Git processes (numstat + a -U0 sample). Fan them out
+    // with a small concurrency cap so a full history page no longer blocks for
+    // 2 × N sequential process spawns, without flooding the machine.
+    let runner = state.runner.clone();
+    let permits = Arc::new(tokio::sync::Semaphore::new(6));
+    let mut tasks = tokio::task::JoinSet::new();
 
-        if let Ok(changes) = files_res {
+    for sha in shas {
+        let runner = runner.clone();
+        let repo_path = repo_path.clone();
+        let permits = permits.clone();
+        tasks.spawn(async move {
+            let _permit = permits.acquire_owned().await.ok()?;
+
+            let changes = get_scope_files(
+                &runner,
+                &repo_path,
+                &DiffScope::Commit { sha: sha.clone() },
+                false,
+            )
+            .await
+            .ok()?;
+
             let adds: u32 = changes.iter().map(|c| c.additions).sum();
             let dels: u32 = changes.iter().map(|c| c.deletions).sum();
 
-            // Cheap diff sample for secrets/tests
-            let diff_sample = state
-                .runner
+            // Cheap diff sample for secrets/tests.
+            let diff_sample = runner
                 .run_read(&repo_path, &["show", "--format=", "-U0", &sha])
                 .await
                 .map(|o| o.stdout_string())
@@ -620,6 +667,13 @@ pub async fn commit_flags(
                 &changes,
                 Some(&diff_sample),
             );
+            Some((sha, flags))
+        });
+    }
+
+    let mut results = HashMap::new();
+    while let Some(result) = tasks.join_next().await {
+        if let Ok(Some((sha, flags))) = result {
             results.insert(sha, flags);
         }
     }
@@ -1792,7 +1846,8 @@ pub async fn settings_set(state: State<'_, AppState>, settings: Settings) -> Res
             .or_insert_with(|| value.clone());
     }
     data.settings = incoming.sanitized();
-    state.persistence.save(&data)?;
+    // Settings change one field at a time from the UI; coalesce disk writes.
+    state.persistence.save_debounced(&data)?;
     Ok(())
 }
 
@@ -1819,7 +1874,9 @@ pub async fn layout_set(state: State<'_, AppState>, layout: Layout) -> Result<()
         data.window_bounds = Some(bounds);
     }
 
-    state.persistence.save(&data)?;
+    // Layout is persisted on a 500ms debounce in the UI already; coalesce again
+    // in the backend so resizing does not hammer the disk.
+    state.persistence.save_debounced(&data)?;
     Ok(())
 }
 

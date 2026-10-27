@@ -100,7 +100,14 @@ export function computeVirtualWindow(
     return { startIndex: 0, endIndex: 0, offsetTop: 0, totalHeight: 0, visibleCount: 0 };
   }
   const totalHeight = totalCount * itemHeight;
-  const rawStart = Math.floor(Math.max(0, scrollTop) / itemHeight);
+  const maxStart = totalCount - 1;
+  // Clamp the raw start too: a stale scrollTop (list shrank after filtering)
+  // would otherwise produce startIndex > totalCount, an oversized spacer and
+  // a blank list until the browser fires a scroll event.
+  const rawStart = Math.min(
+    maxStart,
+    Math.floor(Math.max(0, scrollTop) / itemHeight)
+  );
   const rawEnd = Math.ceil(Math.max(0, scrollTop + viewportHeight) / itemHeight);
 
   const startIndex = Math.max(0, rawStart - overscan);

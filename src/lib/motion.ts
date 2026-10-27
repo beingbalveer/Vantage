@@ -6,7 +6,7 @@
  * imperative scrolling in CodeViewer consistent with that preference.
  */
 
-import { isFeatureEnabled } from "./featureFlags";
+import { isFeatureEnabled } from "./featureFlags.svelte";
 
 export type MotionMatcher = (query: string) => { matches: boolean };
 

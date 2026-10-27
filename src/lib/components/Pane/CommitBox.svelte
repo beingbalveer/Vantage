@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { isFeatureEnabled } from "../../featureFlags";
+  import { isFeatureEnabled } from "../../featureFlags.svelte";
   import { settings } from "../../stores/settings";
   import * as api from "../../api";
   import { addToast, pendingCommitMessage } from "../../stores/ui";
@@ -185,7 +185,6 @@
     isCommitting = true;
     const body = showDescription && description.trim() ? description.trim() : undefined;
     try {
-    try {
       const coAuthorTrailers = coAuthors.length > 0 ? coAuthors.map(formatCoAuthor) : undefined;
       if (amendMode) {
         const c = await api.amendCommit(repoId, selectedPaths, summary.trim(), body);
@@ -202,12 +201,7 @@
       showCoAuthorPicker = false;
       amendMode = false;
       headInfo = null;
-      oncommit?.();
-    } catch (e: any) {
-      addToast({ message: e.message || (amendMode ? "Amend failed" : "Commit failed"), kind: "error" });
-    } finally {
-      isCommitting = false;
-    }
+      // Refresh the pane exactly once after a successful commit.
       oncommit?.();
     } catch (e: any) {
       addToast({ message: e.message || (amendMode ? "Amend failed" : "Commit failed"), kind: "error" });

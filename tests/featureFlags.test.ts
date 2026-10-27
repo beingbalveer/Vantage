@@ -1,13 +1,12 @@
 import { describe, it, expect, beforeEach } from "vitest";
 import {
-  featureFlags,
+  getAllFeatureFlags,
   isFeatureEnabled,
   setFeatureFlag,
   resetFeatureFlags,
   FEATURE_METADATA,
   type FeatureFlagKey,
-} from "../src/lib/featureFlags";
-import { get } from "svelte/store";
+} from "../src/lib/featureFlags.svelte";
 
 describe("featureFlags system", () => {
   beforeEach(() => {
@@ -42,7 +41,7 @@ describe("featureFlags system", () => {
 
     setFeatureFlag(key, false);
     expect(isFeatureEnabled(key)).toBe(false);
-    expect(get(featureFlags)[key]).toBe(false);
+    expect(getAllFeatureFlags()[key]).toBe(false);
 
     setFeatureFlag(key, true);
     expect(isFeatureEnabled(key)).toBe(true);

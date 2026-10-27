@@ -4,10 +4,10 @@
  * Allows selectively enabling or disabling each ticket/task at runtime:
  * - Stored in localStorage ('vantage:feature-flags')
  * - Default: true for all merged features (can be toggled individually)
- * - Accessible in Svelte stores, via helper functions, and on window.__FEATURE_FLAGS__
+ * - Reactive: this module uses a Svelte 5 rune so components re-render as soon
+ *   as a flag is toggled from Settings instead of requiring a reload.
+ * - Accessible in components, via helper functions, and on window.__FEATURE_FLAGS__
  */
-
-import { writable, get } from "svelte/store";
 
 export type FeatureFlagKey =
   | "ALPH_144_MULTI_PANE"
@@ -136,29 +136,34 @@ function loadStoredFlags(): Record<FeatureFlagKey, boolean> {
   }
 }
 
-export const featureFlags = writable<Record<FeatureFlagKey, boolean>>(loadStoredFlags());
+// A module-level rune: reading `flags` from a component render (directly or via
+// `isFeatureEnabled`) subscribes that component to future flag changes.
+let flags = $state<Record<FeatureFlagKey, boolean>>(loadStoredFlags());
+
+function persist() {
+  if (typeof window === "undefined" || !window.localStorage) return;
+  try {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(flags));
+  } catch (e) {
+    console.warn("Failed to save feature flag to localStorage:", e);
+  }
+}
 
 export function isFeatureEnabled(key: FeatureFlagKey): boolean {
-  return get(featureFlags)[key] ?? true;
+  return flags[key] ?? true;
+}
+
+export function getAllFeatureFlags(): Record<FeatureFlagKey, boolean> {
+  return flags;
 }
 
 export function setFeatureFlag(key: FeatureFlagKey, enabled: boolean): void {
-  featureFlags.update((flags) => {
-    const next = { ...flags, [key]: enabled };
-    if (typeof window !== "undefined" && window.localStorage) {
-      try {
-        localStorage.setItem(STORAGE_KEY, JSON.stringify(next));
-      } catch (e) {
-        console.warn("Failed to save feature flag to localStorage:", e);
-      }
-    }
-    return next;
-  });
+  flags = { ...flags, [key]: enabled };
+  persist();
 }
 
 export function resetFeatureFlags(): void {
-  const defaults = getDefaultFlags();
-  featureFlags.set(defaults);
+  flags = getDefaultFlags();
   if (typeof window !== "undefined" && window.localStorage) {
     try {
       localStorage.removeItem(STORAGE_KEY);
@@ -172,7 +177,7 @@ if (typeof window !== "undefined") {
     get: isFeatureEnabled,
     set: setFeatureFlag,
     reset: resetFeatureFlags,
-    getAll: () => get(featureFlags),
+    getAll: () => ({ ...flags }),
     metadata: FEATURE_METADATA,
     toggle: (key: FeatureFlagKey) => setFeatureFlag(key, !isFeatureEnabled(key)),
   };

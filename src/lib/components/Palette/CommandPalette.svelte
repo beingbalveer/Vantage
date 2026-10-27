@@ -23,18 +23,18 @@
     focusPane,
     setPaneTab,
     paneCount,
-    setPaneCount,
     closePane,
     cyclePaneCount,
     toggleTerminalInPane,
   } from "../../stores/panes";
   import { settings, updateSettings } from "../../stores/settings";
+  import { navigateTo } from "../../stores/navigation";
   import { formatKey, SHORTCUTS } from "../../keys";
-  import { paletteCommands, runCommand, getBaseContexts, applyNamedLayout } from "../../commands";
-  import { isFeatureEnabled } from "../../featureFlags";
+  import { paletteCommands, runCommand, getBaseContexts, loadLayoutByName, readSavedLayouts } from "../../commands";
+  import { isFeatureEnabled } from "../../featureFlags.svelte";
   import { fuzzyScore } from "../../fuzzy";
   import { formatRelativeTime } from "../../format";
-  import type { Layout, CommitSummary } from "../../types";
+  import type { CommitSummary } from "../../types";
   import * as api from "../../api";
   import { runUndoLastCommit } from "../../undoCommit";
   import Icon from "../common/Icon.svelte";
@@ -103,6 +103,24 @@
       });
     }
   });
+
+  /** Jump the focused pane to a file result instead of only switching tabs. */
+  function openFileResult(file: string) {
+    if (focusedRepoId) {
+      navigateTo({ repoId: focusedRepoId, tab: "files", path: file });
+      return;
+    }
+    setPaneTab(get(focusedPaneIndex), "files");
+  }
+
+  /** Jump the focused pane to a commit result. */
+  function openCommitResult(commit: CommitSummary) {
+    if (focusedRepoId) {
+      navigateTo({ repoId: focusedRepoId, tab: "history", commitSha: commit.sha });
+      return;
+    }
+    setPaneTab(get(focusedPaneIndex), "history");
+  }
 
   function splitPath(fullPath: string): { dir: string; name: string } {
     const idx = fullPath.lastIndexOf("/");
@@ -333,107 +351,6 @@
         },
       },
       {
-        id: "cmd_save_layout",
-        title: "Save layout as…",
-        action: async () => {
-          $paletteOpen = false;
-          const name = prompt("Enter a name for this layout (e.g. 'frontend + backend'):");
-          if (!name || !name.trim()) return;
-          try {
-            const count = get(paneCount);
-            const currentPanes = get(panes);
-            const layoutData: Layout = {
-              paneCount: count,
-              panes: currentPanes.slice(0, count).map((p) => ({
-                repoId: p.repoId,
-                tab: p.tab,
-                widths: null,
-              })),
-              sidebarWidth: 232,
-              sidebarCollapsed: get(sidebarCollapsed),
-              terminalHeight: 240,
-              terminalOpen: currentPanes.some((p) => p.terminalOpen),
-              windowBounds: null,
-            };
-            await api.layoutSet(layoutData);
-
-            try {
-              const raw = localStorage.getItem("vantage_saved_layouts") || localStorage.getItem("relay_saved_layouts") || "{}";
-              const saved = JSON.parse(raw);
-              saved[name.trim()] = {
-                name: name.trim(),
-                paneCount: count,
-                panes: currentPanes.slice(0, count).map((p) => ({
-                  repoId: p.repoId,
-                  tab: p.tab,
-                })),
-                savedAt: new Date().toISOString(),
-              };
-              localStorage.setItem("vantage_saved_layouts", JSON.stringify(saved));
-            } catch {}
-
-            addToast({ message: `Layout "${name.trim()}" saved`, kind: "success" });
-          } catch (e: any) {
-            addToast({ message: e.message || "Failed to save layout", kind: "error" });
-          }
-        },
-      },
-      {
-        id: "cmd_load_layout",
-        title: "Load layout…",
-        action: async () => {
-          $paletteOpen = false;
-          try {
-            const raw = localStorage.getItem("vantage_saved_layouts") || localStorage.getItem("relay_saved_layouts") || "{}";
-            const saved = JSON.parse(raw);
-            const names = Object.keys(saved);
-
-            let chosenLayout: any = null;
-            if (names.length > 0) {
-              const listPrompt = names.map((n, i) => `${i + 1}. ${n}`).join("\n");
-              const chosen = prompt(
-                `Select layout to load:\n${listPrompt}\n\nEnter name or number (or leave empty to load default persisted layout):`
-              );
-              if (chosen === null) return;
-              if (chosen.trim()) {
-                const num = parseInt(chosen.trim(), 10);
-                const name = !isNaN(num) && names[num - 1] ? names[num - 1] : chosen.trim();
-                if (saved[name]) {
-                  chosenLayout = saved[name];
-                }
-              }
-            }
-
-            if (!chosenLayout) {
-              chosenLayout = await api.layoutGet();
-            }
-
-            if (chosenLayout) {
-              const targetCount = Math.max(1, Math.min(3, chosenLayout.paneCount || 1));
-              setPaneCount(targetCount);
-              panes.update((list) => {
-                return list.map((p, i) => {
-                  if (i < targetCount && chosenLayout.panes?.[i]) {
-                    return {
-                      ...p,
-                      repoId: chosenLayout.panes[i].repoId,
-                      tab: chosenLayout.panes[i].tab || "history",
-                    };
-                  }
-                  return p;
-                });
-              });
-              addToast({
-                message: `Loaded layout (${targetCount} ${targetCount === 1 ? "pane" : "panes"})`,
-                kind: "success",
-              });
-            }
-          } catch (e: any) {
-            addToast({ message: e.message || "Failed to load layout", kind: "error" });
-          }
-        },
-      },
-      {
         id: "cmd_split_pane",
         title: "Split pane / Cycle panes",
         shortcut: "Mod+\\",
@@ -582,23 +499,49 @@
       },
     ];
 
+    // The registry is the single source of truth for commands. The extras
+    // below predate it; drop the ones whose behaviour now lives in a registry
+    // handler so users don't see the same action twice under different ids.
+    const DUPLICATE_EXTRA_IDS = new Set([
+      "cmd_browse_repo",
+      "cmd_switch_tab",
+      "cmd_toggle_terminal",
+      "cmd_toggle_sidebar",
+      "cmd_toggle_whitespace",
+      "cmd_sync",
+      "cmd_open_editor",
+      "cmd_reveal_file_manager",
+      "cmd_copy_path",
+      "cmd_save_layout",
+      "cmd_load_layout",
+      "cmd_split_pane",
+      "cmd_close_pane",
+      "cmd_focus_pane_1",
+      "cmd_focus_pane_2",
+      "cmd_focus_pane_3",
+      "cmd_refresh_all",
+      "cmd_settings",
+      "cmd_recovery",
+      "cmd_shortcuts",
+      "cmd_remove_repo",
+    ]);
+
     const commands: Omit<PaletteItem, "type" | "score">[] = [
       ...registryCommands,
-      ...extraCommands,
+      ...extraCommands.filter((command) => !DUPLICATE_EXTRA_IDS.has(command.id)),
     ];
 
     // Add named layouts if present. These are user data, not registry
     // commands; they still route through the layout command's applier.
     try {
-      const raw = localStorage.getItem("vantage_saved_layouts") || localStorage.getItem("relay_saved_layouts") || "{}";
-      const saved = JSON.parse(raw);
+      const saved = readSavedLayouts();
       for (const name of Object.keys(saved)) {
         commands.push({
           id: `load_layout_${name}`,
           title: `Load layout: ${name}`,
           action: () => {
             $paletteOpen = false;
-            applyNamedLayout(name, saved[name]);
+            void loadLayoutByName(name);
           },
         });
       }
@@ -618,8 +561,7 @@
               score: 1,
               action: () => {
                 $paletteOpen = false;
-                const fIdx = get(focusedPaneIndex);
-                setPaneTab(fIdx, "files");
+                openFileResult(file);
                 addToast({ message: `Opened ${name} in Files tab`, kind: "info" });
               },
             });
@@ -635,8 +577,7 @@
                 score: match.score,
                 action: () => {
                   $paletteOpen = false;
-                  const fIdx = get(focusedPaneIndex);
-                  setPaneTab(fIdx, "files");
+                  openFileResult(file);
                   addToast({ message: `Opened ${name} in Files tab`, kind: "info" });
                 },
               });
@@ -659,8 +600,7 @@
               score: 1,
               action: () => {
                 $paletteOpen = false;
-                const fIdx = get(focusedPaneIndex);
-                setPaneTab(fIdx, "history");
+                openCommitResult(commit);
                 addToast({ message: `Commit ${commit.short}: ${commit.subject}`, kind: "info" });
               },
             });
@@ -678,8 +618,7 @@
                 score,
                 action: () => {
                   $paletteOpen = false;
-                  const fIdx = get(focusedPaneIndex);
-                  setPaneTab(fIdx, "history");
+                  openCommitResult(commit);
                   addToast({ message: `Commit ${commit.short}: ${commit.subject}`, kind: "info" });
                 },
               });

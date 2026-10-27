@@ -19,6 +19,7 @@ import {
   activeDialog,
   closeDialog,
   openDialog,
+  openSettingsAt,
   addToast,
 } from "./stores/ui";
 import {
@@ -43,7 +44,6 @@ import {
 } from "./stores/panes";
 import { settings, updateSettings } from "./stores/settings";
 import * as api from "./api";
-import type { Layout } from "./types";
 import {
   COMMANDS,
   commandById,
@@ -233,8 +233,9 @@ export async function markRepoReviewed(repoId: string, sha?: string) {
     }
     addToast({ message: "Marked as reviewed", kind: "success" });
     await refreshSingleStatus(repoId);
-    // The sidebar entries carry the marker too, so reload them.
-    await loadRepos();
+    // The sidebar entries carry the marker too, so reload them. The status was
+    // already refreshed above, so skip the full N-repo sweep.
+    await loadRepos({ refresh: false });
   } catch (e: any) {
     addToast({ message: e.message || "Failed to mark as reviewed", kind: "error" });
   }
@@ -335,43 +336,58 @@ function removeCurrentRepo() {
   openDialog({ type: "remove_repo", repoId: repo.id, data: { repo } });
 }
 
-async function saveLayout() {
-  const name = prompt("Enter a name for this layout (e.g. 'frontend + backend'):");
-  if (!name || !name.trim()) return;
+const SAVED_LAYOUTS_KEY = "vantage_saved_layouts";
+const LEGACY_SAVED_LAYOUTS_KEY = "relay_saved_layouts";
+
+export interface SavedLayout {
+  name: string;
+  paneCount: number;
+  panes: { repoId: string | null; tab: "history" | "files" }[];
+  savedAt?: string;
+}
+
+export function readSavedLayouts(): Record<string, SavedLayout> {
   try {
-    const count = get(paneCount);
-    const currentPanes = get(panes);
-    const layoutData: Layout = {
-      paneCount: count,
-      panes: currentPanes.slice(0, count).map((p) => ({ repoId: p.repoId, tab: p.tab, widths: null })),
-      sidebarWidth: 232,
-      sidebarCollapsed: get(sidebarCollapsed),
-      terminalHeight: 240,
-      terminalOpen: currentPanes.some((p) => p.terminalOpen),
-      windowBounds: null,
+    const raw =
+      localStorage.getItem(SAVED_LAYOUTS_KEY) ||
+      localStorage.getItem(LEGACY_SAVED_LAYOUTS_KEY) ||
+      "{}";
+    const parsed = JSON.parse(raw);
+    return parsed && typeof parsed === "object" ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
+function currentLayoutSnapshot(): Pick<SavedLayout, "paneCount" | "panes"> {
+  const count = Math.max(1, Math.min(3, get(paneCount)));
+  const currentPanes = get(panes);
+  return {
+    paneCount: count,
+    panes: currentPanes.slice(0, count).map((p) => ({
+      repoId: p.repoId,
+      tab: p.tab,
+    })),
+  };
+}
+
+/** Save the current pane arrangement under a user-provided name. */
+export async function saveLayoutAs(name: string): Promise<boolean> {
+  const trimmed = name.trim();
+  if (!trimmed) return false;
+  try {
+    const saved = readSavedLayouts();
+    saved[trimmed] = {
+      name: trimmed,
+      ...currentLayoutSnapshot(),
+      savedAt: new Date().toISOString(),
     };
-    await api.layoutSet(layoutData);
-
-    try {
-      const raw =
-        localStorage.getItem("vantage_saved_layouts") ||
-        localStorage.getItem("relay_saved_layouts") ||
-        "{}";
-      const saved = JSON.parse(raw);
-      saved[name.trim()] = {
-        name: name.trim(),
-        paneCount: count,
-        panes: currentPanes.slice(0, count).map((p) => ({ repoId: p.repoId, tab: p.tab })),
-        savedAt: new Date().toISOString(),
-      };
-      localStorage.setItem("vantage_saved_layouts", JSON.stringify(saved));
-    } catch {
-      /* best-effort */
-    }
-
-    addToast({ message: `Layout "${name.trim()}" saved`, kind: "success" });
+    localStorage.setItem(SAVED_LAYOUTS_KEY, JSON.stringify(saved));
+    addToast({ message: `Layout "${trimmed}" saved`, kind: "success" });
+    return true;
   } catch (e: any) {
     addToast({ message: e.message || "Failed to save layout", kind: "error" });
+    return false;
   }
 }
 
@@ -391,40 +407,27 @@ export function applyNamedLayout(name: string, target: any) {
   addToast({ message: `Loaded layout "${name}"`, kind: "success" });
 }
 
-async function loadLayout() {
+/** Load a named layout, or the backend-persisted layout when `name` is null. */
+export async function loadLayoutByName(name: string | null): Promise<void> {
   try {
-    const raw =
-      localStorage.getItem("vantage_saved_layouts") ||
-      localStorage.getItem("relay_saved_layouts") ||
-      "{}";
-    const saved = JSON.parse(raw);
-    const names = Object.keys(saved);
-
-    let chosenLayout: any = null;
-    let chosenName = "persisted layout";
-    if (names.length > 0) {
-      const listPrompt = names.map((n, i) => `${i + 1}. ${n}`).join("\n");
-      const chosen = prompt(
-        `Select layout to load:\n${listPrompt}\n\nEnter name or number (or leave empty to load the persisted layout):`
-      );
-      if (chosen === null) return;
-      if (chosen.trim()) {
-        const num = parseInt(chosen.trim(), 10);
-        const name = !isNaN(num) && names[num - 1] ? names[num - 1] : chosen.trim();
-        if (saved[name]) {
-          chosenLayout = saved[name];
-          chosenName = name;
-        }
-      }
+    const target = name ? readSavedLayouts()[name] : await api.layoutGet();
+    if (!target) {
+      addToast({ message: `Layout "${name}" was not found`, kind: "error" });
+      return;
     }
-
-    if (!chosenLayout) chosenLayout = await api.layoutGet();
-    if (chosenLayout) {
-      applyNamedLayout(chosenName, chosenLayout);
-    }
+    applyNamedLayout(name ?? "last used", target);
   } catch (e: any) {
     addToast({ message: e.message || "Failed to load layout", kind: "error" });
   }
+}
+
+/** Open the non-blocking layout dialog instead of a native `prompt()`. */
+function saveLayout() {
+  openDialog({ type: "layout", repoId: "", data: { mode: "save" } });
+}
+
+function loadLayout() {
+  openDialog({ type: "layout", repoId: "", data: { mode: "load" } });
 }
 
 /** Close the topmost overlay or popover. Returns true when something closed. */
@@ -471,7 +474,7 @@ const GLOBAL_HANDLERS: Record<string, Handler> = {
   prev_repo: () => moveRepo(-1),
   next_repo: () => moveRepo(1),
   settings: () => {
-    settingsOpen.set(true);
+    openSettingsAt("general");
   },
   shortcuts_help: () => {
     shortcutsHelpOpen.set(true);
@@ -500,7 +503,7 @@ const GLOBAL_HANDLERS: Record<string, Handler> = {
   save_layout: saveLayout,
   load_layout: loadLayout,
   recovery: () => {
-    settingsOpen.set(true);
+    openSettingsAt("recovery");
   },
 };
 

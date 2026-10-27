@@ -1,8 +1,8 @@
 <script lang="ts">
-  import { isFeatureEnabled } from "../../featureFlags";
+  import { isFeatureEnabled } from "../../featureFlags.svelte";
   import type { FileChange } from "../../types";
   import type { NormalizedError } from "../../asyncState";
-  import { splitPath } from "../../format";
+  import { computeVirtualWindow, splitPath } from "../../format";
   import { addToast } from "../../stores/ui";
   import { registerDismiss } from "../../commands";
   import Icon from "../common/Icon.svelte";
@@ -70,13 +70,68 @@
     oncollapsecontext,
   }: Props = $props();
 
+  // A Set keeps bulk select/deselect linear; the previous `includes` inside the
+  // row template made it O(files × selected).
+  let checkedSet = $derived(new Set(checkedPaths));
+
   let allChecked = $derived(
-    files.length > 0 && files.every((f) => checkedPaths.includes(f.path))
+    files.length > 0 && files.every((f) => checkedSet.has(f.path))
   );
 
   let someChecked = $derived(
-    files.length > 0 && !allChecked && files.some((f) => checkedPaths.includes(f.path))
+    files.length > 0 && !allChecked && files.some((f) => checkedSet.has(f.path))
   );
+
+  // Row virtualization: changed-file lists routinely reach thousands of rows.
+  // Rows are a fixed 36px, so a windowed render keeps the DOM small without
+  // changing layout or keyboard semantics.
+  const ROW_HEIGHT = 36;
+  const OVERSCAN = 10;
+  let rowsEl = $state<HTMLDivElement | null>(null);
+  let scrollTop = $state(0);
+  let viewportHeight = $state(0);
+
+  function handleRowsScroll(e: Event) {
+    scrollTop = (e.currentTarget as HTMLDivElement).scrollTop;
+  }
+
+  $effect(() => {
+    const el = rowsEl;
+    if (!el) return;
+    viewportHeight = el.clientHeight;
+    const observer = new ResizeObserver(() => {
+      viewportHeight = el.clientHeight;
+    });
+    observer.observe(el);
+    return () => observer.disconnect();
+  });
+
+  let virtualWindow = $derived(
+    computeVirtualWindow(files.length, scrollTop, viewportHeight, ROW_HEIGHT, OVERSCAN)
+  );
+  let visibleFiles = $derived(
+    files.slice(virtualWindow.startIndex, virtualWindow.endIndex)
+  );
+  let padTop = $derived(virtualWindow.startIndex * ROW_HEIGHT);
+  let padBottom = $derived(
+    Math.max(0, virtualWindow.totalHeight - virtualWindow.endIndex * ROW_HEIGHT)
+  );
+
+  // Keyboard navigation can move the selection outside the rendered window.
+  // Scroll it into view; the resulting scroll event updates the window.
+  $effect(() => {
+    const el = rowsEl;
+    if (!el || !selectedFile) return;
+    const index = files.findIndex((f) => f.path === selectedFile);
+    if (index < 0) return;
+    const top = index * ROW_HEIGHT;
+    const bottom = top + ROW_HEIGHT;
+    if (top < el.scrollTop) {
+      el.scrollTop = top;
+    } else if (bottom > el.scrollTop + el.clientHeight) {
+      el.scrollTop = bottom - el.clientHeight;
+    }
+  });
 
   // Keep the count honest: an empty list that is still loading (or failed) is
   // not "0 changed files". (ALPH-150)
@@ -341,17 +396,27 @@
     </div>
   {/if}
 
-  <div class="file-rows" class:pending={loading && files.length > 0} aria-busy={loading || pending}>
+  <div
+    class="file-rows"
+    class:pending={loading && files.length > 0}
+    aria-busy={loading || pending}
+    bind:this={rowsEl}
+    onscroll={handleRowsScroll}
+  >
     {#if loading && files.length === 0}
       <Skeleton rows={6} height={36} shape="file" label="Loading changed files" />
     {:else if files.length === 0 && !pending && !error}
       <EmptyState title={emptyTitle} description={emptyDescription} />
     {/if}
 
-    {#each files as file (file.path + "-" + file.status + "-" + file.additions + "-" + file.deletions)}
+    {#if padTop > 0}
+      <div class="virtual-pad" style="height: {padTop}px" aria-hidden="true"></div>
+    {/if}
+
+    {#each visibleFiles as file (file.path + "-" + file.status + "-" + file.additions + "-" + file.deletions)}
       {@const { dir, name } = splitPath(file.path)}
       {@const isSelected = selectedFile === file.path}
-      {@const isChecked = checkedPaths.includes(file.path)}
+      {@const isChecked = checkedSet.has(file.path)}
       {@const triage = getFileTriage(file)}
 
       <div
@@ -412,6 +477,10 @@
         </div>
       </div>
     {/each}
+
+    {#if padBottom > 0}
+      <div class="virtual-pad" style="height: {padBottom}px" aria-hidden="true"></div>
+    {/if}
   </div>
 </div>
 
@@ -435,7 +504,7 @@
     gap: 8px;
     padding: 0 12px;
     background-color: var(--bg);
-    border-bottom: 1px solid #dcdfe3;
+    border-bottom: 1px solid var(--border);
     flex-shrink: 0;
   }
 
@@ -449,7 +518,7 @@
 
   .header-title {
     font-size: 12px;
-    color: #444a51;
+    color: var(--text);
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
@@ -561,6 +630,9 @@
   .file-rows.pending {
     opacity: 0.6;
   }
+  .virtual-pad {
+    flex-shrink: 0;
+  }
 
   .file-row {
     display: flex;
@@ -569,15 +641,15 @@
     height: 36px;
     padding: 0 12px;
     cursor: pointer;
-    border-bottom: 1px solid #dfe3e7;
+    border-bottom: 1px solid var(--border-subtle);
     background-color: var(--bg);
     position: relative;
   }
   .file-row:hover {
-    background: #f3f4f6;
+    background: var(--bg-subtle);
   }
   .file-row.selected {
-    background: #e6e9ed;
+    background: var(--bg-muted);
   }
   .file-row.conflicted {
     background: var(--danger-subtle, rgba(218, 54, 51, 0.08));
@@ -616,7 +688,7 @@
     display: flex;
     white-space: nowrap;
     font-size: 12px;
-    color: #30363d;
+    color: var(--text);
   }
   .dir-text {
     color: var(--text-muted);
@@ -650,14 +722,14 @@
     border: none;
     border-radius: var(--r-sm, 4px);
     background: transparent;
-    color: #636b74;
+    color: var(--text-muted);
     cursor: pointer;
     flex-shrink: 0;
     opacity: 0;
     transition: opacity 100ms ease, background-color 100ms ease;
   }
   :global([data-theme="dark"]) .row-menu-btn {
-    color: #8b949e;
+    color: var(--text-faint);
   }
   .file-row:hover .row-menu-btn,
   .file-row.selected .row-menu-btn,
@@ -667,7 +739,7 @@
   }
   .row-menu-btn:hover {
     background: rgba(0, 0, 0, 0.08);
-    color: #1a1c1f;
+    color: var(--text);
   }
   :global([data-theme="dark"]) .row-menu-btn:hover {
     background: rgba(255, 255, 255, 0.1);
@@ -699,8 +771,8 @@
     border-color: var(--danger);
   }
   .status-badge.renamed {
-    color: #4a6fa5;
-    border-color: #4a6fa5;
+    color: var(--accent);
+    border-color: var(--accent);
   }
 
   /* Prototype compact overrides (approved-prototype.html · @media max-width:1400px). */

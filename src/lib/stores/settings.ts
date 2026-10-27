@@ -82,9 +82,13 @@ export async function loadSettings() {
 export async function updateSettings(newSettings: Settings) {
   const previous = get(settings);
   settings.set(newSettings);
-  applyTheme(newSettings.theme);
-  applyUiScale(newSettings.uiScale);
-  applyCodeTabSize(newSettings.tabSize);
+
+  // Theme, zoom and tab width are global side effects; only touch the DOM for
+  // the fields that actually changed so unrelated edits don't force a reflow.
+  if (previous.theme !== newSettings.theme) applyTheme(newSettings.theme);
+  if (previous.uiScale !== newSettings.uiScale) applyUiScale(newSettings.uiScale);
+  if (previous.tabSize !== newSettings.tabSize) applyCodeTabSize(newSettings.tabSize);
+
   try {
     await api.settingsSet(newSettings);
   } catch (e: any) {

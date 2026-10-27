@@ -126,6 +126,32 @@
     await reorderRepos(list);
   }
 
+  /** Keyboard equivalent of drag-and-drop reordering (Alt+↑/↓ on a row). */
+  async function moveRepoBy(id: string, delta: -1 | 1) {
+    const list = [...repoList];
+    const sourceIdx = list.findIndex((r) => r.id === id);
+    const targetIdx = sourceIdx + delta;
+    if (sourceIdx === -1 || targetIdx < 0 || targetIdx >= list.length) return;
+
+    const [removed] = list.splice(sourceIdx, 1);
+    // Clone so adopting the destination group does not mutate the store item
+    // before `reorderRepos` rebuilds the list.
+    const moved = { ...removed };
+    list.splice(targetIdx, 0, moved);
+    // Mirror drag-and-drop: adopt the destination row's pinned state so the
+    // visual order (pinned first) matches what the user just requested.
+    const destination = repoList[targetIdx];
+    if (destination) moved.pinned = destination.pinned;
+
+    await reorderRepos(list);
+    // The keyed row keeps focus across the reorder; make sure it is visible.
+    queueMicrotask(() => {
+      document
+        .querySelector<HTMLElement>(`[data-repo-id="${CSS.escape(id)}"]`)
+        ?.scrollIntoView({ block: "nearest" });
+    });
+  }
+
   function handleRowDragEnd() {
     clearDrag();
   }
@@ -165,6 +191,7 @@
         ondragleave={(e) => handleRowDragLeave(e, repo.id)}
         ondrop={(e) => handleRowDrop(e, repo.id)}
         ondragend={handleRowDragEnd}
+        onmove={(delta) => void moveRepoBy(repo.id, delta)}
       />
     {/each}
 
@@ -214,7 +241,7 @@
 <style>
   .relay-sidebar {
     height: 100%;
-    background: #f7f7f7;
+    background: var(--bg-subtle);
     border-right: 1px solid var(--border);
     display: flex;
     flex-direction: column;
@@ -242,7 +269,7 @@
 
   .dock-separator {
     height: 1px;
-    background: #d5d9df;
+    background: var(--border-subtle);
     margin: 6px 12px;
   }
 
@@ -256,15 +283,15 @@
     background: transparent;
     border: none;
     border-radius: 0;
-    color: #65717f;
+    color: var(--text-muted);
     font-size: 12px;
     font-weight: 400;
     cursor: pointer;
     transition: background-color 80ms linear;
   }
   .add-repo-btn:hover {
-    background-color: #f0f1f2;
-    color: #30343a;
+    background-color: var(--bg-muted);
+    color: var(--text);
   }
   .relay-sidebar.collapsed .add-repo-btn {
     justify-content: center;

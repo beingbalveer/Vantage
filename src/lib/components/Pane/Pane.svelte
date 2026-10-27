@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount, onDestroy, tick, untrack } from "svelte";
   import { get } from "svelte/store";
-  import { isFeatureEnabled } from "../../featureFlags";
+  import { isFeatureEnabled } from "../../featureFlags.svelte";
   import type {
     RepoEntry,
     RepoStatus,

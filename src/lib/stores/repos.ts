@@ -62,7 +62,16 @@ export async function reorderRepos(reorderedList: RepoEntry[]): Promise<void> {
   }
 }
 
-export async function loadRepos() {
+interface LoadReposOptions {
+  /**
+   * Refresh every repo's status after loading. Callers that already refreshed
+   * the affected repo (mark-reviewed, remove) can opt out to avoid an N-repo
+   * `git status` sweep on every list mutation.
+   */
+  refresh?: boolean;
+}
+
+export async function loadRepos(options: LoadReposOptions = {}) {
   try {
     const list = await api.repoList();
     repos.set(list);
@@ -71,16 +80,12 @@ export async function loadRepos() {
       if (!curActive || !list.some((r) => r.id === curActive)) {
         activeRepoId.set(list[0].id);
       }
-      // Ensure backend review markers are updated to HEAD to clear legacy unreviewed markers
-      for (const r of list) {
-        if (r.marker) {
-          api.markerSetToHead(r.id).catch(() => {});
-        }
-      }
     } else {
       activeRepoId.set(null);
     }
-    await refreshAllStatuses();
+    if (options.refresh !== false) {
+      await refreshAllStatuses();
+    }
   } catch (e) {
     console.error("Failed to load repos:", e);
   }
@@ -99,9 +104,15 @@ export async function removeRepo(repoId: string): Promise<void> {
 
   // Update repo list
   repos.set(remaining);
+  statuses.update((prev) => {
+    const next = { ...prev };
+    delete next[repoId];
+    return next;
+  });
 
-  // Reload repo list and statuses from backend
-  await loadRepos();
+  // Reload the list from the backend, but don't sweep every remaining repo's
+  // status just because one was removed.
+  await loadRepos({ refresh: false });
 }
 
 export async function refreshAllStatuses() {

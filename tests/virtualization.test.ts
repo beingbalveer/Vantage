@@ -43,4 +43,13 @@ describe("computeVirtualWindow", () => {
     expect(res.startIndex).toBe(80);
     expect(res.totalHeight).toBe(2000);
   });
+
+  it("renders the last rows when scrollTop is stale after the list shrinks", () => {
+    // 2000px of scroll offset, but the filtered list is only 10 rows (200px).
+    const res = computeVirtualWindow(10, 2000, 400, 20, 2);
+    expect(res.startIndex).toBe(7); // clamped to last item - overscan
+    expect(res.endIndex).toBe(10);
+    expect(res.visibleCount).toBe(3);
+    expect(res.offsetTop).toBe(140);
+  });
 });

@@ -1,7 +1,7 @@
 <script lang="ts">
   import { settingsOpen, addToast, settingsSection, settingsRecoveryRepoId, type SettingsSection } from "../../stores/ui";
   import { settings, updateSettings } from "../../stores/settings";
-  import { FEATURE_METADATA, isFeatureEnabled, setFeatureFlag, resetFeatureFlags, type FeatureFlagKey } from "../../featureFlags";
+  import { FEATURE_METADATA, isFeatureEnabled, setFeatureFlag, resetFeatureFlags, type FeatureFlagKey } from "../../featureFlags.svelte";
   import { repos, activeRepoId, refreshSingleStatus, loadRepos } from "../../stores/repos";
   import * as api from "../../api";
   import * as settingsLib from "../../settings";
@@ -20,6 +20,9 @@
 
   let currentSettings = $derived($settings);
   let activeRepo = $derived($repos.find((r) => r.id === $activeRepoId) || $repos[0] || null);
+  // Preview while dragging the UI-scale slider; the setting is only persisted
+  // on release so a drag doesn't trigger a write (and a theme reflow) per step.
+  let uiScalePreview = $state<number | null>(null);
 
   // Environment detection (real editors / shells)
   let envInfo = $state<EnvInfo | null>(null);
@@ -368,16 +371,21 @@
                 min="75"
                 max="150"
                 step="5"
-                value={Math.round(currentSettings.uiScale * 100)}
-                oninput={(e) =>
-                  handleSaveField(
-                    "uiScale",
-                    parseInt((e.target as HTMLInputElement).value, 10) / 100
-                  )}
+                value={Math.round((uiScalePreview ?? currentSettings.uiScale) * 100)}
+                oninput={(e) => {
+                  uiScalePreview =
+                    parseInt((e.target as HTMLInputElement).value, 10) / 100;
+                }}
+                onchange={(e) => {
+                  const value =
+                    parseInt((e.target as HTMLInputElement).value, 10) / 100;
+                  uiScalePreview = null;
+                  handleSaveField("uiScale", value);
+                }}
                 aria-label="UI scale"
               />
               <span class="text-xs text-muted font-mono">
-                {Math.round(currentSettings.uiScale * 100)}%
+                {Math.round((uiScalePreview ?? currentSettings.uiScale) * 100)}%
               </span>
             </div>
           </div>

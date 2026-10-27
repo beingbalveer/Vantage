@@ -4,7 +4,7 @@ use crate::git::status::query_repo_status;
 use notify::{Config, Event, RecommendedWatcher, RecursiveMode, Watcher};
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 use tauri::{AppHandle, Emitter};
@@ -96,6 +96,10 @@ impl RepoWatcherManager {
         let run_clone = runner.clone();
         let head_tracker = self.last_known_head.clone();
         let tokio_handle = tokio::runtime::Handle::current();
+        // Monotonic sequence used to coalesce filesystem bursts: a checkout or
+        // rebase emits many events within milliseconds, and without this every
+        // event spawned its own full `git status` after the same 250ms sleep.
+        let event_seq = Arc::new(AtomicU64::new(0));
 
         let mut watcher = match RecommendedWatcher::new(
             move |res: Result<Event, notify::Error>| {
@@ -116,10 +120,17 @@ impl RepoWatcherManager {
                         let m = m_sha.clone();
                         let r = run_clone.clone();
                         let tracker = head_tracker.clone();
+                        let seq_source = event_seq.clone();
+                        let seq = seq_source.fetch_add(1, Ordering::SeqCst) + 1;
 
                         tokio_handle.spawn(async move {
                             // Debounce brief moment
                             tokio::time::sleep(Duration::from_millis(250)).await;
+                            // A newer event arrived while we slept: that task
+                            // owns the refresh, so drop this duplicate.
+                            if seq_source.load(Ordering::SeqCst) != seq {
+                                return;
+                            }
                             let status =
                                 query_repo_status(&r, &id, &p, b.as_deref(), m.as_deref()).await;
                             let _ = app.emit("repo://status", &status);

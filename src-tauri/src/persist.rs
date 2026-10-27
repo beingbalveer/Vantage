@@ -5,6 +5,9 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::mpsc::{self, RecvTimeoutError, Sender};
+use std::sync::Mutex;
+use std::time::Duration;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
@@ -31,8 +34,63 @@ impl Default for PersistedState {
     }
 }
 
+enum WriteMsg {
+    Write(PathBuf, String),
+}
+
+/// Serialize `state` and write it atomically (temp file + rename).
+fn write_atomic(path: &Path, json: &str) -> Result<(), AppError> {
+    let parent = path
+        .parent()
+        .ok_or_else(|| AppError::other("State file has no parent directory"))?;
+    if !parent.exists() {
+        fs::create_dir_all(parent)?;
+    }
+
+    let temp_path = path.with_extension(format!(
+        "tmp.{}",
+        Utc::now().timestamp_nanos_opt().unwrap_or(0)
+    ));
+    fs::write(&temp_path, json)?;
+    fs::rename(&temp_path, path)?;
+    Ok(())
+}
+
+/// Background writer that coalesces bursts of low-priority state changes
+/// (settings sliders, layout drags) into one atomic write. Critical mutations
+/// still call `save` directly for immediate durability.
+fn spawn_writer() -> Sender<WriteMsg> {
+    let (tx, rx) = mpsc::channel::<WriteMsg>();
+    std::thread::spawn(move || {
+        while let Ok(first) = rx.recv() {
+            let mut latest = match first {
+                WriteMsg::Write(path, json) => (path, json),
+            };
+
+            loop {
+                match rx.recv_timeout(Duration::from_millis(150)) {
+                    Ok(WriteMsg::Write(path, json)) => latest = (path, json),
+                    Err(RecvTimeoutError::Timeout) => break,
+                    Err(RecvTimeoutError::Disconnected) => {
+                        if let Err(error) = write_atomic(&latest.0, &latest.1) {
+                            eprintln!("failed to persist state: {error}");
+                        }
+                        return;
+                    }
+                }
+            }
+
+            if let Err(error) = write_atomic(&latest.0, &latest.1) {
+                eprintln!("failed to persist state: {error}");
+            }
+        }
+    });
+    tx
+}
+
 pub struct StatePersistence {
     file_path: PathBuf,
+    writer: Mutex<Sender<WriteMsg>>,
 }
 
 impl StatePersistence {
@@ -52,11 +110,15 @@ impl StatePersistence {
         }
         Ok(Self {
             file_path: app_dir.join("state.json"),
+            writer: Mutex::new(spawn_writer()),
         })
     }
 
     pub fn with_path(file_path: PathBuf) -> Self {
-        Self { file_path }
+        Self {
+            file_path,
+            writer: Mutex::new(spawn_writer()),
+        }
     }
 
     pub fn path(&self) -> &Path {
@@ -97,22 +159,27 @@ impl StatePersistence {
         }
     }
 
+    /// Write immediately (compact JSON). Used for critical mutations and on
+    /// quit, where losing the last change would be surprising.
     pub fn save(&self, state: &PersistedState) -> Result<(), AppError> {
-        let parent = self
-            .file_path
-            .parent()
-            .ok_or_else(|| AppError::other("State file has no parent directory"))?;
-        if !parent.exists() {
-            fs::create_dir_all(parent)?;
-        }
+        let json = serde_json::to_string(state)?;
+        write_atomic(&self.file_path, &json)
+    }
 
-        let json = serde_json::to_string_pretty(state)?;
-        let temp_path = self.file_path.with_extension(format!(
-            "tmp.{}",
-            Utc::now().timestamp_nanos_opt().unwrap_or(0)
-        ));
-        fs::write(&temp_path, json)?;
-        fs::rename(&temp_path, &self.file_path)?;
+    /// Queue a write that is coalesced with nearby changes. Used for the
+    /// high-frequency settings/layout paths so dragging a slider does not do
+    /// synchronous disk I/O on every input event.
+    pub fn save_debounced(&self, state: &PersistedState) -> Result<(), AppError> {
+        let json = serde_json::to_string(state)?;
+        let sent = self
+            .writer
+            .lock()
+            .map_err(|_| AppError::other("State writer lock poisoned"))?
+            .send(WriteMsg::Write(self.file_path.clone(), json));
+        if sent.is_err() {
+            // Writer thread is gone; fall back to a synchronous write.
+            return write_atomic(&self.file_path, &serde_json::to_string(state)?);
+        }
         Ok(())
     }
 }

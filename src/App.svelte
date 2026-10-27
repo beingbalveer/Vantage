@@ -22,7 +22,7 @@
     addToast,
   } from "./lib/stores/ui";
   import { operationStatus } from "./lib/stores/operation";
-  import { isFeatureEnabled } from "./lib/featureFlags";
+  import { isFeatureEnabled } from "./lib/featureFlags.svelte";
   import { matchShortcut } from "./lib/keys";
   import { viewportPaneWidths, savedPaneWidth } from "./lib/layout";
   import { dispatchKeyboard } from "./lib/commands";
@@ -47,6 +47,7 @@
   import CreateBranchDialog from "./lib/components/Dialogs/CreateBranchDialog.svelte";
   import RenameBranchDialog from "./lib/components/Dialogs/RenameBranchDialog.svelte";
   import DeleteBranchDialog from "./lib/components/Dialogs/DeleteBranchDialog.svelte";
+  import LayoutDialog from "./lib/components/Dialogs/LayoutDialog.svelte";
 
   import TagCreateDialog from "./lib/components/Dialogs/TagCreateDialog.svelte";
   import TagDetailsDialog from "./lib/components/Dialogs/TagDetailsDialog.svelte";
@@ -195,14 +196,16 @@
     const count = isFeatureEnabled("ALPH_144_MULTI_PANE") ? $paneCount : 1;
     const layout: Layout = {
       paneCount: count,
-      panes: $panes.slice(0, count).map((p) => ({
+      panes: $panes.slice(0, count).map((p, i) => ({
         repoId: p.repoId,
         tab: p.tab,
-        widths: null,
+        // Persist the resolved split width for this pane so the 1–3 column
+        // layout survives a restart instead of always re-splitting equally.
+        widths: paneWidths[i] ? [paneWidths[i]] : null,
       })),
       sidebarWidth,
       sidebarCollapsed: $sidebarCollapsed,
-      terminalHeight: 240,
+      terminalHeight: $panes[0]?.terminalHeight ?? 240,
       terminalOpen: $panes.slice(0, count).some((p) => p.terminalOpen),
       windowBounds: null,
     };
@@ -210,11 +213,14 @@
   }
 
   $effect(() => {
+    // Every field written by persistLayout must be read here: the effect only
+    // re-runs for values it actually tracks. Keeping the signature explicit
+    // (rather than calling persistLayout directly) also debounces drags.
     const signature =
-      `${$paneCount}|` +
+      `${$paneCount}|${sidebarWidth}|${$sidebarCollapsed}|${paneWidths.join(",")}|` +
       $panes
         .slice(0, $paneCount)
-        .map((p) => `${p.id}:${p.repoId}:${p.tab}:${p.terminalOpen}`)
+        .map((p) => `${p.id}:${p.repoId}:${p.tab}:${p.terminalOpen}:${p.terminalHeight}`)
         .join(",");
     void signature;
     if (!layoutReady) return;
@@ -239,6 +245,13 @@
       const knownRepos = $repos;
       if (count > 1 || savedPanes.some((p) => p?.repoId)) {
         setPaneCount(count);
+        // Widths are stored as a single-element array per pane (see persistLayout).
+        const restoredWidths = savedPanes
+          .slice(0, count)
+          .map((p) => (Array.isArray(p?.widths) && p.widths[0] > 0 ? p.widths[0] : 0));
+        if (restoredWidths.some((w) => w > 0)) {
+          paneWidths = restoredWidths;
+        }
         panes.update((list) =>
           list.map((p, i) => {
             const saved = savedPanes[i];
@@ -460,6 +473,7 @@
   <CreateBranchDialog />
   <RenameBranchDialog />
   <DeleteBranchDialog />
+  <LayoutDialog />
 
   <TagCreateDialog />
   <TagDetailsDialog />

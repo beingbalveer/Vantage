@@ -1,7 +1,7 @@
 <script lang="ts">
   import type { ComponentProps } from "svelte";
   import type { CommitSummary, FlagKind, TriageFlag, TagInfo } from "../../types";
-  import { isFeatureEnabled } from "../../featureFlags";
+  import { isFeatureEnabled } from "../../featureFlags.svelte";
   import { formatRelativeTime } from "../../format";
   import {
     formatFlagAriaLabel,
