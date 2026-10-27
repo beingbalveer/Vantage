@@ -1,5 +1,6 @@
 <script lang="ts">
   import { untrack } from "svelte";
+  import { leftColumnWidth, setLeftColumnWidth, viewportPaneWidths } from "../../app/layout";
   import { setPaneTab } from "../../domain/stores/panes";
   import * as api from "../../platform/api";
   import { normalizeError, createDelayedToggle, type NormalizedError } from "../../domain/asyncState";
@@ -98,26 +99,20 @@
     if (initialTargetLine) activeTargetLine = initialTargetLine;
   });
 
-  let treeWidth = $state(
-    typeof localStorage !== "undefined"
-      ? parseInt(localStorage.getItem("vantage_files_tree_width") || localStorage.getItem("relay_files_tree_width") || "280", 10) || 280
-      : 280
-  );
-
+  // Shared with the commits column: the leading edge must not move when the
+  // pane switches between Commits and Files.
   const startTreeResize = createHorizontalResizer({
-    getWidth: () => treeWidth,
-    setWidth: (w) => (treeWidth = w),
+    getWidth: () => $leftColumnWidth,
+    setWidth: (w) => setLeftColumnWidth(w),
     minWidth: 180,
     maxWidth: 700,
-    storageKey: "vantage_files_tree_width",
   });
 
   const nudgeTreeResize = createHorizontalResizerKeyboard({
-    getWidth: () => treeWidth,
-    setWidth: (w) => (treeWidth = w),
+    getWidth: () => $leftColumnWidth,
+    setWidth: (w) => setLeftColumnWidth(w),
     minWidth: 160,
     maxWidth: 600,
-    storageKey: "vantage_files_tree_width",
   });
 
   $effect(() => {
@@ -199,7 +194,7 @@
 
 <div class="files-tab-container">
   <!-- Left Tree Pane -->
-  <div class="tree-pane" style="width: {treeWidth}px;">
+  <div class="tree-pane" style="width: {$leftColumnWidth}px;">
     <!-- View tabs fill the tree column; branch lives in the app header -->
     <div class="tree-header">
       <div class="pane-tabs" role="tablist" aria-label="Pane view">
@@ -260,14 +255,13 @@
     aria-label="Resize file tree"
     aria-valuemin={160}
     aria-valuemax={600}
-    aria-valuenow={Math.round(treeWidth)}
+    aria-valuenow={Math.round($leftColumnWidth)}
     tabindex="0"
     title="Drag to resize file tree (Double-click to reset, Arrow keys to nudge)"
     onpointerdown={startTreeResize}
     onkeydown={nudgeTreeResize}
     ondblclick={() => {
-      treeWidth = 280;
-      try { localStorage.setItem("vantage_files_tree_width", "280"); } catch {}
+      setLeftColumnWidth(viewportPaneWidths().commits);
     }}
   ></div>
 
