@@ -364,6 +364,9 @@
     min-width: 0;
     min-height: 0;
     display: flex;
+    /* Column, so the viewer stretches to the full pane width even when the
+       file has only a few short lines. A row would size it to its content. */
+    flex-direction: column;
   }
 
   .viewer-pane {
