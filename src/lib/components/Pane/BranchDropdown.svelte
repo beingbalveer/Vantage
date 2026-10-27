@@ -209,7 +209,7 @@
     title={`Current branch: ${currentBranch}${isInactiveView ? " (not checked out)" : ""}`}
   >
     <Icon name="git-branch" size={14} class="branch-icon" />
-    <span class="branch-label font-mono">{currentBranch}</span>
+    <span class="branch-label">{currentBranch}</span>
     {#if isInactiveView}
       <span class="inactive-dot" title="Read-only view (not checked out on disk)"></span>
     {/if}
@@ -259,7 +259,7 @@
             onclick={() => selectBranch(b.name)}
           >
             <Icon name="git-branch" size={13} />
-            <span class="branch-option-name font-mono">{b.name}</span>
+            <span class="branch-option-name">{b.name}</span>
             {#if b.isHead}
               <span class="head-pill">HEAD</span>
             {/if}
@@ -291,6 +291,7 @@
         type="button"
         class="branch-option create-branch-action"
         role="menuitem"
+        title={`New branch from ${currentBranch}…`}
         onclick={() => handleNewBranchFrom("HEAD")}
       >
         <Icon name="plus" size={13} />
@@ -376,7 +377,7 @@
         {:else}
           {#each filteredBranches as b (b.name)}
             <div class="branch-picker-item" class:is-head={b.isHead}>
-              <span class="branch-picker-name font-mono text-xs">
+              <span class="branch-picker-name text-xs">
                 <Icon name="git-branch" size={12} class="mr-1 inline-block" />
                 {b.name}
                 {#if b.isHead}
@@ -462,6 +463,9 @@
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+    font-family: var(--font-ui);
+    font-size: 12px;
+    font-weight: 500;
     letter-spacing: -0.01em;
   }
 
@@ -564,12 +568,20 @@
     border: none;
     background: transparent;
     color: var(--text);
+    font-family: var(--font-ui);
     font-size: 12.5px;
     font-weight: 500;
     border-radius: var(--r-sm, 6px);
     cursor: pointer;
     text-align: left;
+    white-space: nowrap;
+    overflow: hidden;
     transition: background-color 0.12s ease, color 0.12s ease;
+  }
+  .branch-option > span {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
   }
 
   .branch-option:hover,
@@ -591,8 +603,10 @@
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+    font-family: var(--font-ui);
     font-size: 12.5px;
     line-height: 1.3;
+    letter-spacing: -0.01em;
   }
 
   .head-pill {
@@ -754,6 +768,8 @@
     align-items: center;
     gap: 4px;
     color: var(--text);
+    font-family: var(--font-ui);
+    letter-spacing: -0.01em;
   }
 
   .pick-btn {

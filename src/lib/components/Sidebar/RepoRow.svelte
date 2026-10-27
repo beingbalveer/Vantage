@@ -512,7 +512,7 @@
         {:else}
           {#each filtered as b (b.name)}
             <div class="branch-picker-item" class:is-head={b.isHead}>
-              <span class="branch-picker-name font-mono text-xs">
+              <span class="branch-picker-name text-xs">
                 <Icon name="git-branch" size={12} class="mr-1 inline-block" />
                 {b.name}
                 {#if b.isHead}
@@ -969,6 +969,8 @@
     align-items: center;
     gap: 6px;
     color: var(--text);
+    font-family: var(--font-ui);
+    letter-spacing: -0.01em;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
