@@ -295,8 +295,8 @@ export const COMMANDS: Command[] = [
     hiddenFromPalette: true,
   },
   {
-    id: "filter_files",
-    label: "Filter file list (Files tab)",
+    id: "focus_files",
+    label: "Focus the file tree (Files tab)",
     keys: ["/"],
     contexts: ["files"],
     category: "Navigation",

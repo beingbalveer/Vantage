@@ -14,6 +14,14 @@
   import Banner from "../common/Banner.svelte";
   import { navigationTarget } from "../../domain/stores/navigation";
   import { addToast } from "../../app/ui";
+  import {
+    closeFileTab,
+    fileTabs,
+    getFileTabState,
+    openFileTab,
+    pruneFileTabs,
+  } from "../../domain/stores/fileTabs";
+  import FileTabs from "./FileTabs.svelte";
   import { matchShortcut } from "../../platform/keys";
 
   interface Props {
@@ -37,7 +45,11 @@
   }: Props = $props();
 
   let fileList = $state<string[]>([]);
-  let selectedFile = $state<string | null>(null);
+  // Open files live in a store keyed by repository, so tabs survive a switch
+  // to the Commits view and back.
+  let tabState = $derived(getFileTabState($fileTabs, repoId));
+  let openTabs = $derived(tabState.tabs);
+  let activeFile = $derived(tabState.active);
   let activeTargetLine = $state<number | null>(null);
   let fileTreeRef = $state<any>(null);
 
@@ -60,8 +72,11 @@
       const files = await api.treeList(repoId, revision);
       if (gen !== treeGen) return;
       fileList = files;
-      if (files.length > 0 && (!selectedFile || !files.includes(selectedFile))) {
-        selectedFile = files[0];
+      pruneFileTabs(repoId, files);
+      // First visit to a repo opens its first file, like the old single-view
+      // behaviour; later visits restore whatever tabs were left open.
+      if (files.length > 0 && openTabs.length === 0) {
+        openFileTab(repoId, files[0]);
       }
     } catch (e) {
       if (gen !== treeGen) return;
@@ -83,7 +98,6 @@
     // tree reloads forever.
     untrack(() => {
       fileList = [];
-      selectedFile = null;
       treeError = null;
       loadTree(revision);
     });
@@ -95,7 +109,7 @@
   });
 
   $effect(() => {
-    if (targetFile) selectedFile = targetFile;
+    if (targetFile) openFileTab(repoId, targetFile);
     if (initialTargetLine) activeTargetLine = initialTargetLine;
   });
 
@@ -119,7 +133,7 @@
     if ($navigationTarget) {
       if (!$navigationTarget.repoId || $navigationTarget.repoId === repoId) {
         if ($navigationTarget.path) {
-          selectedFile = $navigationTarget.path;
+          openFileTab(repoId, $navigationTarget.path);
         }
         if ($navigationTarget.line) {
           activeTargetLine = $navigationTarget.line;
@@ -129,10 +143,11 @@
   });
 
   async function openInEditor() {
-    if (!selectedFile) return;
+    const target = activeFile;
+    if (!target) return;
     try {
-      await api.openExternalEditor(repoId, selectedFile, activeTargetLine || undefined);
-      addToast({ message: `Opened '${selectedFile}' in external editor`, kind: "info" });
+      await api.openExternalEditor(repoId, target, activeTargetLine || undefined);
+      addToast({ message: `Opened '${target}' in external editor`, kind: "info" });
     } catch (e: any) {
       console.error("Failed to open external editor:", e);
       addToast({
@@ -150,23 +165,23 @@
 
     if (!isInput && e.key === "/") {
       e.preventDefault();
-      fileTreeRef?.focusSearch();
+      fileTreeRef?.focusTree();
     } else if (matchShortcut(e, "Mod+P")) {
       e.preventDefault();
-      fileTreeRef?.focusSearch();
+      fileTreeRef?.focusTree();
     }
   }
 
   function selectFileAt(index: number) {
     const file = fileList[index];
     if (!file) return;
-    selectedFile = file;
     activeTargetLine = null;
+    openFileTab(repoId, file);
   }
 
   function moveFile(delta: 1 | -1): boolean {
     if (!ownsPaneKeyboard(paneIndex) || fileList.length === 0) return false;
-    const current = selectedFile ? fileList.indexOf(selectedFile) : -1;
+    const current = activeFile ? fileList.indexOf(activeFile) : -1;
     const next = Math.max(0, Math.min(fileList.length - 1, (current < 0 ? 0 : current) + delta));
     selectFileAt(next);
     return true;
@@ -175,10 +190,10 @@
   $effect(() => {
     const unregister = [
       registerHandler(
-        "filter_files",
+        "focus_files",
         () => {
           if (!ownsPaneKeyboard(paneIndex)) return false;
-          fileTreeRef?.focusSearch?.();
+          fileTreeRef?.focusTree?.();
           return true;
         },
         "files"
@@ -235,11 +250,11 @@
         <FileTree
           bind:this={fileTreeRef}
           files={fileList}
-          {selectedFile}
+          selectedFile={activeFile}
           {repoId}
           onselectfile={(path) => {
-            selectedFile = path;
             activeTargetLine = null;
+            openFileTab(repoId, path);
           }}
         />
       {/if}
@@ -267,26 +282,37 @@
 
   <!-- Right Code Viewer -->
   <div class="viewer-pane">
-    {#if selectedFile}
-      <CodeViewer
-        {repoId}
-        path={selectedFile}
-        rev={rev || "HEAD"}
-        targetLine={activeTargetLine || undefined}
-        {paneIndex}
-        onopenineditor={openInEditor}
-        onnavigatetofile={(filePath, line) => {
-          selectedFile = filePath;
-          activeTargetLine = line || null;
+    {#if activeFile}
+      <FileTabs
+        tabs={openTabs}
+        active={activeFile}
+        onactivate={(path) => {
+          activeTargetLine = null;
+          openFileTab(repoId, path);
         }}
+        onclose={(path) => closeFileTab(repoId, path)}
       />
+      <div class="viewer-body">
+        <CodeViewer
+          {repoId}
+          path={activeFile}
+          rev={rev || "HEAD"}
+          targetLine={activeTargetLine || undefined}
+          {paneIndex}
+          onopenineditor={openInEditor}
+          onnavigatetofile={(filePath, line) => {
+            activeTargetLine = line || null;
+            openFileTab(repoId, filePath);
+          }}
+        />
+      </div>
     {:else}
       <div class="empty-viewer">
         <div class="empty-viewer-card">
           <Icon name="code" size={36} class="empty-icon" />
           <div class="empty-title">No file open</div>
           <div class="empty-desc">
-            Select a file from the explorer on the left or press <kbd>/</kbd> to search files.
+            Select a file from the explorer on the left.
           </div>
         </div>
       </div>
@@ -331,6 +357,13 @@
     overflow: hidden;
     display: flex;
     flex-direction: column;
+  }
+
+  .viewer-body {
+    flex: 1;
+    min-width: 0;
+    min-height: 0;
+    display: flex;
   }
 
   .viewer-pane {
@@ -378,16 +411,6 @@
     line-height: 1.5;
   }
 
-  kbd {
-    display: inline-block;
-    padding: 1px 5px;
-    font-size: 11px;
-    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-    background: var(--bg-hover, rgba(0, 0, 0, 0.08));
-    border: 1px solid var(--border);
-    border-radius: var(--r-sm);
-    box-shadow: 0 1px 0 rgba(0, 0, 0, 0.1);
-  }
 
   .split-handle {
     flex: 0 0 auto;
