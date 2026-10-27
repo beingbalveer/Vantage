@@ -23,11 +23,8 @@
     status?: RepoStatus;
     isDragging?: boolean;
     dropIndicator?: "before" | "after" | null;
-    ondragstart?: (e: DragEvent) => void;
-    ondragover?: (e: DragEvent) => void;
-    ondragleave?: (e: DragEvent) => void;
-    ondrop?: (e: DragEvent) => void;
-    ondragend?: (e: DragEvent) => void;
+    /** Pointer press on the row body; the sidebar turns a drag into a reorder. */
+    onreorderstart?: (e: PointerEvent) => void;
     /** Keyboard reorder: -1 moves up, +1 moves down. */
     onmove?: (delta: -1 | 1) => void;
   }
@@ -37,11 +34,7 @@
     status,
     isDragging = false,
     dropIndicator = null,
-    ondragstart,
-    ondragover,
-    ondragleave,
-    ondrop,
-    ondragend,
+    onreorderstart,
     onmove,
   }: Props = $props();
 
@@ -295,18 +288,18 @@
     openDialog({ type: "change_icon", repoId: repo.id, data: { repo } });
   }
 
-  function handleRowDragStart(e: DragEvent) {
-    if (showMenu || showBranchModal) {
-      e.preventDefault();
+  function handleRowPointerDown(e: PointerEvent) {
+    if (showMenu || showBranchModal) return;
+    // Let the row's own controls (menu, badges, buttons) keep their clicks.
+    const target = e.target;
+    if (
+      target instanceof Element &&
+      target.closest("button, a, input, textarea, select, [contenteditable='true']")
+    ) {
       return;
     }
     stopHover();
-    if (e.dataTransfer) {
-      e.dataTransfer.effectAllowed = "move";
-      e.dataTransfer.setData("application/x-vantage-repo-id", repo.id);
-      e.dataTransfer.setData("text/plain", repo.name);
-    }
-    ondragstart?.(e);
+    onreorderstart?.(e);
   }
 </script>
 
@@ -316,12 +309,7 @@
   class:dragging={isDragging}
   class:drop-before={dropIndicator === "before"}
   class:drop-after={dropIndicator === "after"}
-  draggable={true}
-  ondragstart={handleRowDragStart}
-  ondragover={(e) => ondragover?.(e)}
-  ondragleave={(e) => ondragleave?.(e)}
-  ondrop={(e) => ondrop?.(e)}
-  ondragend={(e) => ondragend?.(e)}
+  onpointerdown={handleRowPointerDown}
   onclick={handleClick}
   onpointerenter={startHover}
   onpointerleave={stopHover}

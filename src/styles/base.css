@@ -127,3 +127,10 @@ body.resizing-col * {
   cursor: col-resize !important;
   user-select: none !important;
 }
+
+/* Sidebar repo reordering (pointer-driven, see Sidebar.svelte) */
+body.repo-dragging,
+body.repo-dragging * {
+  cursor: grabbing !important;
+  user-select: none !important;
+}

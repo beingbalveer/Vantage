@@ -1,7 +1,9 @@
 <script lang="ts">
+  import { onDestroy } from "svelte";
   import { sortedRepos, statuses, loadRepos, reorderRepos } from "../../stores/repos";
   import { sidebarCollapsed, addRepoDialogOpen, addToast } from "../../stores/ui";
   import * as api from "../../api";
+  import { moveItem, findDropTarget, type DropPosition } from "../../reorder";
   import RepoRow from "./RepoRow.svelte";
   import Icon from "../common/Icon.svelte";
 
@@ -14,10 +16,26 @@
   let statusMap = $derived($statuses);
   let isDraggingOver = $state(false);
 
-  // Drag and drop reordering state
+  // Drag and drop reordering state. Native HTML5 drag events are unreliable in
+  // the Tauri webview, so rows are reordered with pointer events instead.
   let draggedRepoId = $state<string | null>(null);
   let dragOverRepoId = $state<string | null>(null);
-  let dropPosition = $state<"before" | "after" | null>(null);
+  let dropPosition = $state<DropPosition | null>(null);
+  let listEl = $state<HTMLDivElement | null>(null);
+
+  const DRAG_THRESHOLD = 4;
+  const AUTO_SCROLL_EDGE = 28;
+  const AUTO_SCROLL_STEP = 12;
+
+  let pointerDrag: {
+    id: string;
+    pointerId: number;
+    startX: number;
+    startY: number;
+  } | null = null;
+  let autoScrollDir: -1 | 0 | 1 = 0;
+  let autoScrollFrame: number | null = null;
+  let lastPointer = { x: 0, y: 0 };
 
   function openAddRepo() {
     $addRepoDialogOpen = true;
@@ -59,71 +77,161 @@
     }
   }
 
-  function handleRowDragStart(e: DragEvent, id: string) {
-    draggedRepoId = id;
-    dragOverRepoId = null;
-    dropPosition = null;
+  /** Start tracking a possible row drag. A move past the threshold begins it. */
+  function handleRowPointerDown(e: PointerEvent, id: string) {
+    if (e.button !== 0 || e.metaKey || e.ctrlKey || e.altKey) return;
+    const target = e.target;
+    if (
+      target instanceof Element &&
+      target.closest("button, a, input, textarea, select, [contenteditable='true']")
+    ) {
+      return;
+    }
+    stopPointerDrag();
+    pointerDrag = { id, pointerId: e.pointerId, startX: e.clientX, startY: e.clientY };
+    lastPointer = { x: e.clientX, y: e.clientY };
+    // Capture so a fast drag that leaves the row keeps reporting moves.
+    try {
+      (e.currentTarget as HTMLElement | null)?.setPointerCapture?.(e.pointerId);
+    } catch {
+      // Synthetic events (tests) have no active pointer to capture.
+    }
+    window.addEventListener("pointermove", handlePointerMove, { passive: false });
+    window.addEventListener("pointerup", handlePointerUp);
+    window.addEventListener("pointercancel", handlePointerCancel);
+    window.addEventListener("blur", handleWindowBlur);
   }
 
-  function handleRowDragOver(e: DragEvent, targetId: string) {
-    if (!draggedRepoId) return;
-    if (draggedRepoId === targetId) {
+  function handlePointerMove(e: PointerEvent) {
+    if (!pointerDrag || e.pointerId !== pointerDrag.pointerId) return;
+    lastPointer = { x: e.clientX, y: e.clientY };
+    if (!draggedRepoId) {
+      const dx = e.clientX - pointerDrag.startX;
+      const dy = e.clientY - pointerDrag.startY;
+      if (Math.hypot(dx, dy) < DRAG_THRESHOLD) return;
+      draggedRepoId = pointerDrag.id;
+      document.body.classList.add("repo-dragging");
+    }
+    // Keep the browser from selecting text or starting a native drag.
+    e.preventDefault();
+    updateDropTargetFromPoint(e.clientX, e.clientY);
+    updateAutoScroll(e.clientY);
+  }
+
+  function updateDropTargetFromPoint(x: number, y: number) {
+    if (!draggedRepoId || !listEl) return;
+    const bounds = listEl.getBoundingClientRect();
+    if (x < bounds.left || x > bounds.right || y < bounds.top || y > bounds.bottom) {
       dragOverRepoId = null;
       dropPosition = null;
       return;
     }
-    e.preventDefault();
-    e.stopPropagation();
-    if (e.dataTransfer) {
-      e.dataTransfer.dropEffect = "move";
-    }
-    dragOverRepoId = targetId;
-    const targetEl = e.currentTarget as HTMLElement;
-    const rect = targetEl.getBoundingClientRect();
-    const midY = rect.top + rect.height / 2;
-    dropPosition = e.clientY < midY ? "before" : "after";
-  }
 
-  function handleRowDragLeave(e: DragEvent, targetId: string) {
-    const related = e.relatedTarget as Node | null;
-    const current = e.currentTarget as HTMLElement | null;
-    if (current && related && current.contains(related)) {
-      return;
-    }
-    if (dragOverRepoId === targetId) {
+    const rows = Array.from(listEl.querySelectorAll<HTMLElement>("[data-repo-id]"));
+    const target = findDropTarget(
+      rows.map((row) => {
+        const rect = row.getBoundingClientRect();
+        return { id: row.dataset.repoId ?? "", top: rect.top, height: rect.height };
+      }),
+      y,
+      draggedRepoId
+    );
+    if (!target) {
       dragOverRepoId = null;
       dropPosition = null;
+      return;
+    }
+    dragOverRepoId = target.id;
+    dropPosition = target.position;
+  }
+
+  function updateAutoScroll(y: number) {
+    if (!listEl) return;
+    const rect = listEl.getBoundingClientRect();
+    const dir = y < rect.top + AUTO_SCROLL_EDGE ? -1 : y > rect.bottom - AUTO_SCROLL_EDGE ? 1 : 0;
+    if (dir === autoScrollDir) return;
+    autoScrollDir = dir;
+    if (dir !== 0 && autoScrollFrame === null) {
+      autoScrollFrame = requestAnimationFrame(autoScrollStep);
     }
   }
 
-  async function handleRowDrop(e: DragEvent, targetId: string) {
-    if (!draggedRepoId) return;
-    e.preventDefault();
-    e.stopPropagation();
+  function autoScrollStep() {
+    autoScrollFrame = null;
+    if (!listEl || autoScrollDir === 0 || !draggedRepoId) return;
+    const before = listEl.scrollTop;
+    listEl.scrollTop = before + autoScrollDir * AUTO_SCROLL_STEP;
+    if (listEl.scrollTop === before) return;
+    autoScrollFrame = requestAnimationFrame(autoScrollStep);
+    // The pointer is stationary while scrolling, so refresh the drop target.
+    updateDropTargetFromPoint(lastPointer.x, lastPointer.y);
+  }
+
+  function handlePointerUp(e: PointerEvent) {
+    if (!pointerDrag || e.pointerId !== pointerDrag.pointerId) return;
+    const wasDragging = draggedRepoId !== null;
     const sourceId = draggedRepoId;
-    const pos = dropPosition;
+    const targetId = dragOverRepoId;
+    const position = dropPosition;
+    pointerDrag = null;
+    stopPointerDrag();
     clearDrag();
-    if (sourceId === targetId || !pos) return;
+    if (!wasDragging) return;
+    // A completed drag must not also activate the repo under the pointer.
+    suppressNextClick();
+    if (!sourceId || !targetId || !position || sourceId === targetId) return;
+    void applyReorder(sourceId, targetId, position);
+  }
 
-    const list = [...repoList];
-    const sourceIdx = list.findIndex((r) => r.id === sourceId);
-    const targetIdx = list.findIndex((r) => r.id === targetId);
-    if (sourceIdx === -1 || targetIdx === -1) return;
+  function handlePointerCancel(e: PointerEvent) {
+    if (!pointerDrag || e.pointerId !== pointerDrag.pointerId) return;
+    const wasDragging = draggedRepoId !== null;
+    pointerDrag = null;
+    stopPointerDrag();
+    clearDrag();
+    if (wasDragging) suppressNextClick();
+  }
 
-    const [moved] = list.splice(sourceIdx, 1);
-    let insertIdx = list.findIndex((r) => r.id === targetId);
-    if (pos === "after") {
-      insertIdx += 1;
+  function handleWindowBlur() {
+    pointerDrag = null;
+    stopPointerDrag();
+    clearDrag();
+  }
+
+  function stopPointerDrag() {
+    window.removeEventListener("pointermove", handlePointerMove);
+    window.removeEventListener("pointerup", handlePointerUp);
+    window.removeEventListener("pointercancel", handlePointerCancel);
+    window.removeEventListener("blur", handleWindowBlur);
+    document.body.classList.remove("repo-dragging");
+    autoScrollDir = 0;
+    if (autoScrollFrame !== null) {
+      cancelAnimationFrame(autoScrollFrame);
+      autoScrollFrame = null;
     }
-    list.splice(insertIdx, 0, moved);
+  }
 
-    // Keep pinned status aligned with destination region
-    const targetRepo = repoList[targetIdx];
-    if (targetRepo) {
-      moved.pinned = targetRepo.pinned;
-    }
+  /** Swallow the click that follows a finished drag. */
+  function suppressNextClick() {
+    const swallow = (event: MouseEvent) => {
+      event.preventDefault();
+      event.stopPropagation();
+      window.removeEventListener("click", swallow, true);
+    };
+    window.addEventListener("click", swallow, true);
+    setTimeout(() => window.removeEventListener("click", swallow, true), 100);
+  }
 
-    await reorderRepos(list);
+  async function applyReorder(sourceId: string, targetId: string, position: DropPosition) {
+    const next = moveItem([...repoList], sourceId, targetId, position);
+    if (!next) return;
+
+    // Keep pinned status aligned with the destination region.
+    const destination = repoList.find((r) => r.id === targetId);
+    const moved = next.find((r) => r.id === sourceId);
+    if (destination && moved) moved.pinned = destination.pinned;
+
+    await reorderRepos(next);
   }
 
   /** Keyboard equivalent of drag-and-drop reordering (Alt+↑/↓ on a row). */
@@ -152,15 +260,17 @@
     });
   }
 
-  function handleRowDragEnd() {
-    clearDrag();
-  }
-
   function clearDrag() {
     draggedRepoId = null;
     dragOverRepoId = null;
     dropPosition = null;
   }
+
+  onDestroy(() => {
+    pointerDrag = null;
+    stopPointerDrag();
+    document.body.classList.remove("repo-dragging");
+  });
 </script>
 
 <aside
@@ -179,48 +289,19 @@
     </div>
   {/if}
 
-  <div class="repo-list">
+  <div class="repo-list" bind:this={listEl}>
     {#each repoList as repo (repo.id)}
       <RepoRow
         {repo}
         status={statusMap[repo.id]}
         isDragging={draggedRepoId === repo.id}
         dropIndicator={dragOverRepoId === repo.id ? dropPosition : null}
-        ondragstart={(e) => handleRowDragStart(e, repo.id)}
-        ondragover={(e) => handleRowDragOver(e, repo.id)}
-        ondragleave={(e) => handleRowDragLeave(e, repo.id)}
-        ondrop={(e) => handleRowDrop(e, repo.id)}
-        ondragend={handleRowDragEnd}
+        onreorderstart={(e) => handleRowPointerDown(e, repo.id)}
         onmove={(delta) => void moveRepoBy(repo.id, delta)}
       />
     {/each}
 
-    <div
-      class="repo-list-end"
-      role="region"
-      aria-label="Drop target to move repository to end of list"
-      ondragover={(e) => {
-        if (!draggedRepoId) return;
-        e.preventDefault();
-        e.stopPropagation();
-        if (repoList.length > 0) {
-          const lastRepo = repoList[repoList.length - 1];
-          if (draggedRepoId !== lastRepo.id) {
-            dragOverRepoId = lastRepo.id;
-            dropPosition = "after";
-          }
-        }
-      }}
-      ondrop={(e) => {
-        if (!draggedRepoId) return;
-        e.preventDefault();
-        e.stopPropagation();
-        if (repoList.length > 0) {
-          const lastRepo = repoList[repoList.length - 1];
-          handleRowDrop(e, lastRepo.id);
-        }
-      }}
-    ></div>
+    <div class="repo-list-end" aria-hidden="true"></div>
 
     <div class="dock-separator"></div>
 
