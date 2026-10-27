@@ -19,7 +19,8 @@
 
   // Dev runs (`npm run dev:app`, `npm run dev:bundle`) mark themselves so they
   // are never mistaken for the release app.
-  const isDevBuild = import.meta.env.DEV;
+  const isDevBuild =
+    import.meta.env.DEV || import.meta.env.VITE_DEV_BUILD === "1";
 
   let currentPane = $derived($panes[$focusedPaneIndex]);
   let currentTab = $derived(currentPane?.tab || "history");
