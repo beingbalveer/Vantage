@@ -198,12 +198,6 @@
     }
   });
 
-  let unpushedShas = $derived.by(() => {
-    const ahead = status?.ahead || 0;
-    if (ahead <= 0) return new Set<string>();
-    return new Set(commits.slice(0, ahead).map((c) => c.sha));
-  });
-
   let lastAhead = $state<number | undefined>(undefined);
   let lastBehind = $state<number | undefined>(undefined);
   $effect(() => {
@@ -225,6 +219,10 @@
   let selectedFilePath = $state<string | null>(null);
   let currentDiffFile = $state<DiffFile | null>(null);
   let checkedPaths = $state<string[]>([]);
+  // Scope identity of the rows currently on screen; a change blanks the list so
+  // the previous commit's files can never linger under a new selection.
+  let lastLoadedScope = $state<DiffScope | null>(null);
+  let scopeLoading = $state(false);
   // True when the currently shown diff was fetched with whole-file context.
   // Reset on repo/scope/file change so the expanded state never leaks.
   let diffIsFullContext = $state(false);
@@ -325,6 +323,8 @@
           isRangeSelected = false;
           workingCounts = null;
         }
+        lastLoadedScope = null;
+        scopeLoading = false;
       });
     }
   });
@@ -728,11 +728,41 @@
       console.warn("Failed to load staged/unstaged counts:", e);
     }
   }
-  async function loadScopeFiles(scope: DiffScope, preserveFile = false) {
-    if (!repo) return;
+  /** Two scopes describe the same file list when their kind and range match. */
+  function sameScope(a: DiffScope, b: DiffScope | null): boolean {
+    if (!b || a.type !== b.type) return false;
+    if (a.type === "commit" && b.type === "commit") return a.sha === b.sha;
+    if (a.type === "range" && b.type === "range") {
+      return a.from === b.from && a.to === b.to;
+    }
+    return true;
+  }
+
+  /** Stable identity for the current scope, used to reset list scroll. */
+  function scopeKeyOf(scope: DiffScope): string {
+    if (scope.type === "commit") return `commit:${scope.sha}`;
+    if (scope.type === "range") return `range:${scope.from}..${scope.to}`;
+    return "working";
+  }
+
+  async function loadScopeFiles(scope: DiffScope, preserveFile = false) {    if (!repo) return;
     const request = scopeRequests.begin();
     // The old scope's diff is no longer relevant while the file list loads.
     diffRequests.cancel();
+
+    // Switching commits must never leave the previous scope's files on screen
+    // under the new commit's header. Same-scope reloads (refresh, staging) keep
+    // the rows in place so the list does not flicker.
+    const scopeChanged = !sameScope(scope, lastLoadedScope);
+    if (scopeChanged) {
+      lastLoadedScope = scope;
+      scopeFilesList = [];
+      checkedPaths = [];
+      selectedFilePath = null;
+      currentDiffFile = null;
+      scopeLoading = true;
+    }
+
     try {
       const isWorking = scope.type === "working";
       const files = await api.scopeFiles(repo.id, scope, $settings.ignoreWhitespace);
@@ -758,6 +788,8 @@
       if (!request.isCurrent()) return;
       console.error("Failed to load scope files:", e);
       addToast({ message: e.message || "Failed to load files for commit", kind: "error" });
+    } finally {
+      if (request.isCurrent()) scopeLoading = false;
     }
   }
 
@@ -1285,9 +1317,9 @@
                   class="view-tab active"
                   title="Commits & History"
                   aria-label="Commits view"
+                  aria-current="true"
                 >
-                  <Icon name="commit" size={13} />
-                  <span>Commits</span>
+                  <Icon name="commit" size={14} />
                 </button>
                 <button
                   type="button"
@@ -1296,8 +1328,7 @@
                   title="Project Files Explorer"
                   aria-label="Files explorer"
                 >
-                  <Icon name="folder" size={13} />
-                  <span>Files</span>
+                  <Icon name="folder" size={14} />
                 </button>
               </div>
             </div>
@@ -1358,11 +1389,7 @@
                 <CommitRow
                   {commit}
                   isSelected={selectedCommitSha === commit.sha || extendedShas.has(commit.sha)}
-                  isLocal={unpushedShas.has(commit.sha)}
                   isMenuOpen={isCommitMenuOpen(commit.sha)}
-                  flags={flagsBySha[commit.sha] ?? []}
-                  repoId={repo ? repo.id : ""}
-                  tags={tagsByTarget.get(commit.sha) || []}
                   onselect={() => selectCommit(commit.sha)}
                   onmenu={(pos: { x: number; y: number }) => openCommitMenu(commit, pos)}
                 />
@@ -1427,6 +1454,8 @@
                 files={scopeFilesList}
                 selectedFile={selectedFilePath}
                 isUncommitted={isUncommittedSelected}
+                loading={scopeLoading}
+                scopeKey={scopeKeyOf(currentScope)}
                 {checkedPaths}
                 showCommitControls={isUncommittedSelected && commitMode}
                 {focusDiff}
@@ -1668,61 +1697,58 @@
     height: 40px;
     border-bottom: 1px solid var(--border);
     display: flex;
-    align-items: center;
+    align-items: stretch;
     justify-content: space-between;
-    padding: 0 8px;
+    padding: 0;
     background-color: var(--bg);
-    gap: 8px;
+    gap: 0;
   }
 
   .branch-wrap {
     min-width: 0;
     flex: 1;
+    align-self: stretch;
     position: relative;
   }
 
+  /* Icon-only view toggle. Adjacent controls are separated by a full-height
+     hairline instead of margins, so the header reads as one toolbar. */
   .pane-view-tabs {
-    display: inline-flex;
-    align-items: center;
-    background: var(--bg-hover, rgba(0, 0, 0, 0.05));
-    padding: 2px;
-    border-radius: var(--r-sm);
-    border: 1px solid var(--border);
+    display: flex;
+    align-items: stretch;
+    gap: 0;
+    padding: 0;
+    background: transparent;
+    border: 0;
+    border-left: 1px solid var(--border);
+    border-radius: 0;
     flex-shrink: 0;
   }
-  :global([data-theme="dark"]) .pane-view-tabs {
-    background: rgba(255, 255, 255, 0.06);
-  }
-
   .view-tab {
     display: inline-flex;
     align-items: center;
-    gap: 5px;
-    height: 24px;
-    padding: 0 8px;
-    font-size: 11.5px;
-    font-weight: 500;
+    justify-content: center;
+    width: 34px;
+    height: auto;
+    padding: 0;
     border: 0;
     background: transparent;
-    border-radius: var(--r-sm);
+    border-radius: 0;
     color: var(--text-muted);
     cursor: pointer;
     transition: background 120ms ease, color 120ms ease;
     white-space: nowrap;
   }
+  .view-tab + .view-tab {
+    border-left: 1px solid var(--border-subtle);
+  }
   .view-tab:hover:not(.active) {
     color: var(--text);
-    background: rgba(125, 125, 125, 0.12);
+    background: var(--bg-muted);
   }
   .view-tab.active {
-    background: var(--bg);
+    background: var(--bg-muted);
     color: var(--text);
-    font-weight: 600;
-    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.08);
-  }
-  :global([data-theme="dark"]) .view-tab.active {
-    background: #21262d;
-    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.35);
   }
 
   .commits-scroll {

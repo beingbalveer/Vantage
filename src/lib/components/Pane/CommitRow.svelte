@@ -1,71 +1,27 @@
 <script lang="ts">
-  import type { ComponentProps } from "svelte";
-  import type { CommitSummary, FlagKind, TriageFlag, TagInfo } from "../../platform/types";
-  import { isFeatureEnabled } from "../../config/featureFlags.svelte";
+  import type { CommitSummary } from "../../platform/types";
   import { formatRelativeTime } from "../../domain/format";
-  import {
-    formatFlagAriaLabel,
-    formatFlagTooltip,
-    sortFlagsBySeverity,
-  } from "../../domain/triage";
   import Icon from "../common/Icon.svelte";
-  import TagChip from "./TagChip.svelte";
-
-  type IconName = ComponentProps<typeof Icon>["name"];
-
-  // DESIGN.md §10 icon mapping. Every kind in triage.rs has an icon here.
-  const FLAG_ICONS: Record<FlagKind, IconName> = {
-    large: "files",
-    deletionHeavy: "trash",
-    dependencies: "package",
-    config: "gear",
-    testsRemoved: "test-tube",
-    secrets: "key",
-    bigFile: "hard-drive",
-    binary: "binary",
-  };
 
   interface Props {
     commit: CommitSummary;
     isSelected: boolean;
-    isLocal?: boolean;
     isMenuOpen?: boolean;
-    flags?: TriageFlag[];
-    repoId?: string;
-    tags?: TagInfo[];
     onselect?: () => void;
-    onclick?: () => void;
     onmenu?: (pos: { x: number; y: number }) => void;
   }
 
   let {
     commit,
     isSelected,
-    isLocal = false,
     isMenuOpen = false,
-    flags = [],
-    repoId = "",
-    tags = [],
     onselect,
-    onclick,
     onmenu,
   }: Props = $props();
 
-  let isMerge = $derived(commit.parents && commit.parents.length > 1);
-  let visibleTags = $derived(tags.slice(0, 2));
-  let hiddenTagCount = $derived(Math.max(0, tags.length - visibleTags.length));
-
-  // Most urgent rule first; show at most 3 icons then a "+N" overflow chip.
-  let flagList = $derived(sortFlagsBySeverity(flags));
-  let shownFlags = $derived(flagList.slice(0, 3));
-  let flagOverflow = $derived(Math.max(0, flagList.length - 3));
-  let flagTooltip = $derived(formatFlagTooltip(flagList));
-  let flagAria = $derived(formatFlagAriaLabel(flagList));
-
   function handleTrigger(e?: Event) {
     if (e) e.stopPropagation();
-    if (onselect) onselect();
-    else if (onclick) onclick();
+    onselect?.();
   }
 
   function openMenuAt(x: number, y: number) {
@@ -103,7 +59,7 @@
 </script>
 
 <div
-  class="commit-item {isSelected ? 'active' : ''} {commit.isNew ? 'is-new' : 'is-reviewed'} {isMerge ? 'merge-commit' : ''} {isLocal ? 'is-local' : ''} {isMenuOpen ? 'menu-open' : ''}"
+  class="commit-item {isSelected ? 'active' : ''} {commit.isNew ? 'is-new' : 'is-reviewed'} {isMenuOpen ? 'menu-open' : ''}"
   onclick={handleTrigger}
   onkeydown={handleRowKeydown}
   oncontextmenu={handleContextMenu}
@@ -122,51 +78,6 @@
     </span>
   </span>
   <div class="commit-trailing">
-    {#if flagList.length > 0}
-      <span class="commit-flags" role="img" aria-label={flagAria} title={flagTooltip}>
-        {#each shownFlags as flag (flag.kind)}
-          <span class="flag-icon sev-{flag.severity}">
-            <Icon name={FLAG_ICONS[flag.kind]} size={13} />
-          </span>
-        {/each}
-        {#if flagOverflow > 0}
-          <span class="flag-overflow">+{flagOverflow}</span>
-        {/if}
-      </span>
-    {/if}
-    {#if isFeatureEnabled("ALPH_157_TAGS") && visibleTags.length > 0}
-      <span class="tag-chips">
-        {#each visibleTags as tag (tag.name)}
-          <TagChip {tag} {repoId} compact />
-        {/each}
-        {#if hiddenTagCount > 0}
-          <span class="more-tags" title="{hiddenTagCount} more tag{hiddenTagCount === 1 ? '' : 's'}">
-            +{hiddenTagCount}
-          </span>
-        {/if}
-      </span>
-    {/if}
-    {#if isMerge}
-      <span class="merge-badge">merge</span>
-    {/if}
-    {#if isLocal}
-      <span class="unpushed-icon" title="Unpushed commit (local)" aria-label="Unpushed commit">
-        <svg
-          width="10"
-          height="11"
-          viewBox="0 0 10 11"
-          fill="none"
-          stroke="currentColor"
-          stroke-width="1.6"
-          stroke-linecap="round"
-          stroke-linejoin="round"
-          aria-hidden="true"
-        >
-          <path d="M1 5L5 1L9 5" />
-          <path d="M5 1V10" />
-        </svg>
-      </span>
-    {/if}
     {#if onmenu}
       <button
         type="button"
@@ -244,10 +155,6 @@
     background: #fff;
     z-index: 1;
   }
-  .merge-commit .commit-node {
-    border-radius: var(--r-sm);
-    transform: rotate(45deg);
-  }
 
   .commit-copy {
     min-width: 0;
@@ -297,77 +204,6 @@
     gap: 6px;
     margin-left: auto;
     flex-shrink: 0;
-  }
-  .commit-flags {
-    display: inline-flex;
-    align-items: center;
-    gap: 3px;
-    height: 20px;
-    flex-shrink: 0;
-  }
-  .tag-chips {
-    display: inline-flex;
-    align-items: center;
-    gap: 4px;
-  }
-  .more-tags {
-    font-size: 10px;
-    color: var(--text-faint, #8c959f);
-    white-space: nowrap;
-  }
-  .merge-badge {
-    flex-shrink: 0;
-    padding: 3px 6px;
-    border-radius: var(--r-sm);
-    background: var(--bg-muted);
-    color: var(--text-muted);
-    font-size: 10px;
-  }
-  .flag-icon {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    width: 16px;
-    height: 16px;
-    flex-shrink: 0;
-  }
-  .flag-icon.sev-info {
-    color: var(--text-muted);
-  }
-  .flag-icon.sev-caution {
-    color: var(--warning);
-  }
-  .flag-icon.sev-warn {
-    color: var(--danger);
-  }
-  .flag-overflow {
-    font-size: 10px;
-    line-height: 16px;
-    color: var(--text-muted);
-    font-variant-numeric: tabular-nums;
-  }
-  .unpushed-icon {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    width: 26px;
-    height: 16px;
-    border-radius: var(--r-sm);
-    color: #2f363e;
-    background: #e2e4e8;
-    flex-shrink: 0;
-  }
-  :global([data-theme="dark"]) .unpushed-icon {
-    color: #c9d1d9;
-    background: #30363d;
-  }
-  .commit-item.active .unpushed-icon {
-    background: #d6d9de;
-    color: #1f2328;
-  }
-  :global([data-theme="dark"]) .commit-item.active .unpushed-icon {
-    background: #3d444d;
-    color: #f0f6fc;
   }
 
   /* Ghost "⋯" action button, revealed on hover/focus (DESIGN.md §5.3). */

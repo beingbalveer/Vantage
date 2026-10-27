@@ -222,6 +222,14 @@
     <path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z" />
     <line x1="12" x2="12" y1="9" y2="13" />
     <line x1="12" x2="12.01" y1="17" y2="17" />
+  {:else if name === "diff-unified"}
+    <!-- Unified diff: a single pane with rows -->
+    <rect x="3" y="5" width="18" height="14" rx="1" />
+    <path d="M7 9.5h10M7 14.5h10" />
+  {:else if name === "diff-split"}
+    <!-- Side-by-side diff: one pane split by a rule -->
+    <rect x="3" y="5" width="18" height="14" rx="1" />
+    <path d="M12 5v14" />
   {:else if name === "wrap"}
     <!-- Word wrap / return arrow -->
     <path d="M4 6h16M4 12h12a3 3 0 0 1 3 3v0a3 3 0 0 1-3 3H11" />

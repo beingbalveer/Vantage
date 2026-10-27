@@ -849,15 +849,21 @@
               class:active={diffMode === "unified"}
               aria-pressed={diffMode === "unified"}
               title="Unified diff (S to toggle)"
+              aria-label="Unified diff"
               onclick={() => setDiffMode("unified")}
-            >Unified</button>
+            >
+              <Icon name="diff-unified" size={14} />
+            </button>
             <button
               class="mode-btn"
               class:active={diffMode === "split"}
               aria-pressed={diffMode === "split"}
               title="Side-by-side diff (S to toggle)"
+              aria-label="Side-by-side diff"
               onclick={() => setDiffMode("split")}
-            >Split</button>
+            >
+              <Icon name="diff-split" size={14} />
+            </button>
           </div>
         {/if}
       </div>
@@ -1278,7 +1284,7 @@
     display: flex;
     align-items: center;
     justify-content: space-between;
-    padding: 0 14px;
+    padding: 0 0 0 14px;
     z-index: 10;
   }
 
@@ -1313,25 +1319,27 @@
 
   /* Unified ↔ split segmented control (DESIGN.md §2.6). */
   .mode-toggle {
-    display: inline-flex;
-    align-items: center;
-    gap: 2px;
-    padding: 2px;
-    background-color: var(--bg-subtle);
-    border: 1px solid var(--border);
-    border-radius: var(--r-sm);
+    display: flex;
+    align-items: stretch;
+    gap: 0;
+    padding: 0;
+    background-color: transparent;
+    border: 0;
+    border-radius: 0;
     flex-shrink: 0;
   }
 
   .mode-btn {
-    height: 22px;
-    padding: 0 10px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 32px;
+    height: auto;
+    padding: 0;
     border: none;
-    border-radius: var(--r-sm);
+    border-radius: 0;
     background-color: transparent;
     color: var(--text-muted);
-    font-size: 11px;
-    font-weight: 500;
     cursor: pointer;
     transition: background-color 80ms linear, color 80ms linear;
   }
@@ -1340,74 +1348,74 @@
     color: var(--text);
   }
   .mode-btn.active {
-    background-color: var(--bg);
+    background-color: var(--bg-muted);
     color: var(--text);
-    box-shadow: 0 1px 2px var(--border);
   }
   .mode-btn:focus-visible {
     outline: 2px solid var(--accent);
-    outline-offset: 1px;
+    outline-offset: -2px;
   }
 
   .part-switch {
-    display: inline-flex;
-    align-items: center;
-    gap: 2px;
-    padding: 2px;
-    border: 1px solid var(--border);
-    border-radius: var(--r-md);
-    background-color: var(--bg-subtle);
+    display: flex;
+    align-items: stretch;
+    gap: 0;
+    padding: 0;
+    border: 0;
+    border-radius: 0;
+    background-color: transparent;
     flex-shrink: 0;
   }
   .part-switch button {
-    height: 22px;
-    padding: 0 8px;
+    height: auto;
+    padding: 0 10px;
     border: none;
-    border-radius: var(--r-sm);
+    border-radius: 0;
     background: transparent;
     color: var(--text-muted);
     font-size: 11px;
     font-weight: 500;
     cursor: pointer;
+    transition: background-color 80ms linear, color 80ms linear;
   }
   .part-switch button:hover {
+    background-color: var(--bg-muted);
     color: var(--text);
   }
   .part-switch button.active {
-    background-color: var(--bg);
+    background-color: var(--bg-muted);
     color: var(--text);
-    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.12);
   }
   .part-switch button:focus-visible {
     outline: 2px solid var(--accent);
-    outline-offset: -1px;
+    outline-offset: -2px;
   }
 
 
   .header-actions {
     display: flex;
-    align-items: center;
-    gap: 4px;
+    align-items: stretch;
+    align-self: stretch;
+    gap: 0;
   }
 
   .header-icon-btn {
-    width: 24px;
-    height: 24px;
+    width: 32px;
+    height: auto;
     padding: 0;
     display: inline-flex;
     align-items: center;
     justify-content: center;
     background-color: transparent;
-    border: 1px solid transparent;
-    border-radius: var(--r-sm);
+    border: 0;
+    border-radius: 0;
     color: var(--text-muted);
     cursor: pointer;
-    transition: all 100ms ease;
+    transition: background-color 80ms linear, color 80ms linear;
   }
   .header-icon-btn:hover {
-    background-color: var(--bg-hover, rgba(255, 255, 255, 0.08));
+    background-color: var(--bg-muted);
     color: var(--text);
-    border-color: var(--border-subtle);
   }
   .header-icon-btn:active {
     background-color: var(--bg-muted);
@@ -1417,12 +1425,12 @@
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    width: 24px;
-    height: 24px;
+    width: 32px;
+    height: auto;
     padding: 0;
-    background-color: var(--bg-subtle);
-    border: 1px solid var(--border-subtle);
-    border-radius: var(--r-sm);
+    background-color: transparent;
+    border: 0;
+    border-radius: 0;
     color: var(--text-muted);
     cursor: pointer;
     transition: background-color 80ms linear, color 80ms linear;
@@ -1433,10 +1441,12 @@
   }
 
   .whole-file-chip {
-    color: var(--text-faint);
-    background-color: var(--bg-muted);
-    border-radius: var(--r-sm);
-    padding: 1px 6px;
+    display: inline-flex;
+    align-items: center;
+    padding: 0 10px;
+    color: var(--text-muted);
+    background-color: transparent;
+    border-radius: 0;
     white-space: nowrap;
   }
 
@@ -1855,5 +1865,19 @@
     background: none;
     color: var(--text-muted);
     padding: 0 4px;
+  }
+
+  /* Toolbar separators. Adjacent controls sit flush and are divided by a
+     hairline rule; margins are not used to separate them. Declared last so the
+     rules win over the border resets above. */
+  .header-actions > * {
+    border-left: 1px solid var(--border-subtle);
+  }
+  .header-actions > :first-child {
+    border-left: 1px solid var(--border);
+  }
+  .part-switch > button + button,
+  .mode-toggle > .mode-btn + .mode-btn {
+    border-left: 1px solid var(--border-subtle);
   }
 </style>

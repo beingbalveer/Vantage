@@ -207,17 +207,16 @@
           title="Switch to Commits & History"
           aria-label="Commits view"
         >
-          <Icon name="commit" size={13} />
-          <span>Commits</span>
+          <Icon name="commit" size={14} />
         </button>
         <button
           type="button"
           class="view-tab active"
           title="Project Files Explorer"
           aria-label="Files explorer"
+          aria-current="true"
         >
-          <Icon name="folder" size={13} />
-          <span>Files</span>
+          <Icon name="folder" size={14} />
         </button>
       </div>
     </div>
@@ -322,61 +321,57 @@
     height: 40px;
     border-bottom: 1px solid var(--border);
     display: flex;
-    align-items: center;
+    align-items: stretch;
     justify-content: space-between;
-    padding: 0 8px;
+    padding: 0;
     background-color: var(--bg);
-    gap: 8px;
+    gap: 0;
   }
 
   .branch-wrap {
     min-width: 0;
     flex: 1;
+    align-self: stretch;
     overflow: hidden;
   }
 
   .pane-view-tabs {
-    display: inline-flex;
-    align-items: center;
-    background: var(--bg-hover, rgba(0, 0, 0, 0.05));
-    padding: 2px;
-    border-radius: var(--r-sm);
-    border: 1px solid var(--border);
+    display: flex;
+    align-items: stretch;
+    gap: 0;
+    padding: 0;
+    background: transparent;
+    border: 0;
+    border-left: 1px solid var(--border);
+    border-radius: 0;
     flex-shrink: 0;
-  }
-  :global([data-theme="dark"]) .pane-view-tabs {
-    background: rgba(255, 255, 255, 0.06);
   }
 
   .view-tab {
     display: inline-flex;
     align-items: center;
-    gap: 5px;
-    height: 24px;
-    padding: 0 8px;
-    font-size: 11.5px;
-    font-weight: 500;
+    justify-content: center;
+    width: 34px;
+    height: auto;
+    padding: 0;
     border: 0;
     background: transparent;
-    border-radius: var(--r-sm);
+    border-radius: 0;
     color: var(--text-muted);
     cursor: pointer;
     transition: background 120ms ease, color 120ms ease;
     white-space: nowrap;
   }
+  .view-tab + .view-tab {
+    border-left: 1px solid var(--border-subtle);
+  }
   .view-tab:hover:not(.active) {
     color: var(--text);
-    background: rgba(125, 125, 125, 0.12);
+    background: var(--bg-muted);
   }
   .view-tab.active {
-    background: var(--bg);
+    background: var(--bg-muted);
     color: var(--text);
-    font-weight: 600;
-    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.08);
-  }
-  :global([data-theme="dark"]) .view-tab.active {
-    background: #21262d;
-    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.35);
   }
 
   .tree-body {

@@ -50,6 +50,8 @@ export type IconName =
   | "download"
   | "alert"
   | "wrap"
+  | "diff-unified"
+  | "diff-split"
   | "file"
   | "files"
   | "tag";

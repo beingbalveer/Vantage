@@ -411,16 +411,17 @@
     align-items: center;
     gap: 6px;
     width: 100%;
-    height: 28px;
-    padding: 0 8px;
-    border-radius: var(--r-sm, 6px);
-    background-color: var(--bg);
-    border: 1px solid var(--border);
+    height: 100%;
+    min-height: 28px;
+    padding: 0 10px;
+    border-radius: 0;
+    background-color: transparent;
+    border: 0;
     color: var(--text);
     font-size: 12px;
     font-weight: 500;
     cursor: pointer;
-    transition: background-color 0.15s, border-color 0.15s;
+    transition: background-color 0.15s;
     user-select: none;
     text-align: left;
   }
@@ -428,13 +429,11 @@
   .branch-trigger-btn:hover,
   .branch-trigger-btn[aria-expanded="true"] {
     background-color: var(--bg-muted);
-    border-color: var(--border);
   }
 
   .branch-trigger-btn:focus-visible {
     outline: none;
-    box-shadow: 0 0 0 2px rgba(24, 115, 213, 0.25);
-    border-color: var(--accent);
+    box-shadow: inset 0 0 0 1px var(--accent);
   }
 
   .branch-trigger-btn :global(.branch-icon) {

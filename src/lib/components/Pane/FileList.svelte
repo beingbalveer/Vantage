@@ -15,6 +15,7 @@
     selectedFile: string | null;
     isUncommitted: boolean;
     checkedPaths: string[];
+    scopeKey?: string;
     showCommitControls?: boolean;
     focusDiff?: boolean;
     hasCommitDetails?: boolean;
@@ -45,6 +46,7 @@
     selectedFile,
     isUncommitted,
     checkedPaths,
+    scopeKey = "",
     showCommitControls = false,
     focusDiff = false,
     hasCommitDetails = false,
@@ -94,6 +96,18 @@
   function handleRowsScroll(e: Event) {
     scrollTop = (e.currentTarget as HTMLDivElement).scrollTop;
   }
+
+  // A new commit / range starts at the top of its own list. Without this the
+  // windowed render keeps the previous scope's scroll offset and can show rows
+  // from a list that no longer exists.
+  let lastScopeKey = $state("");
+  $effect(() => {
+    const key = scopeKey;
+    if (key === lastScopeKey) return;
+    lastScopeKey = key;
+    if (rowsEl) rowsEl.scrollTop = 0;
+    scrollTop = 0;
+  });
 
   $effect(() => {
     const el = rowsEl;
