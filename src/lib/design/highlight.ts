@@ -1,103 +1,249 @@
-import hljs from "highlight.js/lib/core";
-import javascript from "highlight.js/lib/languages/javascript";
-import typescript from "highlight.js/lib/languages/typescript";
-import rust from "highlight.js/lib/languages/rust";
-import python from "highlight.js/lib/languages/python";
-import go from "highlight.js/lib/languages/go";
-import json from "highlight.js/lib/languages/json";
-import xml from "highlight.js/lib/languages/xml";
-import css from "highlight.js/lib/languages/css";
-import markdown from "highlight.js/lib/languages/markdown";
-import bash from "highlight.js/lib/languages/bash";
-import yaml from "highlight.js/lib/languages/yaml";
-import ini from "highlight.js/lib/languages/ini";
-import sql from "highlight.js/lib/languages/sql";
-import c from "highlight.js/lib/languages/c";
-import cpp from "highlight.js/lib/languages/cpp";
+import hljs from "highlight.js/lib/common";
+import dart from "highlight.js/lib/languages/dart";
+import elixir from "highlight.js/lib/languages/elixir";
+import erlang from "highlight.js/lib/languages/erlang";
+import haskell from "highlight.js/lib/languages/haskell";
+import clojure from "highlight.js/lib/languages/clojure";
+import fsharp from "highlight.js/lib/languages/fsharp";
+import powershell from "highlight.js/lib/languages/powershell";
+import dockerfile from "highlight.js/lib/languages/dockerfile";
+import nginx from "highlight.js/lib/languages/nginx";
+import protobuf from "highlight.js/lib/languages/protobuf";
+import scala from "highlight.js/lib/languages/scala";
+import julia from "highlight.js/lib/languages/julia";
+import groovy from "highlight.js/lib/languages/groovy";
+import cmake from "highlight.js/lib/languages/cmake";
+import coffeescript from "highlight.js/lib/languages/coffeescript";
+import http from "highlight.js/lib/languages/http";
+import ocaml from "highlight.js/lib/languages/ocaml";
+import glsl from "highlight.js/lib/languages/glsl";
+import handlebars from "highlight.js/lib/languages/handlebars";
 
-// Register languages
-hljs.registerLanguage("javascript", javascript);
-hljs.registerLanguage("js", javascript);
-hljs.registerLanguage("typescript", typescript);
-hljs.registerLanguage("ts", typescript);
-hljs.registerLanguage("rust", rust);
-hljs.registerLanguage("rs", rust);
-hljs.registerLanguage("python", python);
-hljs.registerLanguage("py", python);
-hljs.registerLanguage("go", go);
-hljs.registerLanguage("json", json);
-hljs.registerLanguage("xml", xml);
-hljs.registerLanguage("html", xml);
-hljs.registerLanguage("svelte", xml);
-hljs.registerLanguage("css", css);
-hljs.registerLanguage("markdown", markdown);
-hljs.registerLanguage("md", markdown);
-hljs.registerLanguage("bash", bash);
-hljs.registerLanguage("sh", bash);
-hljs.registerLanguage("yaml", yaml);
-hljs.registerLanguage("yml", yaml);
-hljs.registerLanguage("ini", ini);
-hljs.registerLanguage("toml", ini);
-hljs.registerLanguage("sql", sql);
-hljs.registerLanguage("c", c);
-hljs.registerLanguage("cpp", cpp);
+// `lib/common` already registers ~36 languages; these are the extra grammars
+// that cover the rest of a typical multi-repo workspace.
+const EXTRA_LANGUAGES = {
+  dart,
+  elixir,
+  erlang,
+  haskell,
+  clojure,
+  fsharp,
+  powershell,
+  dockerfile,
+  nginx,
+  protobuf,
+  scala,
+  julia,
+  groovy,
+  cmake,
+  coffeescript,
+  http,
+  ocaml,
+  glsl,
+  handlebars,
+};
 
-export function getLanguageFromPath(path: string): string | null {
-  const ext = path.split(".").pop()?.toLowerCase();
-  switch (ext) {
-    case "js":
-    case "jsx":
-    case "mjs":
-    case "cjs":
-      return "javascript";
-    case "ts":
-    case "tsx":
-    case "mts":
-    case "cts":
-      return "typescript";
-    case "svelte":
-      return "xml";
-    case "rs":
-      return "rust";
-    case "py":
-      return "python";
-    case "go":
-      return "go";
-    case "json":
-      return "json";
-    case "html":
-    case "xml":
-    case "svg":
-      return "xml";
-    case "css":
-    case "scss":
-      return "css";
-    case "md":
-    case "markdown":
-      return "markdown";
-    case "sh":
-    case "bash":
-    case "zsh":
-      return "bash";
-    case "yaml":
-    case "yml":
-      return "yaml";
-    case "toml":
-    case "ini":
-      return "ini";
-    case "sql":
-      return "sql";
-    case "c":
-    case "h":
-      return "c";
-    case "cpp":
-    case "hpp":
-    case "cc":
-    case "cxx":
-      return "cpp";
-    default:
-      return null;
+for (const [name, definition] of Object.entries(EXTRA_LANGUAGES)) {
+  if (!hljs.getLanguage(name)) {
+    hljs.registerLanguage(name, definition as never);
   }
+}
+
+/** Files whose name alone identifies the grammar (no useful extension). */
+const FILENAME_LANGUAGES: Record<string, string> = {
+  dockerfile: "dockerfile",
+  containerfile: "dockerfile",
+  makefile: "makefile",
+  gnumakefile: "makefile",
+  "cmakelists.txt": "cmake",
+  jenkinsfile: "groovy",
+  gemfile: "ruby",
+  rakefile: "ruby",
+  vagrantfile: "ruby",
+  brewfile: "ruby",
+  podfile: "ruby",
+  procfile: "plaintext",
+  "go.mod": "go",
+  "go.sum": "plaintext",
+  ".gitignore": "plaintext",
+  ".gitattributes": "plaintext",
+  ".dockerignore": "plaintext",
+  ".npmignore": "plaintext",
+  ".eslintignore": "plaintext",
+  ".prettierignore": "plaintext",
+  ".editorconfig": "ini",
+  ".gitconfig": "ini",
+  ".gitmodules": "ini",
+  ".bashrc": "bash",
+  ".bash_profile": "bash",
+  ".zshrc": "bash",
+  ".profile": "bash",
+  ".env": "ini",
+  "nginx.conf": "nginx",
+  "httpd.conf": "apache",
+  ".htaccess": "apache",
+};
+
+/** Extension → grammar. Anything not listed falls back to highlight.js aliases. */
+const EXTENSION_LANGUAGES: Record<string, string> = {
+  js: "javascript",
+  jsx: "javascript",
+  mjs: "javascript",
+  cjs: "javascript",
+  ts: "typescript",
+  tsx: "typescript",
+  mts: "typescript",
+  cts: "typescript",
+  svelte: "xml",
+  vue: "xml",
+  astro: "xml",
+  html: "xml",
+  htm: "xml",
+  xhtml: "xml",
+  xml: "xml",
+  svg: "xml",
+  plist: "xml",
+  xsl: "xml",
+  rss: "xml",
+  atom: "xml",
+  rs: "rust",
+  py: "python",
+  pyw: "python",
+  pyi: "python",
+  go: "go",
+  rb: "ruby",
+  rake: "ruby",
+  gemspec: "ruby",
+  ru: "ruby",
+  php: "php",
+  php3: "php",
+  php4: "php",
+  php5: "php",
+  php7: "php",
+  php8: "php",
+  phtml: "php",
+  java: "java",
+  kt: "kotlin",
+  kts: "kotlin",
+  swift: "swift",
+  dart: "dart",
+  cs: "csharp",
+  fs: "fsharp",
+  fsi: "fsharp",
+  fsx: "fsharp",
+  vb: "vbnet",
+  c: "c",
+  h: "c",
+  cc: "cpp",
+  cpp: "cpp",
+  cxx: "cpp",
+  hpp: "cpp",
+  hh: "cpp",
+  hxx: "cpp",
+  m: "objectivec",
+  mm: "objectivec",
+  scala: "scala",
+  sc: "scala",
+  clj: "clojure",
+  cljs: "clojure",
+  cljc: "clojure",
+  edn: "clojure",
+  ex: "elixir",
+  exs: "elixir",
+  erl: "erlang",
+  hrl: "erlang",
+  hs: "haskell",
+  lhs: "haskell",
+  lua: "lua",
+  pl: "perl",
+  pm: "perl",
+  r: "r",
+  jl: "julia",
+  groovy: "groovy",
+  gradle: "groovy",
+  sh: "bash",
+  bash: "bash",
+  zsh: "bash",
+  fish: "bash",
+  ksh: "bash",
+  ps1: "powershell",
+  psm1: "powershell",
+  psd1: "powershell",
+  sql: "sql",
+  yaml: "yaml",
+  yml: "yaml",
+  toml: "ini",
+  ini: "ini",
+  cfg: "ini",
+  conf: "ini",
+  properties: "ini",
+  env: "ini",
+  json: "json",
+  jsonc: "json",
+  json5: "json",
+  webmanifest: "json",
+  md: "markdown",
+  markdown: "markdown",
+  mdx: "markdown",
+  diff: "diff",
+  patch: "diff",
+  graphql: "graphql",
+  gql: "graphql",
+  proto: "protobuf",
+  proto3: "protobuf",
+  tf: "ini",
+  tfvars: "ini",
+  hcl: "ini",
+  http: "http",
+  rest: "http",
+  wasm: "wasm",
+  wat: "wasm",
+  cmake: "cmake",
+  mk: "makefile",
+  coffee: "coffeescript",
+  ml: "ocaml",
+  mli: "ocaml",
+  glsl: "glsl",
+  vert: "glsl",
+  frag: "glsl",
+  hbs: "handlebars",
+  handlebars: "handlebars",
+  mustache: "handlebars",
+  csv: "plaintext",
+  tsv: "plaintext",
+  log: "plaintext",
+  txt: "plaintext",
+  lock: "plaintext",
+};
+
+/**
+ * Resolve the grammar for a path. Tries the exact filename first (Dockerfile,
+ * Makefile, …), then compound extensions (`.d.ts`), then the extension table,
+ * and finally lets highlight.js match its own aliases.
+ */
+export function getLanguageFromPath(path: string): string | null {
+  if (!path) return null;
+  const lower = path.toLowerCase();
+  const name = lower.split("/").pop() ?? lower;
+
+  const byName = FILENAME_LANGUAGES[name] ?? FILENAME_LANGUAGES[name.replace(/\..*$/, "")];
+  if (byName) return byName;
+  if (name.startsWith("dockerfile")) return "dockerfile";
+  if (name.startsWith("makefile")) return "makefile";
+
+  if (lower.endsWith(".d.ts") || lower.endsWith(".d.mts") || lower.endsWith(".d.cts")) {
+    return "typescript";
+  }
+  if (lower.endsWith(".blade.php")) return "php";
+  if (lower.endsWith(".min.js")) return "javascript";
+  if (lower.endsWith(".min.css")) return "css";
+
+  const dot = name.lastIndexOf(".");
+  const ext = dot > -1 ? name.slice(dot + 1) : "";
+  const byExt = EXTENSION_LANGUAGES[ext];
+  if (byExt) return byExt;
+  if (ext && hljs.getLanguage(ext)) return ext;
+  return null;
 }
 
 /**
