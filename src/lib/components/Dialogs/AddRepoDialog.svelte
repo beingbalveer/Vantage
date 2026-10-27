@@ -1,12 +1,12 @@
 <script lang="ts">
   import { get } from "svelte/store";
   import type { UnlistenFn } from "@tauri-apps/api/event";
-  import { addRepoDialogOpen, addRepoInitialTab, addToast } from "../../stores/ui";
-  import { loadRepos, activeRepoId } from "../../stores/repos";
-  import { openRepoInFocusedPane } from "../../stores/panes";
-  import { saveRepoIcon, type RepoIcon } from "../../stores/repoIcons";
-  import { isSafeFolderName, suggestFolderName } from "../../clone";
-  import * as api from "../../api";
+  import { addRepoDialogOpen, addRepoInitialTab, addToast } from "../../app/ui";
+  import { loadRepos, activeRepoId } from "../../domain/stores/repos";
+  import { openRepoInFocusedPane } from "../../domain/stores/panes";
+  import { saveRepoIcon, type RepoIcon } from "../../domain/stores/repoIcons";
+  import { isSafeFolderName, suggestFolderName } from "../../domain/clone";
+  import * as api from "../../platform/api";
   import { Modal, Icon } from "../common";
   import RepoIconPicker from "./RepoIconPicker.svelte";
 
@@ -254,10 +254,14 @@
             class="browse-btn"
             onclick={browse}
             disabled={isBusy}
-            title="Choose a folder"
+            title={isBrowsing ? "Browsing…" : "Choose a folder"}
+            aria-label={isBrowsing ? "Browsing…" : "Choose a folder"}
           >
-            <Icon name="folder" size={14} />
-            {isBrowsing ? "Browsing…" : "Browse"}
+            {#if isBrowsing}
+              <span class="browse-spinner" aria-hidden="true"></span>
+            {:else}
+              <Icon name="folder" size={14} />
+            {/if}
           </button>
         </div>
 
@@ -319,10 +323,14 @@
             class="browse-btn"
             onclick={browseDestination}
             disabled={isBusy}
-            title="Choose a destination folder"
+            title={isBrowsing ? "Browsing…" : "Choose a destination folder"}
+            aria-label={isBrowsing ? "Browsing…" : "Choose a destination folder"}
           >
-            <Icon name="folder" size={14} />
-            {isBrowsing ? "Browsing…" : "Browse"}
+            {#if isBrowsing}
+              <span class="browse-spinner" aria-hidden="true"></span>
+            {:else}
+              <Icon name="folder" size={14} />
+            {/if}
           </button>
         </div>
 
@@ -411,7 +419,7 @@
     padding: 2px;
     margin-bottom: 12px;
     border: 1px solid #dedfe2;
-    border-radius: 7px;
+    border-radius: var(--r-sm);
   }
   .path-control:focus-within {
     border-color: #a1adbb;
@@ -433,14 +441,15 @@
   }
 
   .browse-btn {
-    display: flex;
+    display: inline-flex;
     align-items: center;
-    gap: 7px;
-    padding: 5px 8px;
+    justify-content: center;
+    width: 27px;
+    height: 27px;
+    padding: 0;
     background: #f0f1f3;
     border: 0;
-    border-radius: 5px;
-    font-size: 11px;
+    border-radius: var(--r-sm);
     color: #505963;
     cursor: pointer;
     flex-shrink: 0;
@@ -452,6 +461,14 @@
     opacity: 0.6;
     cursor: default;
   }
+  .browse-spinner {
+    width: 12px;
+    height: 12px;
+    border: 2px solid currentColor;
+    border-top-color: transparent;
+    border-radius: 50%;
+    animation: clone-spin 0.7s linear infinite;
+  }
 
   .branch-input {
     display: block;
@@ -459,7 +476,7 @@
     height: 31px;
     padding: 6px 9px;
     border: 1px solid #dedfe2;
-    border-radius: 7px;
+    border-radius: var(--r-sm);
     font-size: 12px;
     color: #454545;
     background: transparent;
@@ -483,7 +500,7 @@
   }
   .add-actions button {
     border: 0;
-    border-radius: 7px;
+    border-radius: var(--r-sm);
     padding: 7px 11px;
     font-size: 12px;
     cursor: pointer;

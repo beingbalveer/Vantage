@@ -12,6 +12,7 @@
     fullWidth?: boolean;
     type?: "button" | "submit" | "reset";
     title?: string;
+    ariaLabel?: string;
     class?: string;
     onclick?: (e: MouseEvent) => void;
     children?: Snippet;
@@ -25,6 +26,7 @@
     fullWidth = false,
     type = "button",
     title = "",
+    ariaLabel = "",
     class: className = "",
     onclick,
     children,
@@ -40,6 +42,7 @@
   class="relay-btn {variant} {normalizedSize} {fullWidth ? 'full-width' : ''} {loading ? 'loading' : ''} {className}"
   disabled={disabled || loading}
   {title}
+  aria-label={ariaLabel || undefined}
   {onclick}
 >
   {@render children?.()}
@@ -67,6 +70,13 @@
     height: 24px;
     padding: 0 8px;
     font-size: 11px;
+  }
+  .relay-btn.icon-only {
+    width: 28px;
+    padding: 0;
+  }
+  .relay-btn.sm.icon-only {
+    width: 24px;
   }
 
   .relay-btn.md {

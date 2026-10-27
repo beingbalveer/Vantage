@@ -1,8 +1,8 @@
 <script lang="ts">
   import { tick } from "svelte";
-  import { isFeatureEnabled } from "../../featureFlags.svelte";
-  import type { NormalizedError } from "../../asyncState";
-  import { emptyDiffMessage } from "../../asyncState";
+  import { isFeatureEnabled } from "../../config/featureFlags.svelte";
+  import type { NormalizedError } from "../../domain/asyncState";
+  import { emptyDiffMessage } from "../../domain/asyncState";
   import Skeleton from "../common/Skeleton.svelte";
   import EmptyState from "../common/EmptyState.svelte";
   import Banner from "../common/Banner.svelte";
@@ -18,20 +18,20 @@
     LineSelection,
     WorkingPart,
     WorkingPartCounts,
-  } from "../../types";
-  import { getLanguageFromPath, highlightCodeLines } from "../../highlight";
-  import * as api from "../../api";
-  import { repos, activeRepoId } from "../../stores/repos";
-  import { panes, focusedPaneIndex } from "../../stores/panes";
-  import { addToast } from "../../stores/ui";
-  import { settings, updateSettings } from "../../stores/settings";
-  import { registerHandler, registerDismiss, ownsPaneKeyboard } from "../../commands";
+  } from "../../platform/types";
+  import { getLanguageFromPath, highlightCodeLines } from "../../design/highlight";
+  import * as api from "../../platform/api";
+  import { repos, activeRepoId } from "../../domain/stores/repos";
+  import { panes, focusedPaneIndex } from "../../domain/stores/panes";
+  import { addToast } from "../../app/ui";
+  import { settings, updateSettings } from "../../domain/stores/settings";
+  import { registerHandler, registerDismiss, ownsPaneKeyboard } from "../../app/commands";
   import Icon from "../common/Icon.svelte";
   import { Modal, Button } from "../common";
   import BinaryDiff from "./BinaryDiff.svelte";
   import ImageDiff from "./ImageDiff.svelte";
-  import { classifyDiffContent } from "../../diff-content";
-  import { buildSplitRows, type SplitRow, type SplitCell } from "../../diff-split";
+  import { classifyDiffContent } from "../../domain/diff-content";
+  import { buildSplitRows, type SplitRow, type SplitCell } from "../../domain/diff-split";
 
   interface Props {
     diffFile: DiffFile | null;
@@ -837,8 +837,7 @@
               aria-label="Expand whole file"
               onclick={() => onexpandwholefile?.()}
             >
-              <Icon name="unfold" size={13} />
-              <span>Expand whole file</span>
+              <Icon name="unfold" size={14} />
             </button>
           {/if}
         {/if}
@@ -850,15 +849,21 @@
               class:active={diffMode === "unified"}
               aria-pressed={diffMode === "unified"}
               title="Unified diff (S to toggle)"
+              aria-label="Unified diff"
               onclick={() => setDiffMode("unified")}
-            >Unified</button>
+            >
+              <Icon name="diff-unified" size={14} />
+            </button>
             <button
               class="mode-btn"
               class:active={diffMode === "split"}
               aria-pressed={diffMode === "split"}
               title="Side-by-side diff (S to toggle)"
+              aria-label="Side-by-side diff"
               onclick={() => setDiffMode("split")}
-            >Split</button>
+            >
+              <Icon name="diff-split" size={14} />
+            </button>
           </div>
         {/if}
       </div>
@@ -944,9 +949,10 @@
                     title={workingPart === "staged"
                       ? "Unstage every changed line in this hunk"
                       : "Stage every changed line in this hunk"}
+                    aria-label={workingPart === "staged" ? "Unstage hunk" : "Stage hunk"}
                     onclick={() => stageHunk(hunk)}
                   >
-                    {workingPart === "staged" ? "Unstage hunk" : "Stage hunk"}
+                    <Icon name={workingPart === "staged" ? "minus" : "plus"} size={12} />
                   </button>
                 {/if}
               </div>
@@ -1039,9 +1045,10 @@
                   title={workingPart === "staged"
                     ? "Unstage every changed line in this hunk"
                     : "Stage every changed line in this hunk"}
+                  aria-label={workingPart === "staged" ? "Unstage hunk" : "Stage hunk"}
                   onclick={() => stageHunk(hunk)}
                 >
-                  {workingPart === "staged" ? "Unstage hunk" : "Stage hunk"}
+                  <Icon name={workingPart === "staged" ? "minus" : "plus"} size={12} />
                 </button>
               {/if}
             </div>
@@ -1127,11 +1134,21 @@
           ({selectedRange.side})
         </span>
 
-        <button class="fab-btn" onclick={handleCopyReference}>
-          Copy reference
+        <button
+          class="fab-btn icon-only"
+          onclick={handleCopyReference}
+          title="Copy reference"
+          aria-label="Copy reference"
+        >
+          <Icon name="copy" size={13} />
         </button>
-        <button class="fab-btn" onclick={handleCopySnippet}>
-          Copy snippet
+        <button
+          class="fab-btn icon-only"
+          onclick={handleCopySnippet}
+          title="Copy snippet"
+          aria-label="Copy snippet"
+        >
+          <Icon name="code" size={13} />
         </button>
 
         {#if stagingEnabled && workingPart === "unstaged"}
@@ -1139,29 +1156,35 @@
             {lineCountLabel(selectedChangeLines.length)} selected
           </span>
           <button
-            class="fab-btn primary"
+            class="fab-btn primary icon-only"
             disabled={!canApplySelection}
             onclick={stageSelection}
+            title={isApplying ? "Applying…" : "Stage selection"}
+            aria-label={isApplying ? "Applying…" : "Stage selection"}
           >
-            {isApplying ? "Applying…" : "Stage selection"}
+            <Icon name="plus" size={13} />
           </button>
           <button
-            class="fab-btn danger"
+            class="fab-btn danger icon-only"
             disabled={!canApplySelection}
             onclick={requestDiscardSelection}
+            title="Discard selection"
+            aria-label="Discard selection"
           >
-            Discard selection
+            <Icon name="trash" size={13} />
           </button>
         {:else if stagingEnabled && workingPart === "staged"}
           <span class="selection-count text-xs">
             {lineCountLabel(selectedChangeLines.length)} selected
           </span>
           <button
-            class="fab-btn primary"
+            class="fab-btn primary icon-only"
             disabled={!canApplySelection}
             onclick={unstageSelection}
+            title={isApplying ? "Applying…" : "Unstage selection"}
+            aria-label={isApplying ? "Applying…" : "Unstage selection"}
           >
-            {isApplying ? "Applying…" : "Unstage selection"}
+            <Icon name="minus" size={13} />
           </button>
         {/if}
 
@@ -1253,15 +1276,15 @@
   }
 
   .file-header {
-    height: 43px;
-    min-height: 43px;
+    height: 32px;
+    min-height: 32px;
     flex-shrink: 0;
     background-color: var(--bg);
     border-bottom: 1px solid var(--border);
     display: flex;
     align-items: center;
     justify-content: space-between;
-    padding: 0 14px;
+    padding: 0 0 0 12px;
     z-index: 10;
   }
 
@@ -1296,25 +1319,27 @@
 
   /* Unified ↔ split segmented control (DESIGN.md §2.6). */
   .mode-toggle {
-    display: inline-flex;
-    align-items: center;
-    gap: 2px;
-    padding: 2px;
-    background-color: var(--bg-subtle);
-    border: 1px solid var(--border);
-    border-radius: var(--r-sm);
+    display: flex;
+    align-items: stretch;
+    gap: 0;
+    padding: 0;
+    background-color: transparent;
+    border: 0;
+    border-radius: 0;
     flex-shrink: 0;
   }
 
   .mode-btn {
-    height: 22px;
-    padding: 0 10px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 32px;
+    height: auto;
+    padding: 0;
     border: none;
-    border-radius: var(--r-sm);
+    border-radius: 0;
     background-color: transparent;
     color: var(--text-muted);
-    font-size: 11px;
-    font-weight: 500;
     cursor: pointer;
     transition: background-color 80ms linear, color 80ms linear;
   }
@@ -1323,74 +1348,74 @@
     color: var(--text);
   }
   .mode-btn.active {
-    background-color: var(--bg);
+    background-color: var(--bg-muted);
     color: var(--text);
-    box-shadow: 0 1px 2px var(--border);
   }
   .mode-btn:focus-visible {
     outline: 2px solid var(--accent);
-    outline-offset: 1px;
+    outline-offset: -2px;
   }
 
   .part-switch {
-    display: inline-flex;
-    align-items: center;
-    gap: 2px;
-    padding: 2px;
-    border: 1px solid var(--border);
-    border-radius: var(--r-md);
-    background-color: var(--bg-subtle);
+    display: flex;
+    align-items: stretch;
+    gap: 0;
+    padding: 0;
+    border: 0;
+    border-radius: 0;
+    background-color: transparent;
     flex-shrink: 0;
   }
   .part-switch button {
-    height: 22px;
-    padding: 0 8px;
+    height: auto;
+    padding: 0 10px;
     border: none;
-    border-radius: var(--r-sm);
+    border-radius: 0;
     background: transparent;
     color: var(--text-muted);
     font-size: 11px;
     font-weight: 500;
     cursor: pointer;
+    transition: background-color 80ms linear, color 80ms linear;
   }
   .part-switch button:hover {
+    background-color: var(--bg-muted);
     color: var(--text);
   }
   .part-switch button.active {
-    background-color: var(--bg);
+    background-color: var(--bg-muted);
     color: var(--text);
-    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.12);
   }
   .part-switch button:focus-visible {
     outline: 2px solid var(--accent);
-    outline-offset: -1px;
+    outline-offset: -2px;
   }
 
 
   .header-actions {
     display: flex;
-    align-items: center;
-    gap: 4px;
+    align-items: stretch;
+    align-self: stretch;
+    gap: 0;
   }
 
   .header-icon-btn {
-    width: 24px;
-    height: 24px;
+    width: 32px;
+    height: auto;
     padding: 0;
     display: inline-flex;
     align-items: center;
     justify-content: center;
     background-color: transparent;
-    border: 1px solid transparent;
-    border-radius: var(--r-sm);
+    border: 0;
+    border-radius: 0;
     color: var(--text-muted);
     cursor: pointer;
-    transition: all 100ms ease;
+    transition: background-color 80ms linear, color 80ms linear;
   }
   .header-icon-btn:hover {
-    background-color: var(--bg-hover, rgba(255, 255, 255, 0.08));
+    background-color: var(--bg-muted);
     color: var(--text);
-    border-color: var(--border-subtle);
   }
   .header-icon-btn:active {
     background-color: var(--bg-muted);
@@ -1399,18 +1424,16 @@
   .expand-whole-btn {
     display: inline-flex;
     align-items: center;
-    gap: 5px;
-    height: 24px;
-    padding: 0 8px;
-    background-color: var(--bg-subtle);
-    border: 1px solid var(--border-subtle);
-    border-radius: var(--r-sm);
+    justify-content: center;
+    width: 32px;
+    height: auto;
+    padding: 0;
+    background-color: transparent;
+    border: 0;
+    border-radius: 0;
     color: var(--text-muted);
-    font-size: 11px;
-    font-weight: 500;
     cursor: pointer;
     transition: background-color 80ms linear, color 80ms linear;
-    white-space: nowrap;
   }
   .expand-whole-btn:hover {
     background-color: var(--bg-muted);
@@ -1418,10 +1441,12 @@
   }
 
   .whole-file-chip {
-    color: var(--text-faint);
-    background-color: var(--bg-muted);
-    border-radius: var(--r-sm);
-    padding: 1px 6px;
+    display: inline-flex;
+    align-items: center;
+    padding: 0 10px;
+    color: var(--text-muted);
+    background-color: transparent;
+    border-radius: 0;
     white-space: nowrap;
   }
 
@@ -1496,15 +1521,16 @@
   }
   .hunk-btn {
     flex-shrink: 0;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 20px;
     height: 20px;
-    padding: 0 8px;
+    padding: 0;
     border: 1px solid var(--border);
     border-radius: var(--r-sm);
     background-color: var(--bg-subtle);
     color: var(--text);
-    font-family: var(--font-ui);
-    font-size: 10.5px;
-    font-weight: 500;
     cursor: pointer;
     line-height: 1;
   }
@@ -1751,11 +1777,11 @@
 
   :global(.diff-add-word) {
     background-color: var(--diff-add-word);
-    border-radius: 2px;
+    border-radius: var(--r-sm);
   }
   :global(.diff-del-word) {
     background-color: var(--diff-del-word);
-    border-radius: 2px;
+    border-radius: var(--r-sm);
   }
 
   /* Floating Action Bar */
@@ -1792,6 +1818,13 @@
     font-size: 11px;
     font-weight: 500;
     cursor: pointer;
+  }
+  .fab-btn.icon-only {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 26px;
+    padding: 0;
   }
   .fab-btn:hover {
     background-color: var(--bg-muted);
@@ -1832,5 +1865,19 @@
     background: none;
     color: var(--text-muted);
     padding: 0 4px;
+  }
+
+  /* Toolbar separators. Adjacent controls sit flush and are divided by a
+     hairline rule; margins are not used to separate them. Declared last so the
+     rules win over the border resets above. */
+  .header-actions > * {
+    border-left: 1px solid var(--border-subtle);
+  }
+  .header-actions > :first-child {
+    border-left: 1px solid var(--border);
+  }
+  .part-switch > button + button,
+  .mode-toggle > .mode-btn + .mode-btn {
+    border-left: 1px solid var(--border-subtle);
   }
 </style>

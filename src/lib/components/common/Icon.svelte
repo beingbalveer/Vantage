@@ -121,6 +121,9 @@
     <!-- SF Symbol plus -->
     <path d="M5 12h14" />
     <path d="M12 5v14" />
+  {:else if name === "minus"}
+    <!-- SF Symbol minus -->
+    <path d="M5 12h14" />
   {:else if name === "close"}
     <!-- SF Symbol xmark -->
     <path d="m18 6-12 12" />
@@ -219,11 +222,28 @@
     <path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z" />
     <line x1="12" x2="12" y1="9" y2="13" />
     <line x1="12" x2="12.01" y1="17" y2="17" />
+  {:else if name === "diff-unified"}
+    <!-- Unified diff: a single pane with rows -->
+    <rect x="3" y="5" width="18" height="14" rx="1" />
+    <path d="M7 9.5h10M7 14.5h10" />
+  {:else if name === "diff-split"}
+    <!-- Side-by-side diff: one pane split by a rule -->
+    <rect x="3" y="5" width="18" height="14" rx="1" />
+    <path d="M12 5v14" />
   {:else if name === "wrap"}
     <!-- Word wrap / return arrow -->
     <path d="M4 6h16M4 12h12a3 3 0 0 1 3 3v0a3 3 0 0 1-3 3H11" />
     <path d="m14 15-3 3 3 3" />
     <path d="M4 18h3" />
+  {:else if name === "eye"}
+    <!-- Eye: view / preview -->
+    <path d="M2.5 12s3.5-6.5 9.5-6.5S21.5 12 21.5 12s-3.5 6.5-9.5 6.5S2.5 12 2.5 12Z" />
+    <circle cx="12" cy="12" r="2.6" />
+  {:else if name === "image"}
+    <!-- Picture: frame, sun, ridge -->
+    <rect x="3" y="3" width="18" height="18" rx="2" />
+    <circle cx="9" cy="9" r="1.6" />
+    <path d="m21 15-4.5-4.5a2 2 0 0 0-2.8 0L6 21" />
   {:else if name === "file"}
     <!-- Document -->
     <path d="M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z" />

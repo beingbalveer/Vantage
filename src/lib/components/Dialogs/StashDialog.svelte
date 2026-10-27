@@ -1,11 +1,11 @@
 <script lang="ts">
-  import type { StashEntry } from "../../types";
-  import * as api from "../../api";
-  import { addToast, stashDialogOpen } from "../../stores/ui";
-  import { repos, activeRepoId, refreshSingleStatus, loadRepos } from "../../stores/repos";
+  import type { StashEntry } from "../../platform/types";
+  import * as api from "../../platform/api";
+  import { addToast, stashDialogOpen } from "../../app/ui";
+  import { repos, activeRepoId, refreshSingleStatus, loadRepos } from "../../domain/stores/repos";
   import { Modal, Button, Input, Checkbox } from "../common";
-  import { formatRelativeTime, formatFullTimestamp } from "../../format";
-  import { formatStashIndex, summarizeStashSubject } from "../../stash";
+  import { formatRelativeTime, formatFullTimestamp } from "../../domain/format";
+  import { formatStashIndex, summarizeStashSubject } from "../../domain/stash";
 
   interface Props {
     open?: boolean;

@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount, onDestroy } from "svelte";
-  import { loadRepos, repos, statuses, initRepoListeners } from "./lib/stores/repos";
-  import { loadSettings } from "./lib/stores/settings";
+  import { loadRepos, repos, statuses, initRepoListeners } from "./lib/domain/stores/repos";
+  import { loadSettings } from "./lib/domain/stores/settings";
   import {
     panes,
     paneCount,
@@ -11,8 +11,8 @@
     focusPane,
     setPaneCount,
     setPaneTab,
-  } from "./lib/stores/panes";
-  import { dispatchMenuCommand } from "./lib/menu";
+  } from "./lib/domain/stores/panes";
+  import { dispatchMenuCommand } from "./lib/app/menu";
   import {
     paletteOpen,
     addRepoDialogOpen,
@@ -20,16 +20,16 @@
     shortcutsHelpOpen,
     sidebarCollapsed,
     addToast,
-  } from "./lib/stores/ui";
-  import { operationStatus } from "./lib/stores/operation";
-  import { isFeatureEnabled } from "./lib/featureFlags.svelte";
-  import { matchShortcut } from "./lib/keys";
-  import { viewportPaneWidths, savedPaneWidth } from "./lib/layout";
-  import { dispatchKeyboard } from "./lib/commands";
-  import * as api from "./lib/api";
-  import type { Layout, RepoEntry, RepoStatus } from "./lib/types";
-  import { checkForAppUpdates } from "./lib/updater";
-  import { createHorizontalResizer, createHorizontalResizerKeyboard } from "./lib/resizer";
+  } from "./lib/app/ui";
+  import { operationStatus } from "./lib/domain/stores/operation";
+  import { isFeatureEnabled } from "./lib/config/featureFlags.svelte";
+  import { matchShortcut } from "./lib/platform/keys";
+  import { viewportPaneWidths, savedPaneWidth } from "./lib/app/layout";
+  import { dispatchKeyboard } from "./lib/app/commands";
+  import * as api from "./lib/platform/api";
+  import type { Layout, RepoEntry, RepoStatus } from "./lib/platform/types";
+  import { checkForAppUpdates } from "./lib/platform/updater";
+  import { createHorizontalResizer, createHorizontalResizerKeyboard } from "./lib/app/resizer";
   import Sidebar from "./lib/components/Sidebar/Sidebar.svelte";
   import Pane from "./lib/components/Pane/Pane.svelte";
   import TopHeader from "./lib/components/Header/TopHeader.svelte";
@@ -53,6 +53,7 @@
   import TagDetailsDialog from "./lib/components/Dialogs/TagDetailsDialog.svelte";
 
   import ToastContainer from "./lib/components/common/ToastContainer.svelte";
+  import Icon from "./lib/components/common/Icon.svelte";
 
   let gitVersion = $state("");
   let statusText = $state("Ready");
@@ -453,7 +454,15 @@
     {#if envError && showEnvDetails}
       <div class="status-details">
         <span class="status-details-msg font-mono">{envError}</span>
-        <button type="button" class="status-retry" onclick={checkEnv}>Retry</button>
+        <button
+          type="button"
+          class="status-retry"
+          onclick={checkEnv}
+          title="Retry Git check"
+          aria-label="Retry Git check"
+        >
+          <Icon name="refresh" size={12} />
+        </button>
       </div>
     {/if}
   </footer>
@@ -604,14 +613,16 @@
   }
   .status-retry {
     align-self: flex-end;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 22px;
     height: 22px;
-    padding: 0 8px;
+    padding: 0;
     border: 1px solid var(--border);
     border-radius: var(--r-sm);
     background-color: var(--bg);
     color: var(--text);
-    font-size: 11px;
-    font-weight: 500;
     cursor: pointer;
   }
   .status-retry:hover {

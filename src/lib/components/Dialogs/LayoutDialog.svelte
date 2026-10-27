@@ -1,10 +1,10 @@
 <script lang="ts">
-  import { activeDialog, closeDialog } from "../../stores/ui";
+  import { activeDialog, closeDialog } from "../../app/ui";
   import {
     loadLayoutByName,
     readSavedLayouts,
     saveLayoutAs,
-  } from "../../commands";
+  } from "../../app/commands";
   import { Modal, Button, Input } from "../common";
 
   let isStoreActive = $derived($activeDialog?.type === "layout");

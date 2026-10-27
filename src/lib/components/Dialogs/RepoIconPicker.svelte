@@ -5,8 +5,8 @@
     presetEmojis,
     readIconFile,
     type RepoIcon,
-  } from "../../stores/repoIcons";
-  import * as api from "../../api";
+  } from "../../domain/stores/repoIcons";
+  import * as api from "../../platform/api";
   import { Icon, TechIcon, Button } from "../common";
   import RepoIconView from "../Sidebar/RepoIcon.svelte";
 
@@ -300,7 +300,7 @@
     padding: 8px 10px;
     background-color: var(--bg-muted, #f3f4f6);
     border: 1px solid var(--border-subtle, #e5e7eb);
-    border-radius: 8px;
+    border-radius: var(--r-sm);
     margin-bottom: 10px;
   }
   :global([data-theme="dark"]) .selection-preview-bar {
@@ -311,7 +311,7 @@
   .preview-box {
     width: 32px;
     height: 32px;
-    border-radius: 8px;
+    border-radius: var(--r-sm);
     display: flex;
     align-items: center;
     justify-content: center;
@@ -386,7 +386,7 @@
     justify-content: center;
     gap: 4px;
     padding: 6px 4px;
-    border-radius: 8px;
+    border-radius: var(--r-sm);
     border: 1px solid var(--border-subtle, #e5e7eb);
     background-color: var(--bg, #ffffff);
     cursor: pointer;
@@ -435,7 +435,7 @@
     align-items: center;
     justify-content: center;
     height: 40px;
-    border-radius: 8px;
+    border-radius: var(--r-sm);
     border: 1px solid var(--border-subtle, #e5e7eb);
     background-color: var(--bg, #ffffff);
     cursor: pointer;
@@ -482,7 +482,7 @@
     font-size: 16px;
     font-weight: 700;
     border: 1px solid var(--border, #d1d5db);
-    border-radius: 6px;
+    border-radius: var(--r-sm);
     background-color: var(--bg, #ffffff);
     color: var(--text, #111827);
     outline: none;
@@ -505,7 +505,7 @@
   .color-chip {
     width: 20px;
     height: 20px;
-    border-radius: 50%;
+    border-radius: var(--r-sm);
     border: 2px solid transparent;
     cursor: pointer;
   }
@@ -547,7 +547,7 @@
     padding: 0 10px;
     font-size: 11px;
     font-weight: 500;
-    border-radius: 6px;
+    border-radius: var(--r-sm);
     border: 1px solid var(--border, #d1d5db);
     background: var(--bg, #ffffff);
     color: var(--text, #111827);

@@ -1,7 +1,7 @@
 <script lang="ts">
-  import type { RepoStatus, OperationKind } from "../../types";
-  import * as api from "../../api";
-  import { addToast } from "../../stores/ui";
+  import type { RepoStatus, OperationKind } from "../../platform/types";
+  import * as api from "../../platform/api";
+  import { addToast } from "../../app/ui";
   import { Modal, Button } from "../common";
   import Icon from "../common/Icon.svelte";
 

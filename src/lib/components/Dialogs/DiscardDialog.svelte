@@ -1,8 +1,8 @@
 <script lang="ts">
-  import type { BackupInfo } from "../../types";
-  import * as api from "../../api";
-  import { activeDialog, closeDialog, addToast, recoveryToastLink } from "../../stores/ui";
-  import { statuses, repos, refreshSingleStatus, loadRepos } from "../../stores/repos";
+  import type { BackupInfo } from "../../platform/types";
+  import * as api from "../../platform/api";
+  import { activeDialog, closeDialog, addToast, recoveryToastLink } from "../../app/ui";
+  import { statuses, repos, refreshSingleStatus, loadRepos } from "../../domain/stores/repos";
   import { Modal, Button } from "../common";
 
   interface Props {

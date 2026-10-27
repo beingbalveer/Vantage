@@ -1,13 +1,13 @@
 <script lang="ts">
-  import * as api from "../../api";
+  import * as api from "../../platform/api";
   import {
     activeDialog,
     closeDialog,
     addToast,
     bumpBranches,
-  } from "../../stores/ui";
-  import { repos, statuses, loadRepos, refreshSingleStatus } from "../../stores/repos";
-  import { validateBranchName, describeStartPoint } from "../../branchName";
+  } from "../../app/ui";
+  import { repos, statuses, loadRepos, refreshSingleStatus } from "../../domain/stores/repos";
+  import { validateBranchName, describeStartPoint } from "../../domain/branchName";
   import { Modal, Button, Input, Checkbox } from "../common";
 
   interface Props {

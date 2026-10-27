@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount, onDestroy, tick, untrack } from "svelte";
   import { get } from "svelte/store";
-  import { isFeatureEnabled } from "../../featureFlags.svelte";
+  import { isFeatureEnabled } from "../../config/featureFlags.svelte";
   import type {
     RepoEntry,
     RepoStatus,
@@ -12,42 +12,42 @@
     TriageFlag,
     WorkingPart,
     WorkingPartCounts,
-  } from "../../types";
-  import * as api from "../../api";
-  import { settings } from "../../stores/settings";
-  import { panes, paneCount, focusedPaneIndex, focusPane, setPaneTab } from "../../stores/panes";
-  import { addToast, openDialog, activeDialog, paletteOpen, settingsOpen, shortcutsHelpOpen, addRepoDialogOpen, scanFolderDialogOpen, composerRequest } from "../../stores/ui";
-  import { refreshSingleStatus, loadRepos, setRepoSelection, getRepoSelection, statuses } from "../../stores/repos";
-  import { tagsByRepo, loadTags, groupTagsByTarget } from "../../stores/tags";
-  import { navigationTarget, navigateTo } from "../../stores/navigation";
+  } from "../../platform/types";
+  import * as api from "../../platform/api";
+  import { RequestTracker } from "../../platform/request";
+  import { settings } from "../../domain/stores/settings";
+  import { panes, paneCount, focusedPaneIndex, focusPane, setPaneTab } from "../../domain/stores/panes";
+  import { addToast, openDialog, activeDialog, paletteOpen, settingsOpen, shortcutsHelpOpen, addRepoDialogOpen, scanFolderDialogOpen } from "../../app/ui";
+  import { composerRequest } from "../../domain/stores/composer";
+  import { refreshSingleStatus, loadRepos, setRepoSelection, getRepoSelection, statuses } from "../../domain/stores/repos";
+  import { tagsByRepo, loadTags, groupTagsByTarget } from "../../domain/stores/tags";
+  import { navigationTarget, navigateTo } from "../../domain/stores/navigation";
   import {
     HISTORY_PAGE_SIZE,
     formatHistoryFooter,
     hasMoreHistory,
     isEditableTarget,
-  } from "../../history";
-  import { findFlaggedCommitIndex, matchShortcut } from "../../keys";
-  import { registerHandler, markRepoReviewed, ownsPaneKeyboard } from "../../commands";
-  import type { MenuItem } from "../../menu";
+  } from "../../domain/history";
+  import { findFlaggedCommitIndex, matchShortcut } from "../../platform/keys";
+  import { registerHandler, markRepoReviewed, ownsPaneKeyboard } from "../../app/commands";
+  import type { MenuItem } from "../../app/menu";
   import ContextMenu from "../common/ContextMenu.svelte";
   import UncommittedRow from "./UncommittedRow.svelte";
   import CommitRow from "./CommitRow.svelte";
   import CommitHeader from "./CommitHeader.svelte";
-  import BranchDropdown from "./BranchDropdown.svelte";
   import FileList from "./FileList.svelte";
   import CommitBox from "./CommitBox.svelte";
   import ConflictBanner from "./ConflictBanner.svelte";
   import DiffView from "../Diff/DiffView.svelte";
   import FilesTab from "./FilesTab.svelte";
-  import TerminalDrawer from "../Terminal/TerminalDrawer.svelte";
   import Icon from "../common/Icon.svelte";
-  import { viewportPaneWidths, savedPaneWidth } from "../../layout";
+  import { viewportPaneWidths, savedPaneWidth, leftColumnWidth, setLeftColumnWidth } from "../../app/layout";
   import {
     createHorizontalResizer,
     createHorizontalResizerKeyboard,
     createVerticalBottomResizer,
     createVerticalBottomResizerKeyboard,
-  } from "../../resizer";
+  } from "../../app/resizer";
 
   interface Props {
     paneIndex: number;
@@ -71,15 +71,13 @@
   // Bumped when the palette asks to amend the last commit, so the composer
   // opens already in amend mode (ALPH-154).
   let amendRequestToken = $state(0);
-  let commitsColWidth = $state(savedPaneWidth("vantage_commits_col_width", viewportPaneWidths().commits));
   let filesColWidth = $state(savedPaneWidth("vantage_files_col_width", viewportPaneWidths().files));
 
   const startCommitsResize = createHorizontalResizer({
-    getWidth: () => commitsColWidth,
-    setWidth: (w) => (commitsColWidth = w),
+    getWidth: () => $leftColumnWidth,
+    setWidth: (w) => setLeftColumnWidth(w),
     minWidth: 180,
     maxWidth: 700,
-    storageKey: "vantage_commits_col_width",
   });
 
   const startFilesResize = createHorizontalResizer({
@@ -91,11 +89,10 @@
   });
 
   const nudgeCommitsResize = createHorizontalResizerKeyboard({
-    getWidth: () => commitsColWidth,
-    setWidth: (w) => (commitsColWidth = w),
+    getWidth: () => $leftColumnWidth,
+    setWidth: (w) => setLeftColumnWidth(w),
     minWidth: 180,
     maxWidth: 700,
-    storageKey: "vantage_commits_col_width",
   });
 
   const nudgeFilesResize = createHorizontalResizerKeyboard({
@@ -197,12 +194,6 @@
     }
   });
 
-  let unpushedShas = $derived.by(() => {
-    const ahead = status?.ahead || 0;
-    if (ahead <= 0) return new Set<string>();
-    return new Set(commits.slice(0, ahead).map((c) => c.sha));
-  });
-
   let lastAhead = $state<number | undefined>(undefined);
   let lastBehind = $state<number | undefined>(undefined);
   $effect(() => {
@@ -224,6 +215,10 @@
   let selectedFilePath = $state<string | null>(null);
   let currentDiffFile = $state<DiffFile | null>(null);
   let checkedPaths = $state<string[]>([]);
+  // Scope identity of the rows currently on screen; a change blanks the list so
+  // the previous commit's files can never linger under a new selection.
+  let lastLoadedScope = $state<DiffScope | null>(null);
+  let scopeLoading = $state(false);
   // True when the currently shown diff was fetched with whole-file context.
   // Reset on repo/scope/file change so the expanded state never leaks.
   let diffIsFullContext = $state(false);
@@ -243,18 +238,66 @@
   let extendedShas = $state<Set<string>>(new Set());
   let flagsScanInFlight = false;
 
-  // Generation IDs to avoid stale async overwrites (R11)
-  let historyGen = 0;
-  let scopeGen = 0;
-  let diffGen = 0;
+  // Latest-wins guards for async loads (R11). Tauri commands cannot be aborted
+  // once sent, so each load checks that it is still the newest before applying.
+  const historyRequests = new RequestTracker();
+  const scopeRequests = new RequestTracker();
+  const diffRequests = new RequestTracker();
+  const countsRequests = new RequestTracker();
+
+  onDestroy(() => {
+    historyRequests.dispose();
+    scopeRequests.dispose();
+    diffRequests.dispose();
+    countsRequests.dispose();
+  });
 
   let lastLoadedRepoId = "";
+
+  // Xterm is only needed once a terminal is opened. Keeping it in a dynamic
+  // chunk removes ~300 kB of JavaScript from the startup path.
+  let terminalModule = $state<typeof import("../Terminal/TerminalDrawer.svelte") | null>(null);
+  let terminalLoading = $state(false);
+  let terminalLoadError = $state<string | null>(null);
+
+  function loadTerminal() {
+    if (terminalModule || terminalLoading) return;
+    terminalLoading = true;
+    terminalLoadError = null;
+    import("../Terminal/TerminalDrawer.svelte")
+      .then((mod) => {
+        terminalModule = mod;
+      })
+      .catch((e: any) => {
+        console.error("Failed to load terminal:", e);
+        terminalLoadError = e?.message || "Failed to load terminal";
+      })
+      .finally(() => {
+        terminalLoading = false;
+      });
+  }
+
+  $effect(() => {
+    if (currentPane?.terminalOpen && repo) {
+      // untrack the loader state so the effect only re-runs when a terminal is
+      // opened (and not again after a failed load, which would retry forever).
+      untrack(() => loadTerminal());
+    }
+  });
 
   // Watch repo changes
   $effect(() => {
     const currentId = repo?.id || "";
     if (currentId !== lastLoadedRepoId) {
       lastLoadedRepoId = currentId;
+      // A repo switch must not let the previous repo's in-flight loads write
+      // into the new repo's panes.
+      historyRequests.cancel();
+      scopeRequests.cancel();
+      diffRequests.cancel();
+      countsRequests.cancel();
+      historyLoading = false;
+      historyLoadingMore = false;
       flagsBySha = {};
       untrack(() => {
         diffIsFullContext = false;
@@ -276,6 +319,8 @@
           isRangeSelected = false;
           workingCounts = null;
         }
+        lastLoadedScope = null;
+        scopeLoading = false;
       });
     }
   });
@@ -284,16 +329,20 @@
   $effect(() => {
     if ($navigationTarget && repo) {
       if (!$navigationTarget.repoId || $navigationTarget.repoId === repo.id) {
-        if ($navigationTarget.tab && currentPane) {
-          $panes[paneIndex].tab = $navigationTarget.tab;
-        }
-        if ($navigationTarget.commitSha) {
-          selectCommit($navigationTarget.commitSha);
-        }
-        if ($navigationTarget.path) {
-          selectedFilePath = $navigationTarget.path;
-          selectFile($navigationTarget.path);
-        }
+        // Selections kick off async loads that touch reactive state; keep those
+        // writes from becoming dependencies of this effect.
+        untrack(() => {
+          if ($navigationTarget?.tab && currentPane) {
+            $panes[paneIndex].tab = $navigationTarget.tab;
+          }
+          if ($navigationTarget?.commitSha) {
+            selectCommit($navigationTarget.commitSha);
+          }
+          if ($navigationTarget?.path) {
+            selectedFilePath = $navigationTarget.path;
+            selectFile($navigationTarget.path);
+          }
+        });
       }
     }
   });
@@ -304,13 +353,15 @@
     const req = $composerRequest;
     if (!req) return;
     if (repo && req.repoId === repo.id) {
-      isUncommittedSelected = true;
-      selectedCommitSha = null;
-      currentScope = { type: "working" };
-      commitMode = true;
-      showCommitDetails = false;
-      amendRequestToken += 1;
-      loadScopeFiles({ type: "working" });
+      untrack(() => {
+        isUncommittedSelected = true;
+        selectedCommitSha = null;
+        currentScope = { type: "working" };
+        commitMode = true;
+        showCommitDetails = false;
+        amendRequestToken += 1;
+        loadScopeFiles({ type: "working" });
+      });
     }
     composerRequest.set(null);
   });
@@ -379,13 +430,13 @@
 
   async function loadHistory(preserveSelection = false) {
     if (!repo) return;
-    const gen = ++historyGen;
+    const request = historyRequests.begin();
     historyLoading = true;
     historyLoadingMore = false;
     const query = historyFilterApplied;
     try {
       const page = await api.historyPage(repo.id, 0, HISTORY_PAGE_SIZE, query || undefined);
-      if (gen !== historyGen) return;
+      if (!request.isCurrent()) return;
       commits = page.commits;
       historyTotal = page.total;
       historyCapped = page.capped;
@@ -394,7 +445,7 @@
       // Batch-request triage flags for the loaded page. Failures are ignored
       // per-SHA (the backend omits SHAs it could not evaluate) so the list
       // never breaks because flagging failed (ALPH-147).
-      void loadFlags(repo.id, page.commits.map((c) => c.sha), gen);
+      void loadFlags(repo.id, page.commits.map((c) => c.sha));
 
       if (!preserveSelection) {
         if (query) {
@@ -437,7 +488,7 @@
         }
       }
     } catch (e) {
-      if (gen !== historyGen) return;
+      if (!request.isCurrent()) return;
       historyLoading = false;
       console.error("Failed to load history:", e);
     }
@@ -447,7 +498,7 @@
   async function loadMoreHistory() {
     if (!repo || historyLoading || historyLoadingMore) return;
     if (!hasMoreHistory(historyMeta)) return;
-    const gen = historyGen;
+    const request = historyRequests.begin();
     const skip = commits.length;
     historyLoadingMore = true;
     try {
@@ -457,19 +508,19 @@
         HISTORY_PAGE_SIZE,
         historyFilterApplied || undefined
       );
-      if (gen !== historyGen) return;
+      if (!request.isCurrent()) return;
       const seen = new Set(commits.map((c) => c.sha));
       const newCommits = page.commits.filter((c) => !seen.has(c.sha));
       commits = [...commits, ...newCommits];
       historyTotal = page.total;
       historyCapped = page.capped;
-      void loadFlags(repo.id, newCommits.map((c) => c.sha), gen);
+      void loadFlags(repo.id, newCommits.map((c) => c.sha));
     } catch (e: any) {
-      if (gen !== historyGen) return;
+      if (!request.isCurrent()) return;
       console.error("Failed to load more history:", e);
       addToast({ message: e.message || "Failed to load more commits", kind: "error" });
     } finally {
-      if (gen === historyGen) historyLoadingMore = false;
+      if (request.isCurrent()) historyLoadingMore = false;
     }
   }
 
@@ -547,11 +598,14 @@
 
   // Fetch triage flags for a set of SHAs and merge them into the cache.
   // Per-SHA failures are silent by design: a flagged SHA simply stays blank.
-  async function loadFlags(repoId: string, shas: string[], gen: number) {
+  async function loadFlags(repoId: string, shas: string[]) {
     if (shas.length === 0) return;
     try {
       const result = await api.commitFlags(repoId, shas);
-      if (gen !== historyGen) return;
+      // Flags are per-SHA, so a late response is still valid for this repo even
+      // if the history filter changed meanwhile. Only a repo switch invalidates
+      // it (the cache was cleared and the keys belong to another repo).
+      if (repo?.id !== repoId) return;
       flagsBySha = { ...flagsBySha, ...result };
     } catch (e) {
       console.warn("Failed to load triage flags:", e);
@@ -667,22 +721,57 @@
 
   async function loadWorkingCounts() {
     if (!repo) return;
+    const request = countsRequests.begin();
     try {
-      workingCounts = await api.workingPartCounts(repo.id);
+      const counts = await api.workingPartCounts(repo.id);
+      if (!request.isCurrent()) return;
+      workingCounts = counts;
     } catch (e) {
       console.warn("Failed to load staged/unstaged counts:", e);
     }
   }
-  async function loadScopeFiles(scope: DiffScope, preserveFile = false) {
-    if (!repo) return;
-    const gen = ++scopeGen;
+  /** Two scopes describe the same file list when their kind and range match. */
+  function sameScope(a: DiffScope, b: DiffScope | null): boolean {
+    if (!b || a.type !== b.type) return false;
+    if (a.type === "commit" && b.type === "commit") return a.sha === b.sha;
+    if (a.type === "range" && b.type === "range") {
+      return a.from === b.from && a.to === b.to;
+    }
+    return true;
+  }
+
+  /** Stable identity for the current scope, used to reset list scroll. */
+  function scopeKeyOf(scope: DiffScope): string {
+    if (scope.type === "commit") return `commit:${scope.sha}`;
+    if (scope.type === "range") return `range:${scope.from}..${scope.to}`;
+    return "working";
+  }
+
+  async function loadScopeFiles(scope: DiffScope, preserveFile = false) {    if (!repo) return;
+    const request = scopeRequests.begin();
+    // The old scope's diff is no longer relevant while the file list loads.
+    diffRequests.cancel();
+
+    // Switching commits must never leave the previous scope's files on screen
+    // under the new commit's header. Same-scope reloads (refresh, staging) keep
+    // the rows in place so the list does not flicker.
+    const scopeChanged = !sameScope(scope, lastLoadedScope);
+    if (scopeChanged) {
+      lastLoadedScope = scope;
+      scopeFilesList = [];
+      checkedPaths = [];
+      selectedFilePath = null;
+      currentDiffFile = null;
+      scopeLoading = true;
+    }
+
     try {
       const isWorking = scope.type === "working";
       const files = await api.scopeFiles(repo.id, scope, $settings.ignoreWhitespace);
       if (isWorking) {
         loadWorkingCounts();
       }
-      if (gen !== scopeGen) return;
+      if (!request.isCurrent()) return;
 
       scopeFilesList = files;
       checkedPaths = files.map((f) => f.path);
@@ -698,9 +787,11 @@
         currentDiffFile = null;
       }
     } catch (e: any) {
-      if (gen !== scopeGen) return;
+      if (!request.isCurrent()) return;
       console.error("Failed to load scope files:", e);
       addToast({ message: e.message || "Failed to load files for commit", kind: "error" });
+    } finally {
+      if (request.isCurrent()) scopeLoading = false;
     }
   }
 
@@ -712,7 +803,7 @@
     if (!repo) return;
     const force = opts.force ?? false;
     const fullContext = opts.fullContext ?? false;
-    const gen = ++diffGen;
+    const request = diffRequests.begin();
     selectedFilePath = path;
     // Reflect the intended state immediately so a scope/file switch never shows
     // a stale "Whole file" indicator while the new request is in flight.
@@ -741,10 +832,10 @@
               force,
               fullContext
             );
-      if (gen !== diffGen) return;
+      if (!request.isCurrent()) return;
       currentDiffFile = diff;
     } catch (e: any) {
-      if (gen !== diffGen) return;
+      if (!request.isCurrent()) return;
       console.error("Failed to load file diff:", e);
       addToast({ message: e.message || "Failed to load diff", kind: "error" });
     }
@@ -1216,30 +1307,29 @@
       <div class="history-layout">
         <!-- Commits Column -->
         {#if !focusDiff}
-          <div class="commits-col" style="width: {commitsColWidth}px;">
-            <!-- Branch Selector Header with View Tabs -->
+          <div class="commits-col" style="width: {$leftColumnWidth}px;">
+            <!-- View tabs fill the commits column; branch lives in the app header -->
             <div class="commits-header">
-              <div class="branch-wrap">
-                <BranchDropdown {repo} {status} />
-              </div>
-              <div class="pane-view-tabs">
+              <div class="pane-tabs" role="tablist" aria-label="Pane view">
                 <button
                   type="button"
-                  class="view-tab active"
+                  role="tab"
+                  aria-selected="true"
+                  class="pane-tab active"
                   title="Commits & History"
-                  aria-label="Commits view"
                 >
-                  <Icon name="commit" size={13} />
+                  <Icon name="commit" size={14} />
                   <span>Commits</span>
                 </button>
                 <button
                   type="button"
-                  class="view-tab"
-                  onclick={() => setPaneTab(paneIndex, "files")}
+                  role="tab"
+                  aria-selected="false"
+                  class="pane-tab"
                   title="Project Files Explorer"
-                  aria-label="Files explorer"
+                  onclick={() => setPaneTab(paneIndex, "files")}
                 >
-                  <Icon name="folder" size={13} />
+                  <Icon name="folder" size={14} />
                   <span>Files</span>
                 </button>
               </div>
@@ -1301,11 +1391,7 @@
                 <CommitRow
                   {commit}
                   isSelected={selectedCommitSha === commit.sha || extendedShas.has(commit.sha)}
-                  isLocal={unpushedShas.has(commit.sha)}
                   isMenuOpen={isCommitMenuOpen(commit.sha)}
-                  flags={flagsBySha[commit.sha] ?? []}
-                  repoId={repo ? repo.id : ""}
-                  tags={tagsByTarget.get(commit.sha) || []}
                   onselect={() => selectCommit(commit.sha)}
                   onmenu={(pos: { x: number; y: number }) => openCommitMenu(commit, pos)}
                 />
@@ -1341,14 +1427,13 @@
             aria-label="Resize commit list"
             aria-valuemin={180}
             aria-valuemax={700}
-            aria-valuenow={Math.round(commitsColWidth)}
+            aria-valuenow={Math.round($leftColumnWidth)}
             tabindex="0"
             title="Drag to resize commits column (Double-click to reset, Arrow keys to nudge)"
             onpointerdown={startCommitsResize}
             onkeydown={nudgeCommitsResize}
             ondblclick={() => {
-              commitsColWidth = viewportPaneWidths().commits;
-              try { localStorage.setItem("vantage_commits_col_width", String(commitsColWidth)); } catch {}
+              setLeftColumnWidth(viewportPaneWidths().commits);
             }}
           ></div>
         {/if}
@@ -1370,6 +1455,8 @@
                 files={scopeFilesList}
                 selectedFile={selectedFilePath}
                 isUncommitted={isUncommittedSelected}
+                loading={scopeLoading}
+                scopeKey={scopeKeyOf(currentScope)}
                 {checkedPaths}
                 showCommitControls={isUncommittedSelected && commitMode}
                 {focusDiff}
@@ -1490,22 +1577,42 @@
       }}
     ></div>
 
-    {#key repo.id}
-      <TerminalDrawer
-        repoId={repo.id}
-        repoName={repo.name}
-        repoPath={repo.path}
-        height={terminalHeight}
-        onclose={() => {
-          panes.update((list) => {
-            if (list[paneIndex]) {
-              list[paneIndex] = { ...list[paneIndex], terminalOpen: false };
-            }
-            return list;
-          });
-        }}
-      />
-    {/key}
+    {#if terminalModule}
+      {#key repo.id}
+        {@const TerminalDrawer = terminalModule.default}
+        <TerminalDrawer
+          repoId={repo.id}
+          repoName={repo.name}
+          repoPath={repo.path}
+          height={terminalHeight}
+          onclose={() => {
+            panes.update((list) => {
+              if (list[paneIndex]) {
+                list[paneIndex] = { ...list[paneIndex], terminalOpen: false };
+              }
+              return list;
+            });
+          }}
+        />
+      {/key}
+    {:else}
+      <div class="terminal-loading" style="height: {terminalHeight}px">
+        <span class="text-xs text-muted">
+          {terminalLoadError ?? "Starting terminal…"}
+        </span>
+        {#if terminalLoadError}
+          <button
+            type="button"
+            class="terminal-retry"
+            onclick={loadTerminal}
+            title="Retry loading terminal"
+            aria-label="Retry loading terminal"
+          >
+            <Icon name="refresh" size={13} />
+          </button>
+        {/if}
+      </div>
+    {/if}
   {/if}
 
   <!-- Row context menu (commit / changed file). Recreated per open so it
@@ -1586,66 +1693,15 @@
     border-right: 1px solid var(--border);
   }
 
+  /* Commits column header: the view tabs fill the column width. */
   .commits-header {
     flex-shrink: 0;
-    height: 40px;
-    border-bottom: 1px solid var(--border);
+    height: 32px;
     display: flex;
-    align-items: center;
-    justify-content: space-between;
-    padding: 0 8px;
-    background-color: var(--bg);
-    gap: 8px;
-  }
-
-  .branch-wrap {
-    min-width: 0;
-    flex: 1;
-    position: relative;
-  }
-
-  .pane-view-tabs {
-    display: inline-flex;
-    align-items: center;
-    background: var(--bg-hover, rgba(0, 0, 0, 0.05));
-    padding: 2px;
-    border-radius: 6px;
-    border: 1px solid var(--border);
-    flex-shrink: 0;
-  }
-  :global([data-theme="dark"]) .pane-view-tabs {
-    background: rgba(255, 255, 255, 0.06);
-  }
-
-  .view-tab {
-    display: inline-flex;
-    align-items: center;
-    gap: 5px;
-    height: 24px;
-    padding: 0 8px;
-    font-size: 11.5px;
-    font-weight: 500;
-    border: 0;
-    background: transparent;
-    border-radius: 4px;
-    color: var(--text-muted);
-    cursor: pointer;
-    transition: background 120ms ease, color 120ms ease;
-    white-space: nowrap;
-  }
-  .view-tab:hover:not(.active) {
-    color: var(--text);
-    background: rgba(125, 125, 125, 0.12);
-  }
-  .view-tab.active {
-    background: var(--bg);
-    color: var(--text);
-    font-weight: 600;
-    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.08);
-  }
-  :global([data-theme="dark"]) .view-tab.active {
-    background: #21262d;
-    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.35);
+    align-items: stretch;
+    padding: 0;
+    background-color: var(--bg-subtle);
+    border-bottom: 1px solid var(--border);
   }
 
   .commits-scroll {
@@ -1700,7 +1756,7 @@
     height: 18px;
     padding: 0;
     border: 0;
-    border-radius: 4px;
+    border-radius: var(--r-sm);
     background: transparent;
     color: var(--text-muted);
     cursor: pointer;
@@ -1869,5 +1925,33 @@
   :global(body.resizing-row) .terminal-sash::after {
     background-color: var(--accent);
     opacity: 0.6;
+  }
+
+  /* Placeholder shown while the xterm chunk downloads on first open. */
+  .terminal-loading {
+    display: flex;
+    flex: 0 0 auto;
+    align-items: center;
+    justify-content: center;
+    gap: 10px;
+    border-top: 1px solid var(--border);
+    background-color: var(--bg-subtle);
+  }
+  .terminal-retry {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 24px;
+    height: 24px;
+    padding: 0;
+    border: 1px solid var(--border);
+    border-radius: var(--r-sm);
+    background: var(--bg);
+    color: var(--text);
+    cursor: pointer;
+  }
+  .terminal-retry:hover {
+    border-color: var(--accent);
+    color: var(--accent);
   }
 </style>

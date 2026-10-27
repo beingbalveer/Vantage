@@ -3,8 +3,8 @@
   import { Terminal } from "@xterm/xterm";
   import { FitAddon } from "@xterm/addon-fit";
   import "@xterm/xterm/css/xterm.css";
-  import * as api from "../../api";
-  import { settings } from "../../stores/settings";
+  import * as api from "../../platform/api";
+  import { settings } from "../../domain/stores/settings";
   import type { UnlistenFn } from "@tauri-apps/api/event";
   import Icon from "../common/Icon.svelte";
 
@@ -414,7 +414,7 @@
     font-weight: 500;
     color: var(--text-muted);
     background-color: rgba(0, 0, 0, 0.05);
-    border-radius: 4px;
+    border-radius: var(--r-sm);
     flex-shrink: 0;
     line-height: 1.2;
   }
@@ -445,7 +445,7 @@
     align-items: center;
     gap: 5px;
     padding: 2px 7px;
-    border-radius: 9999px;
+    border-radius: var(--r-sm);
     font-size: 11px;
     font-weight: 500;
     background-color: var(--danger-bg, #ffebed);
@@ -468,7 +468,7 @@
     padding: 0;
     border: none;
     background: transparent;
-    border-radius: 4px;
+    border-radius: var(--r-sm);
     color: var(--text-muted);
     cursor: pointer;
     user-select: none;

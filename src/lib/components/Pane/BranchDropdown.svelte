@@ -1,17 +1,19 @@
 <script lang="ts">
-  import { repos, loadRepos } from "../../stores/repos";
-  import { openRepoInFocusedPane } from "../../stores/panes";
-  import { addToast, openDialog, branchesVersion } from "../../stores/ui";
-  import * as api from "../../api";
-  import type { BranchInfo, RepoEntry, RepoStatus } from "../../types";
+  import { repos, loadRepos } from "../../domain/stores/repos";
+  import { openRepoInFocusedPane } from "../../domain/stores/panes";
+  import { addToast, openDialog, branchesVersion } from "../../app/ui";
+  import * as api from "../../platform/api";
+  import type { BranchInfo, RepoEntry, RepoStatus } from "../../platform/types";
   import Icon from "../common/Icon.svelte";
 
   interface Props {
     repo: RepoEntry | null;
     status: RepoStatus | null;
+    /** Inline mode sits in the app header: content-width trigger, compact row. */
+    inline?: boolean;
   }
 
-  let { repo, status }: Props = $props();
+  let { repo, status, inline = false }: Props = $props();
 
   let currentBranch = $derived(repo?.branch || status?.branch || "HEAD");
   let isInactiveView = $derived(status?.isCheckedOut === false);
@@ -195,7 +197,7 @@
   }
 </script>
 
-<div class="branch-dropdown-wrapper">
+<div class="branch-dropdown-wrapper" class:inline>
   <button
     bind:this={triggerEl}
     type="button"
@@ -207,7 +209,7 @@
     title={`Current branch: ${currentBranch}${isInactiveView ? " (not checked out)" : ""}`}
   >
     <Icon name="git-branch" size={14} class="branch-icon" />
-    <span class="branch-label font-mono">{currentBranch}</span>
+    <span class="branch-label">{currentBranch}</span>
     {#if isInactiveView}
       <span class="inactive-dot" title="Read-only view (not checked out on disk)"></span>
     {/if}
@@ -257,7 +259,7 @@
             onclick={() => selectBranch(b.name)}
           >
             <Icon name="git-branch" size={13} />
-            <span class="branch-option-name font-mono">{b.name}</span>
+            <span class="branch-option-name">{b.name}</span>
             {#if b.isHead}
               <span class="head-pill">HEAD</span>
             {/if}
@@ -289,6 +291,7 @@
         type="button"
         class="branch-option create-branch-action"
         role="menuitem"
+        title={`New branch from ${currentBranch}…`}
         onclick={() => handleNewBranchFrom("HEAD")}
       >
         <Icon name="plus" size={13} />
@@ -374,7 +377,7 @@
         {:else}
           {#each filteredBranches as b (b.name)}
             <div class="branch-picker-item" class:is-head={b.isHead}>
-              <span class="branch-picker-name font-mono text-xs">
+              <span class="branch-picker-name text-xs">
                 <Icon name="git-branch" size={12} class="mr-1 inline-block" />
                 {b.name}
                 {#if b.isHead}
@@ -385,8 +388,10 @@
                 type="button"
                 class="pick-btn"
                 onclick={() => handleAddBranchView(b.name)}
+                title="Add branch view"
+                aria-label={`Add branch view for ${b.name}`}
               >
-                Add view
+                <Icon name="plus" size={12} />
               </button>
             </div>
           {/each}
@@ -404,21 +409,35 @@
     align-items: center;
   }
 
+  /* Header placement: hug the label instead of filling the pane header. */
+  .branch-dropdown-wrapper.inline {
+    width: auto;
+    max-width: 240px;
+  }
+  .branch-dropdown-wrapper.inline .branch-trigger-btn {
+    width: auto;
+    min-height: 26px;
+    height: 26px;
+    padding: 0 6px;
+    gap: 5px;
+  }
+
   .branch-trigger-btn {
     display: flex;
     align-items: center;
     gap: 6px;
     width: 100%;
-    height: 28px;
-    padding: 0 8px;
-    border-radius: var(--r-sm, 6px);
-    background-color: var(--bg);
-    border: 1px solid var(--border);
+    height: 100%;
+    min-height: 28px;
+    padding: 0 10px;
+    border-radius: 0;
+    background-color: transparent;
+    border: 0;
     color: var(--text);
     font-size: 12px;
     font-weight: 500;
     cursor: pointer;
-    transition: background-color 0.15s, border-color 0.15s;
+    transition: background-color 0.15s;
     user-select: none;
     text-align: left;
   }
@@ -426,13 +445,11 @@
   .branch-trigger-btn:hover,
   .branch-trigger-btn[aria-expanded="true"] {
     background-color: var(--bg-muted);
-    border-color: var(--border);
   }
 
   .branch-trigger-btn:focus-visible {
     outline: none;
-    box-shadow: 0 0 0 2px rgba(24, 115, 213, 0.25);
-    border-color: var(--accent);
+    box-shadow: inset 0 0 0 1px var(--accent);
   }
 
   .branch-trigger-btn :global(.branch-icon) {
@@ -446,6 +463,9 @@
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+    font-family: var(--font-ui);
+    font-size: 12px;
+    font-weight: 500;
     letter-spacing: -0.01em;
   }
 
@@ -548,12 +568,20 @@
     border: none;
     background: transparent;
     color: var(--text);
+    font-family: var(--font-ui);
     font-size: 12.5px;
     font-weight: 500;
     border-radius: var(--r-sm, 6px);
     cursor: pointer;
     text-align: left;
+    white-space: nowrap;
+    overflow: hidden;
     transition: background-color 0.12s ease, color 0.12s ease;
+  }
+  .branch-option > span {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
   }
 
   .branch-option:hover,
@@ -575,8 +603,10 @@
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+    font-family: var(--font-ui);
     font-size: 12.5px;
     line-height: 1.3;
+    letter-spacing: -0.01em;
   }
 
   .head-pill {
@@ -586,7 +616,7 @@
     padding: 2px 5px;
     background-color: rgba(125, 125, 125, 0.18);
     color: var(--text);
-    border-radius: 4px;
+    border-radius: var(--r-sm);
     letter-spacing: 0.04em;
   }
 
@@ -726,7 +756,7 @@
     align-items: center;
     justify-content: space-between;
     padding: 6px 8px;
-    border-radius: 4px;
+    border-radius: var(--r-sm);
   }
 
   .branch-picker-item:hover {
@@ -738,11 +768,17 @@
     align-items: center;
     gap: 4px;
     color: var(--text);
+    font-family: var(--font-ui);
+    letter-spacing: -0.01em;
   }
 
   .pick-btn {
-    font-size: 11px;
-    padding: 2px 8px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 22px;
+    height: 22px;
+    padding: 0;
     background-color: var(--bg-subtle);
     border: 1px solid var(--border);
     border-radius: var(--r-sm, 6px);

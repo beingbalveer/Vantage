@@ -8,11 +8,11 @@ import {
   repoSelections,
   setRepoSelection,
   getRepoSelection,
-} from "../src/lib/stores/repos";
-import type { RepoEntry, RepoStatus } from "../src/lib/types";
-import * as api from "../src/lib/api";
+} from "../src/lib/domain/stores/repos";
+import type { RepoEntry, RepoStatus } from "../src/lib/platform/types";
+import * as api from "../src/lib/platform/api";
 
-vi.mock("../src/lib/api", () => ({
+vi.mock("../src/lib/platform/api", () => ({
   repoReorder: vi.fn().mockResolvedValue(undefined),
   repoList: vi.fn().mockResolvedValue([]),
   repoRefreshAll: vi.fn().mockResolvedValue([]),

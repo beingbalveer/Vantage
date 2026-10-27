@@ -7,8 +7,8 @@ import {
   validateBranchName,
   validateIdentityEmail,
   validateIdentityName,
-} from "../src/lib/settings";
-import type { DetectedApp, Settings } from "../src/lib/types";
+} from "../src/lib/domain/settings";
+import type { DetectedApp, Settings } from "../src/lib/platform/types";
 
 const editors: DetectedApp[] = [
   { id: "vscode", label: "VS Code", command: "code -g {full}:{line}" },

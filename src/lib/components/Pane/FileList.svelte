@@ -1,10 +1,10 @@
 <script lang="ts">
-  import { isFeatureEnabled } from "../../featureFlags.svelte";
-  import type { FileChange } from "../../types";
-  import type { NormalizedError } from "../../asyncState";
-  import { computeVirtualWindow, splitPath } from "../../format";
-  import { addToast } from "../../stores/ui";
-  import { registerDismiss } from "../../commands";
+  import { isFeatureEnabled } from "../../config/featureFlags.svelte";
+  import type { FileChange } from "../../platform/types";
+  import type { NormalizedError } from "../../domain/asyncState";
+  import { computeVirtualWindow, splitPath } from "../../domain/format";
+  import { addToast } from "../../app/ui";
+  import { registerDismiss } from "../../app/commands";
   import Icon from "../common/Icon.svelte";
   import Skeleton from "../common/Skeleton.svelte";
   import EmptyState from "../common/EmptyState.svelte";
@@ -15,6 +15,7 @@
     selectedFile: string | null;
     isUncommitted: boolean;
     checkedPaths: string[];
+    scopeKey?: string;
     showCommitControls?: boolean;
     focusDiff?: boolean;
     hasCommitDetails?: boolean;
@@ -45,6 +46,7 @@
     selectedFile,
     isUncommitted,
     checkedPaths,
+    scopeKey = "",
     showCommitControls = false,
     focusDiff = false,
     hasCommitDetails = false,
@@ -94,6 +96,18 @@
   function handleRowsScroll(e: Event) {
     scrollTop = (e.currentTarget as HTMLDivElement).scrollTop;
   }
+
+  // A new commit / range starts at the top of its own list. Without this the
+  // windowed render keeps the previous scope's scroll offset and can show rows
+  // from a list that no longer exists.
+  let lastScopeKey = $state("");
+  $effect(() => {
+    const key = scopeKey;
+    if (key === lastScopeKey) return;
+    lastScopeKey = key;
+    if (rowsEl) rowsEl.scrollTop = 0;
+    scrollTop = 0;
+  });
 
   $effect(() => {
     const el = rowsEl;
@@ -497,12 +511,12 @@
 
   .file-list-header {
     position: relative;
-    height: 43px;
-    min-height: 43px;
+    height: 32px;
+    min-height: 32px;
     display: flex;
     align-items: center;
-    gap: 8px;
-    padding: 0 12px;
+    gap: 6px;
+    padding: 0 10px;
     background-color: var(--bg);
     border-bottom: 1px solid var(--border);
     flex-shrink: 0;
@@ -585,7 +599,7 @@
     background: var(--bg);
     box-shadow: var(--shadow-pop);
     border: 1px solid var(--border-subtle);
-    border-radius: 8px;
+    border-radius: var(--r-sm);
     padding: 5px;
     min-width: 200px;
   }
@@ -598,7 +612,7 @@
     background: none;
     border: 0;
     color: var(--text);
-    border-radius: 4px;
+    border-radius: var(--r-sm);
     cursor: pointer;
   }
   .files-options button:hover {
@@ -754,7 +768,7 @@
     height: 13px;
     border: 1.5px solid var(--warning);
     color: var(--warning);
-    border-radius: 1px;
+    border-radius: var(--r-sm);
     font-size: 12px;
     line-height: 1;
     flex-shrink: 0;

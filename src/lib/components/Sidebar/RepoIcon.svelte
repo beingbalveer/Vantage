@@ -6,7 +6,7 @@
     detectedStacks,
     detectAndCacheStack,
     type RepoIcon as RepoIconValue,
-  } from "../../stores/repoIcons";
+  } from "../../domain/stores/repoIcons";
 
   interface Props {
     id?: string;
@@ -96,7 +96,7 @@
     width: 100%;
     height: 100%;
     object-fit: contain;
-    border-radius: 4px;
+    border-radius: var(--r-sm);
   }
 
   .repo-emoji {

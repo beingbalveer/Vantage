@@ -1,6 +1,6 @@
-import "./styles/tokens.css";
-import "./styles/base.css";
-import "./styles/approved.css";
+import "./lib/design/styles/tokens.css";
+import "./lib/design/styles/base.css";
+import "./lib/design/styles/approved.css";
 import { mount } from "svelte";
 import App from "./App.svelte";
 

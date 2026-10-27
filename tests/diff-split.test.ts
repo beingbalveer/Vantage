@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
-import { buildSplitRows, type SplitRow } from "../src/lib/diff-split";
-import type { DiffLine, LineKind } from "../src/lib/types";
+import { buildSplitRows, type SplitRow } from "../src/lib/domain/diff-split";
+import type { DiffLine, LineKind } from "../src/lib/platform/types";
 
 function line(
   kind: LineKind,

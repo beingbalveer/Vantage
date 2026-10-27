@@ -1,14 +1,14 @@
 <script lang="ts">
-  import { settingsOpen, addToast, settingsSection, settingsRecoveryRepoId, type SettingsSection } from "../../stores/ui";
-  import { settings, updateSettings } from "../../stores/settings";
-  import { FEATURE_METADATA, isFeatureEnabled, setFeatureFlag, resetFeatureFlags, type FeatureFlagKey } from "../../featureFlags.svelte";
-  import { repos, activeRepoId, refreshSingleStatus, loadRepos } from "../../stores/repos";
-  import * as api from "../../api";
-  import * as settingsLib from "../../settings";
-  import type { Settings, BackupInfo, EnvInfo, GitIdentity } from "../../types";
-  import { formatRelativeTime, formatFullTimestamp } from "../../format";
-  import { Modal, Button, Checkbox, Badge, Input } from "../common";
-  import { checkForAppUpdates, downloadAndInstallUpdate } from "../../updater";
+  import { settingsOpen, addToast, settingsSection, settingsRecoveryRepoId, type SettingsSection } from "../../app/ui";
+  import { settings, updateSettings } from "../../domain/stores/settings";
+  import { FEATURE_METADATA, isFeatureEnabled, setFeatureFlag, resetFeatureFlags, type FeatureFlagKey } from "../../config/featureFlags.svelte";
+  import { repos, activeRepoId, refreshSingleStatus, loadRepos } from "../../domain/stores/repos";
+  import * as api from "../../platform/api";
+  import * as settingsLib from "../../domain/settings";
+  import type { Settings, BackupInfo, EnvInfo, GitIdentity } from "../../platform/types";
+  import { formatRelativeTime, formatFullTimestamp } from "../../domain/format";
+  import { Modal, Button, Checkbox, Badge, Input, Icon } from "../common";
+  import { checkForAppUpdates, downloadAndInstallUpdate } from "../../platform/updater";
   import type { Update } from "@tauri-apps/plugin-updater";
 
   let activeSection = $state<SettingsSection>("general");
@@ -742,11 +742,13 @@
             <Button
               variant="default"
               size="sm"
+              class="icon-only"
               onclick={() => selectedRepoId && loadBackupsForRepo(selectedRepoId)}
               disabled={isLoadingBackups || !selectedRepoId}
               title="Refresh backup list"
+              ariaLabel="Refresh backup list"
             >
-              ↻ Refresh
+              <Icon name="refresh" size={13} />
             </Button>
           </div>
 
@@ -799,7 +801,7 @@
           {/if}
         {:else}
           <div style="display: flex; align-items: center; gap: 14px; margin-bottom: 12px;">
-            <img src="/favicon.png" alt="Vantage" width="36" height="36" style="border-radius: 8px;" />
+            <img src="/favicon.png" alt="Vantage" width="36" height="36" />
             <div>
               <h3 class="text-strong" style="margin: 0;">Vantage</h3>
               <p class="text-xs text-muted" style="margin: 0;">v0.2.0</p>
@@ -1224,7 +1226,7 @@
     color: var(--accent);
     background-color: var(--accent-subtle, rgba(88, 166, 255, 0.1));
     padding: 1px 6px;
-    border-radius: 4px;
+    border-radius: var(--r-sm);
   }
 
   .flag-desc {

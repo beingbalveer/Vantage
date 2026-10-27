@@ -1,13 +1,13 @@
 <script lang="ts">
-  import { activeDialog, closeDialog, addToast } from "../../stores/ui";
+  import { activeDialog, closeDialog, addToast } from "../../app/ui";
   import {
     repoIcons,
     detectedStacks,
     saveRepoIcon,
     clearRepoIcon,
     type RepoIcon,
-  } from "../../stores/repoIcons";
-  import type { RepoEntry } from "../../types";
+  } from "../../domain/stores/repoIcons";
+  import type { RepoEntry } from "../../platform/types";
   import { Modal, Button, Icon } from "../common";
   import RepoIconView from "../Sidebar/RepoIcon.svelte";
   import RepoIconPicker from "./RepoIconPicker.svelte";
@@ -86,10 +86,10 @@
           type="button"
           class="reset-auto-btn"
           onclick={handleResetAuto}
-          title="Remove custom icon and use auto-detection"
+          title="Reset to auto-detected icon"
+          aria-label="Reset to auto-detected icon"
         >
           <Icon name="refresh" size={13} />
-          Reset to Auto
         </button>
       {/if}
     </div>
@@ -119,7 +119,7 @@
     padding: 10px 12px;
     background-color: var(--bg-muted, #f3f4f6);
     border: 1px solid var(--border-subtle, #e5e7eb);
-    border-radius: 12px;
+    border-radius: var(--r-sm);
     margin-bottom: 14px;
   }
   :global([data-theme="dark"]) .preview-banner {
@@ -130,7 +130,7 @@
   .preview-box {
     width: 36px;
     height: 36px;
-    border-radius: 10px;
+    border-radius: var(--r-sm);
     display: flex;
     align-items: center;
     justify-content: center;
@@ -185,16 +185,16 @@
   .reset-auto-btn {
     display: inline-flex;
     align-items: center;
-    gap: 5px;
-    font-size: 11px;
-    font-weight: 500;
-    padding: 5px 9px;
-    border-radius: 6px;
+    justify-content: center;
+    width: 26px;
+    height: 26px;
+    padding: 0;
+    border-radius: var(--r-sm);
     border: 1px solid var(--border, #d1d5db);
     background: var(--bg);
     color: var(--text);
     cursor: pointer;
-    white-space: nowrap;
+    flex-shrink: 0;
     transition: background 120ms ease;
   }
   .reset-auto-btn:hover {

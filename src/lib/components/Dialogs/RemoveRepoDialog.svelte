@@ -1,7 +1,7 @@
 <script lang="ts">
-  import { activeDialog, closeDialog, addToast } from "../../stores/ui";
-  import { repos, removeRepo } from "../../stores/repos";
-  import { panes } from "../../stores/panes";
+  import { activeDialog, closeDialog, addToast } from "../../app/ui";
+  import { repos, removeRepo } from "../../domain/stores/repos";
+  import { panes } from "../../domain/stores/panes";
   import { get } from "svelte/store";
   import { Modal, Button } from "../common";
 

@@ -31,33 +31,33 @@ beforeEach(() => {
 
 describe("repoIcons · pure helpers", () => {
   it("shortBranch keeps short names intact", async () => {
-    const { shortBranch } = await import("../src/lib/stores/repoIcons");
+    const { shortBranch } = await import("../src/lib/domain/stores/repoIcons");
     expect(shortBranch("main")).toBe("main");
     expect(shortBranch("dev")).toBe("dev");
   });
 
   it("shortBranch reduces long names to a stable short label", async () => {
-    const { shortBranch } = await import("../src/lib/stores/repoIcons");
+    const { shortBranch } = await import("../src/lib/domain/stores/repoIcons");
     const short = shortBranch("feature/very-long-branch-name");
     expect(short.length).toBeLessThanOrEqual(6);
     expect(short).toBe("very-l");
   });
 
   it("shortBranch uses the final path segment", async () => {
-    const { shortBranch } = await import("../src/lib/stores/repoIcons");
+    const { shortBranch } = await import("../src/lib/domain/stores/repoIcons");
     expect(shortBranch("origin/bugfix")).toBe("bugfix");
     expect(shortBranch("release/1.0")).toBe("1.0");
   });
 
   it("shortBranch falls back to HEAD when missing", async () => {
-    const { shortBranch } = await import("../src/lib/stores/repoIcons");
+    const { shortBranch } = await import("../src/lib/domain/stores/repoIcons");
     expect(shortBranch(null)).toBe("HEAD");
     expect(shortBranch(undefined)).toBe("HEAD");
     expect(shortBranch("   ")).toBe("HEAD");
   });
 
   it("defaultAppIcon is deterministic and independent of call order", async () => {
-    const { defaultAppIcon, appIcons } = await import("../src/lib/stores/repoIcons");
+    const { defaultAppIcon, appIcons } = await import("../src/lib/domain/stores/repoIcons");
     const first = defaultAppIcon("repo-alpha");
     expect(defaultAppIcon("repo-alpha")).toBe(first);
     // Simulate list reordering: the id is what matters, not the position.
@@ -68,7 +68,7 @@ describe("repoIcons · pure helpers", () => {
   });
 
   it("defaultAppIcon produces varied icons across ids", async () => {
-    const { defaultAppIcon } = await import("../src/lib/stores/repoIcons");
+    const { defaultAppIcon } = await import("../src/lib/domain/stores/repoIcons");
     const icons = new Set(
       ["a", "b", "c", "d", "e", "f", "g", "h", "i", "j", "k", "l"].map((id) =>
         defaultAppIcon(id)
@@ -81,7 +81,7 @@ describe("repoIcons · pure helpers", () => {
 describe("repoIcons · validation and persistence", () => {
   it("rejects a non-image data URL", async () => {
     installLocalStorage();
-    const { saveRepoIcon, repoIcons } = await import("../src/lib/stores/repoIcons");
+    const { saveRepoIcon, repoIcons } = await import("../src/lib/domain/stores/repoIcons");
     const ok = saveRepoIcon("r1", { kind: "image", value: "data:text/html,<script>" });
     expect(ok).toBe(false);
     let state: any;
@@ -91,18 +91,18 @@ describe("repoIcons · validation and persistence", () => {
 
   it("rejects an empty id", async () => {
     installLocalStorage();
-    const { saveRepoIcon } = await import("../src/lib/stores/repoIcons");
+    const { saveRepoIcon } = await import("../src/lib/domain/stores/repoIcons");
     expect(saveRepoIcon("", { kind: "app", value: "code" })).toBe(false);
   });
 
   it("persists valid choices and restores them after a restart", async () => {
     installLocalStorage();
-    const first = await import("../src/lib/stores/repoIcons");
+    const first = await import("../src/lib/domain/stores/repoIcons");
     expect(first.saveRepoIcon("r1", { kind: "app", value: "grid" })).toBe(true);
 
     // Simulate a full app restart: fresh module registry, same storage.
     vi.resetModules();
-    const second = await import("../src/lib/stores/repoIcons");
+    const second = await import("../src/lib/domain/stores/repoIcons");
     let restored: any;
     second.repoIcons.subscribe((v) => (restored = v))();
     expect(restored.r1).toEqual({ kind: "app", value: "grid" });
@@ -110,7 +110,7 @@ describe("repoIcons · validation and persistence", () => {
 
   it("keeps different icons for two branch views of the same path", async () => {
     installLocalStorage();
-    const { saveRepoIcon, repoIcons } = await import("../src/lib/stores/repoIcons");
+    const { saveRepoIcon, repoIcons } = await import("../src/lib/domain/stores/repoIcons");
     saveRepoIcon("view-main", { kind: "app", value: "code" });
     saveRepoIcon("view-dev", { kind: "app", value: "terminal" });
     let state: any;
@@ -122,7 +122,7 @@ describe("repoIcons · validation and persistence", () => {
   it("survives corrupt stored metadata without throwing", async () => {
     const ls = installLocalStorage();
     ls.setItem("relay_repo_icons_v1", "{not valid json");
-    const mod = await import("../src/lib/stores/repoIcons");
+    const mod = await import("../src/lib/domain/stores/repoIcons");
     let state: any;
     mod.repoIcons.subscribe((v) => (state = v))();
     expect(state).toEqual({});
@@ -139,7 +139,7 @@ describe("repoIcons · validation and persistence", () => {
         notObject: 42,
       })
     );
-    const mod = await import("../src/lib/stores/repoIcons");
+    const mod = await import("../src/lib/domain/stores/repoIcons");
     let state: any;
     mod.repoIcons.subscribe((v) => (state = v))();
     expect(state).toEqual({ good: { kind: "app", value: "grid" } });
@@ -147,7 +147,7 @@ describe("repoIcons · validation and persistence", () => {
 
   it("reports failure without erasing existing metadata when storage throws", async () => {
     installLocalStorage();
-    const mod = await import("../src/lib/stores/repoIcons");
+    const mod = await import("../src/lib/domain/stores/repoIcons");
     mod.saveRepoIcon("keep", { kind: "app", value: "code" });
 
     const failing = {
@@ -171,7 +171,7 @@ describe("repoIcons · validation and persistence", () => {
 
   it("persists tech, emoji, and letter icons and supports clearRepoIcon", async () => {
     installLocalStorage();
-    const { saveRepoIcon, clearRepoIcon, repoIcons } = await import("../src/lib/stores/repoIcons");
+    const { saveRepoIcon, clearRepoIcon, repoIcons } = await import("../src/lib/domain/stores/repoIcons");
     expect(saveRepoIcon("r-rust", { kind: "tech", value: "rust" })).toBe(true);
     expect(saveRepoIcon("r-emoji", { kind: "emoji", value: "🚀" })).toBe(true);
     expect(saveRepoIcon("r-letter", { kind: "letter", value: "P", color: "#2563eb" })).toBe(true);
@@ -193,14 +193,14 @@ describe("repoIcons · validation and persistence", () => {
 describe("repoIcons · readIconFile validation", () => {
   it("rejects non-image files", async () => {
     installLocalStorage();
-    const { readIconFile } = await import("../src/lib/stores/repoIcons");
+    const { readIconFile } = await import("../src/lib/domain/stores/repoIcons");
     const fake = { type: "text/plain", size: 10 } as unknown as File;
     await expect(readIconFile(fake)).rejects.toThrow(/image file/i);
   });
 
   it("rejects oversized images before reading", async () => {
     installLocalStorage();
-    const { readIconFile } = await import("../src/lib/stores/repoIcons");
+    const { readIconFile } = await import("../src/lib/domain/stores/repoIcons");
     const fake = { type: "image/png", size: 600 * 1024 } as unknown as File;
     await expect(readIconFile(fake)).rejects.toThrow(/too large/i);
   });

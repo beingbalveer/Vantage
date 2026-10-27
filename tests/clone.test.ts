@@ -5,7 +5,7 @@ import {
   progressMessage,
   validateDestination,
   type CloneDestinationState,
-} from "../src/lib/clone";
+} from "../src/lib/domain/clone";
 
 const dest = (overrides: Partial<CloneDestinationState> = {}): CloneDestinationState => ({
   exists: false,

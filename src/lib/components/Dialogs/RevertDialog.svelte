@@ -1,9 +1,9 @@
 <script lang="ts">
-  import type { CommitSummary } from "../../types";
-  import * as api from "../../api";
-  import { activeDialog, closeDialog, addToast, recoveryToastLink } from "../../stores/ui";
-  import { statuses, refreshSingleStatus, loadRepos, repos } from "../../stores/repos";
-  import { formatRelativeTime, formatFullTimestamp } from "../../format";
+  import type { CommitSummary } from "../../platform/types";
+  import * as api from "../../platform/api";
+  import { activeDialog, closeDialog, addToast, recoveryToastLink } from "../../app/ui";
+  import { statuses, refreshSingleStatus, loadRepos, repos } from "../../domain/stores/repos";
+  import { formatRelativeTime, formatFullTimestamp } from "../../domain/format";
   import { Modal, Button } from "../common";
 
   interface Props {

@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { moveItem, findDropTarget } from "../src/lib/reorder";
+import { moveItem, findDropTarget } from "../src/lib/domain/reorder";
 
 const list = [{ id: "a" }, { id: "b" }, { id: "c" }, { id: "d" }];
 const ids = (items: { id: string }[]) => items.map((item) => item.id);

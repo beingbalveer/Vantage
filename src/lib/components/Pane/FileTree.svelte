@@ -2,18 +2,17 @@
   import { tick } from "svelte";
   import {
     buildFileTree,
-    filterFileTree,
     flattenVisibleTree,
     collectAllFolderIds,
     getAncestorFolderIds,
     type TreeNode,
     type VisibleNode,
-  } from "../../tree";
+  } from "../../domain/tree";
   import FileIcon from "../common/FileIcon.svelte";
   import Icon from "../common/Icon.svelte";
-  import * as api from "../../api";
-  import { repos } from "../../stores/repos";
-  import { addToast } from "../../stores/ui";
+  import * as api from "../../platform/api";
+  import { repos } from "../../domain/stores/repos";
+  import { addToast } from "../../app/ui";
 
   interface Props {
     files: string[];
@@ -26,11 +25,9 @@
 
   let repoEntry = $derived($repos.find((r) => r.id === repoId));
 
-  let filterText = $state("");
   let compactFolders = $state(true);
   let expandedDirs = $state<Set<string>>(new Set());
   let focusedRowIndex = $state<number>(-1);
-  let searchInputEl = $state<HTMLInputElement | null>(null);
   let treeContainerEl = $state<HTMLDivElement | null>(null);
 
   // Initialize or expand root folders when files first load
@@ -60,23 +57,8 @@
   // Rebuild tree
   let rawTree = $derived(buildFileTree(files, { compactSingleChildDirs: compactFolders }));
 
-  // Filter tree
-  let filterResult = $derived(filterFileTree(rawTree, filterText));
-  let currentTree = $derived(filterResult.filtered);
-  let matchCount = $derived(filterResult.matchCount);
-
-  // Active expanded directories set (union of user-expanded + filter-auto-expanded)
-  let effectiveExpandedDirs = $derived.by(() => {
-    if (filterText.trim()) {
-      const merged = new Set(expandedDirs);
-      for (const id of filterResult.autoExpanded) merged.add(id);
-      return merged;
-    }
-    return expandedDirs;
-  });
-
   // Visible flattened rows
-  let visibleRows = $derived(flattenVisibleTree(currentTree, effectiveExpandedDirs));
+  let visibleRows = $derived(flattenVisibleTree(rawTree, expandedDirs));
 
   function toggleFolder(node: TreeNode) {
     if (!node.isDir) return;
@@ -110,9 +92,10 @@
     });
   }
 
-  export function focusSearch() {
-    searchInputEl?.focus();
-    searchInputEl?.select();
+  let rootEl = $state<HTMLDivElement | null>(null);
+
+  export function focusTree() {
+    rootEl?.focus();
   }
 
   function handleRowClick(visible: VisibleNode) {
@@ -155,11 +138,6 @@
           toggleFolder(item.node);
         }
       }
-    } else if (e.key === "Escape") {
-      if (filterText) {
-        e.preventDefault();
-        filterText = "";
-      }
     }
   }
 
@@ -191,7 +169,7 @@
   }
 </script>
 
-<div class="file-tree-root" role="tree" tabindex="0" onkeydown={handleKeydown}>
+<div class="file-tree-root" role="tree" tabindex="0" bind:this={rootEl} onkeydown={handleKeydown}>
   <!-- Explorer Title & Toolbar -->
   <div class="explorer-toolbar">
     <div class="explorer-heading">
@@ -241,52 +219,11 @@
     </div>
   </div>
 
-  <!-- Search & Filter Bar -->
-  <div class="search-box">
-    <div class="search-input-wrap">
-      <span class="search-icon">
-        <Icon name="search" size={13} />
-      </span>
-      <input
-        bind:this={searchInputEl}
-        type="text"
-        placeholder="Search files (Press /)"
-        bind:value={filterText}
-        class="search-input"
-        spellcheck="false"
-        autocomplete="off"
-        onkeydown={(e) => {
-          if (e.key === "ArrowDown") {
-            e.preventDefault();
-            focusedRowIndex = 0;
-            scrollToFocused();
-          }
-        }}
-      />
-      {#if filterText}
-        <span class="filter-count">{matchCount}</span>
-        <button
-          class="clear-filter-btn"
-          onclick={() => {
-            filterText = "";
-            searchInputEl?.focus();
-          }}
-          title="Clear search"
-          aria-label="Clear search"
-        >
-          <Icon name="close" size={11} />
-        </button>
-      {/if}
-    </div>
-  </div>
-
   <!-- Hierarchical File Tree -->
   <div bind:this={treeContainerEl} class="tree-rows-container">
     {#if visibleRows.length === 0}
       <div class="empty-tree text-muted text-xs">
-        {#if filterText}
-          No files matching "{filterText}"
-        {:else if files.length === 0}
+        {#if files.length === 0}
           No files in this repository
         {:else}
           Tree collapsed
@@ -436,7 +373,7 @@
     height: 22px;
     border: 0;
     background: transparent;
-    border-radius: 4px;
+    border-radius: var(--r-sm);
     color: var(--text-muted);
     display: flex;
     align-items: center;
@@ -459,83 +396,6 @@
     font-weight: 700;
     font-family: ui-monospace, SFMono-Regular, monospace;
     line-height: 1;
-  }
-
-  .search-box {
-    padding: 6px 8px;
-    border-bottom: 1px solid var(--border);
-    flex-shrink: 0;
-  }
-
-  .search-input-wrap {
-    position: relative;
-    display: flex;
-    align-items: center;
-    width: 100%;
-    background: var(--bg-hover, rgba(0, 0, 0, 0.04));
-    border: 1px solid var(--border);
-    border-radius: 6px;
-    padding: 0 6px;
-    height: 26px;
-    transition: border-color 140ms ease, box-shadow 140ms ease;
-  }
-  :global([data-theme="dark"]) .search-input-wrap {
-    background: rgba(255, 255, 255, 0.05);
-  }
-  .search-input-wrap:focus-within {
-    border-color: #3b82f6;
-    box-shadow: 0 0 0 1px rgba(59, 130, 246, 0.35);
-  }
-
-  .search-icon {
-    display: inline-flex;
-    align-items: center;
-    color: var(--text-muted);
-    margin-right: 5px;
-    flex-shrink: 0;
-  }
-
-  .search-input {
-    flex: 1;
-    min-width: 0;
-    border: 0;
-    background: transparent;
-    color: var(--text);
-    font-size: 12px;
-    outline: none;
-    padding: 0;
-  }
-  .search-input::placeholder {
-    color: var(--text-muted);
-    opacity: 0.7;
-  }
-
-  .filter-count {
-    font-size: 10px;
-    font-variant-numeric: tabular-nums;
-    font-weight: 600;
-    color: var(--text-muted);
-    background: rgba(125, 125, 125, 0.15);
-    padding: 1px 5px;
-    border-radius: 8px;
-    margin-right: 4px;
-    flex-shrink: 0;
-  }
-
-  .clear-filter-btn {
-    border: 0;
-    background: none;
-    color: var(--text-muted);
-    cursor: pointer;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    padding: 2px;
-    border-radius: 3px;
-  }
-  .clear-filter-btn:hover {
-    color: var(--text);
-    background: rgba(125, 125, 125, 0.2);
   }
 
   .tree-rows-container {
@@ -654,7 +514,7 @@
     height: 18px;
     border: 0;
     background: transparent;
-    border-radius: 3px;
+    border-radius: var(--r-sm);
     color: var(--text-muted);
     display: flex;
     align-items: center;

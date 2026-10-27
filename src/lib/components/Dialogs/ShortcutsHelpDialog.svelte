@@ -1,6 +1,6 @@
 <script lang="ts">
-  import { shortcutsHelpOpen } from "../../stores/ui";
-  import { COMMANDS, SHORTCUT_CATEGORIES } from "../../keys";
+  import { shortcutsHelpOpen } from "../../app/ui";
+  import { COMMANDS, SHORTCUT_CATEGORIES } from "../../platform/keys";
   import { Modal, Kbd } from "../common";
 
   let categories = SHORTCUT_CATEGORIES;

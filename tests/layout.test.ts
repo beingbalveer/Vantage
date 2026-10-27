@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { defaultPaneWidths, savedPaneWidth } from "../src/lib/layout";
+import { defaultPaneWidths, savedPaneWidth } from "../src/lib/app/layout";
 afterEach(() => vi.unstubAllGlobals());
 describe("approved layout", () => {
   it.each([

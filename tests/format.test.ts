@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { formatRelativeTime, hashStringToColor, formatStats, splitPath, formatCount, pluralize } from "../src/lib/format";
+import { formatRelativeTime, hashStringToColor, formatStats, splitPath, formatCount, pluralize } from "../src/lib/domain/format";
 
 describe("format", () => {
   it("formats just now for recent times", () => {

@@ -37,7 +37,9 @@ tauri-plugin-updater = "2.14.0"
 tauri-plugin-process = "2.4.0"
 
 [profile.release]
-opt-level = "z"
+# Vantage is a long-running desktop UI; favor runtime speed over the smallest
+# possible binary. `z` is still available for size-constrained builds.
+opt-level = 3
 lto = true
 codegen-units = 1
 strip = true

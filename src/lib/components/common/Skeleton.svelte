@@ -53,7 +53,7 @@
     flex-shrink: 0;
     width: 11px;
     height: 11px;
-    border-radius: 50%;
+    border-radius: var(--r-sm);
     background-color: var(--bg-muted);
     animation: sk-pulse 1.4s ease-in-out infinite;
   }
@@ -69,7 +69,7 @@
   .sk-bar {
     display: block;
     height: 10px;
-    border-radius: 4px;
+    border-radius: var(--r-sm);
     background-color: var(--bg-muted);
     animation: sk-pulse 1.4s ease-in-out infinite;
   }

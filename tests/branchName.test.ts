@@ -3,7 +3,7 @@ import {
   validateBranchName,
   isValidBranchName,
   describeStartPoint,
-} from "../src/lib/branchName";
+} from "../src/lib/domain/branchName";
 
 describe("validateBranchName", () => {
   it("accepts ordinary branch names", () => {

@@ -2022,6 +2022,50 @@ pub async fn reveal_in_file_manager(path: String) -> Result<(), AppError> {
     Ok(())
 }
 
+/// Only absolute http(s) URLs may be handed to the OS: a rendered document must
+/// never be able to launch `file:`, `javascript:` or arbitrary app schemes.
+fn validate_open_url(url: &str) -> Result<&str, AppError> {
+    let trimmed = url.trim();
+    let lower = trimmed.to_ascii_lowercase();
+    if lower.starts_with("http://") || lower.starts_with("https://") {
+        Ok(trimmed)
+    } else {
+        Err(AppError::new(
+            "Validation",
+            "Only http and https links can be opened.",
+        ))
+    }
+}
+
+/// Open an http(s) URL in the system browser.
+#[tauri::command]
+pub async fn open_url(url: String) -> Result<(), AppError> {
+    let trimmed = validate_open_url(&url)?;
+
+    #[cfg(target_os = "macos")]
+    {
+        tokio::process::Command::new("open")
+            .arg(trimmed)
+            .spawn()
+            .map_err(AppError::io)?;
+    }
+    #[cfg(target_os = "windows")]
+    {
+        tokio::process::Command::new("cmd")
+            .args(["/C", "start", "", trimmed])
+            .spawn()
+            .map_err(AppError::io)?;
+    }
+    #[cfg(target_os = "linux")]
+    {
+        tokio::process::Command::new("xdg-open")
+            .arg(trimmed)
+            .spawn()
+            .map_err(AppError::io)?;
+    }
+    Ok(())
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CommitMsgResult {
@@ -2550,5 +2594,30 @@ mod tests {
         repos.sort_by_key(|r| (if r.pinned { 0 } else { 1 }, r.order));
         assert_eq!(repos[0].id, "2");
         assert_eq!(repos[1].id, "1");
+    }
+}
+
+#[cfg(test)]
+mod open_url_tests {
+    use super::validate_open_url;
+
+    #[test]
+    fn accepts_http_and_https() {
+        assert!(validate_open_url("https://example.com/a?b=c").is_ok());
+        assert!(validate_open_url("  http://localhost:3000  ").is_ok());
+    }
+
+    #[test]
+    fn rejects_other_schemes_and_relative_targets() {
+        for bad in [
+            "file:///etc/passwd",
+            "javascript:alert(1)",
+            "data:text/html,<script>alert(1)</script>",
+            "ssh://host",
+            "/relative/path",
+            "",
+        ] {
+            assert!(validate_open_url(bad).is_err(), "{bad} should be rejected");
+        }
     }
 }

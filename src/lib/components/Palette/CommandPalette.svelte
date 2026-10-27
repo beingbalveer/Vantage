@@ -12,9 +12,9 @@
     addRepoInitialTab,
     openSettingsAt,
     stashDialogOpen,
-    composerRequest,
-  } from "../../stores/ui";
-  import { repos, activeRepoId, loadRepos, refreshAllStatuses, refreshSingleStatus } from "../../stores/repos";
+  } from "../../app/ui";
+  import { composerRequest } from "../../domain/stores/composer";
+  import { repos, activeRepoId, loadRepos, refreshAllStatuses, refreshSingleStatus } from "../../domain/stores/repos";
   import {
     openRepoInFocusedPane,
     openRepoInNextPane,
@@ -26,17 +26,17 @@
     closePane,
     cyclePaneCount,
     toggleTerminalInPane,
-  } from "../../stores/panes";
-  import { settings, updateSettings } from "../../stores/settings";
-  import { navigateTo } from "../../stores/navigation";
-  import { formatKey, SHORTCUTS } from "../../keys";
-  import { paletteCommands, runCommand, getBaseContexts, loadLayoutByName, readSavedLayouts } from "../../commands";
-  import { isFeatureEnabled } from "../../featureFlags.svelte";
-  import { fuzzyScore } from "../../fuzzy";
-  import { formatRelativeTime } from "../../format";
-  import type { CommitSummary } from "../../types";
-  import * as api from "../../api";
-  import { runUndoLastCommit } from "../../undoCommit";
+  } from "../../domain/stores/panes";
+  import { settings, updateSettings } from "../../domain/stores/settings";
+  import { navigateTo } from "../../domain/stores/navigation";
+  import { formatKey, SHORTCUTS } from "../../platform/keys";
+  import { paletteCommands, runCommand, getBaseContexts, loadLayoutByName, readSavedLayouts } from "../../app/commands";
+  import { isFeatureEnabled } from "../../config/featureFlags.svelte";
+  import { fuzzyScore } from "../../util/fuzzy";
+  import { formatRelativeTime } from "../../domain/format";
+  import type { CommitSummary } from "../../platform/types";
+  import * as api from "../../platform/api";
+  import { runUndoLastCommit } from "../../domain/undoCommit";
   import Icon from "../common/Icon.svelte";
 
   let query = $state("");

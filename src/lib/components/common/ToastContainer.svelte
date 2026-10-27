@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { toasts, removeToast, pauseToastTimer, resumeToastTimer } from "../../stores/ui";
+  import { toasts, removeToast, pauseToastTimer, resumeToastTimer } from "../../app/ui";
   import Icon from "./Icon.svelte";
 
   let toastList = $derived($toasts);
@@ -65,7 +65,7 @@
     padding: 8px 14px;
     background-color: var(--text);
     color: var(--bg);
-    border-radius: 8px;
+    border-radius: var(--r-sm);
     box-shadow: var(--shadow-pop);
     font-size: 13px;
     line-height: 20px;

@@ -5,7 +5,7 @@ import {
   formatSizeChange,
   imageMime,
   isImagePath,
-} from "../src/lib/diff-content";
+} from "../src/lib/domain/diff-content";
 
 describe("diff content classification", () => {
   it("recognises previewable image extensions", () => {

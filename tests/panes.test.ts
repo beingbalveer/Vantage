@@ -7,7 +7,7 @@ import {
   focusPane,
   closePane,
   setPaneCount,
-} from "../src/lib/stores/panes";
+} from "../src/lib/domain/stores/panes";
 
 describe("panes store", () => {
   beforeEach(() => {

@@ -6,7 +6,7 @@ import {
   resetFeatureFlags,
   FEATURE_METADATA,
   type FeatureFlagKey,
-} from "../src/lib/featureFlags.svelte";
+} from "../src/lib/config/featureFlags.svelte";
 
 describe("featureFlags system", () => {
   beforeEach(() => {

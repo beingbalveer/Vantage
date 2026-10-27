@@ -1,13 +1,14 @@
 <script lang="ts">
-  import { onMount, tick } from "svelte";
-  import * as api from "../../api";
-  import type { BlameInfo, DefHit } from "../../types";
-  import { highlightCodeLines, getLanguageFromPath } from "../../highlight";
-  import { formatRelativeTime } from "../../format";
-  import { scrollBehavior } from "../../motion";
-  import { isMac } from "../../keys";
-  import { addToast } from "../../stores/ui";
-  import { registerHandler, registerDismiss, ownsPaneKeyboard } from "../../commands";
+  import { onMount, onDestroy, tick } from "svelte";
+  import * as api from "../../platform/api";
+  import type { BlameInfo, DefHit } from "../../platform/types";
+  import { RequestTracker } from "../../platform/request";
+  import { highlightCodeLines, getLanguageFromPath } from "../../design/highlight";
+  import { formatRelativeTime } from "../../domain/format";
+  import { scrollBehavior } from "../../design/motion";
+  import { isMac } from "../../platform/keys";
+  import { addToast } from "../../app/ui";
+  import { registerHandler, registerDismiss, ownsPaneKeyboard } from "../../app/commands";
   import Icon from "../common/Icon.svelte";
   import FileIcon from "../common/FileIcon.svelte";
 
@@ -31,11 +32,106 @@
     onnavigatetofile,
   }: Props = $props();
 
+  const MARKDOWN_PATH = /\.(md|markdown|mdx)$/i;
+
   let codeText = $state("");
   let rawLines = $state<string[]>([]);
   let lines = $state<string[]>([]);
   let isLoading = $state(true);
   let isWrapped = $state(false);
+
+  // Markdown opens rendered; the header toggle flips to the raw source.
+  let isMarkdown = $derived(MARKDOWN_PATH.test(path));
+  let previewMode = $state(true);
+  let previewEl = $state<HTMLDivElement | null>(null);
+  let previewHtml = $state("");
+  let markdownLib: {
+    marked: typeof import("marked").marked;
+    sanitize: (html: string) => string;
+  } | null = null;
+
+  $effect(() => {
+    // Markdown opens rendered — unless the caller is navigating to a line, in
+    // which case the raw source is the only view where that line exists.
+    if (MARKDOWN_PATH.test(path)) previewMode = !targetLine;
+  });
+
+  // Rendering is lazy: marked + DOMPurify only load when a document is first
+  // previewed, so they stay out of the startup bundle.
+  $effect(() => {
+    const text = codeText;
+    const show = isMarkdown && previewMode;
+    if (!show || !text) {
+      previewHtml = "";
+      return;
+    }
+    let cancelled = false;
+    (async () => {
+      if (!markdownLib) {
+        const [markedMod, purifyMod] = await Promise.all([import("marked"), import("dompurify")]);
+        markdownLib = {
+          marked: markedMod.marked,
+          sanitize: (html: string) => purifyMod.default.sanitize(html),
+        };
+      }
+      if (cancelled) return;
+      // Repo documents are untrusted input: parse, then strip anything active.
+      const raw = markdownLib.marked.parse(text, { async: false, gfm: true }) as string;
+      previewHtml = markdownLib.sanitize(raw);
+    })().catch((e) => {
+      console.error("Failed to render markdown:", e);
+      if (!cancelled) previewHtml = "";
+    });
+    return () => {
+      cancelled = true;
+    };
+  });
+
+  // Hide images whose relative source cannot resolve inside the viewer.
+  $effect(() => {
+    previewHtml;
+    const el = previewEl;
+    if (!el) return;
+    for (const img of el.querySelectorAll("img")) {
+      if (img.complete && img.naturalWidth === 0) {
+        img.style.display = "none";
+        continue;
+      }
+      img.addEventListener("error", () => (img.style.display = "none"), { once: true });
+    }
+  });
+
+  async function openPreviewLink(anchor: HTMLAnchorElement) {
+    const href = anchor.getAttribute("href") ?? "";
+    if (href.startsWith("#")) {
+      const id = href.slice(1);
+      previewEl?.querySelector<HTMLElement>(`[id="${CSS.escape(id)}"]`)?.scrollIntoView({
+        block: "start",
+        behavior: scrollBehavior(),
+      });
+      return;
+    }
+    if (!/^https?:\/\//i.test(href)) return; // relative links stay inert
+    try {
+      await api.openUrl(href);
+    } catch (err: any) {
+      addToast({ message: err?.message || "Couldn't open link", kind: "error" });
+    }
+  }
+
+  // A rendered document must never navigate the webview: intercept both mouse
+  // and keyboard activation and hand http(s) targets to the system browser.
+  function handlePreviewActivate(e: Event) {
+    const anchor = (e.target as HTMLElement | null)?.closest("a");
+    if (!anchor) return;
+    e.preventDefault();
+    void openPreviewLink(anchor);
+  }
+
+  function handlePreviewKeydown(e: KeyboardEvent) {
+    if (e.key !== "Enter" && e.key !== " ") return;
+    handlePreviewActivate(e);
+  }
 
   // Line elements for scrolling
   let lineRowEls: Record<number, HTMLElement> = {};
@@ -66,6 +162,16 @@
   let peekOpen = $state(false);
 
   let language = $derived(getLanguageFromPath(path));
+
+  // Latest-wins guards: switching files must not let a slow BlobText or blame
+  // response overwrite the file the user is looking at now.
+  const fileRequests = new RequestTracker();
+  const blameRequests = new RequestTracker();
+
+  onDestroy(() => {
+    fileRequests.dispose();
+    blameRequests.dispose();
+  });
 
   // Find matches computation
   interface MatchPos {
@@ -137,6 +243,8 @@
   });
 
   async function loadFile() {
+    const request = fileRequests.begin();
+    blameRequests.cancel();
     isLoading = true;
     blameCache.clear();
     activeBlame = null;
@@ -144,19 +252,22 @@
 
     try {
       const res = await api.blobText(repoId, rev, path);
+      if (!request.isCurrent()) return;
       codeText = res.text;
       rawLines = res.text.split("\n");
       lines = highlightCodeLines(res.text, language);
     } catch (e) {
+      if (!request.isCurrent()) return;
       console.error("Failed to load file:", e);
       codeText = "";
       rawLines = [];
       lines = [];
     } finally {
+      if (!request.isCurrent()) return;
       isLoading = false;
       if (targetLine) {
         await tick();
-        navigateToLine(targetLine);
+        if (request.isCurrent()) navigateToLine(targetLine);
       }
     }
   }
@@ -192,16 +303,15 @@
       return;
     }
 
+    const request = blameRequests.begin();
     try {
       const b = await api.blameLine(repoId, rev, path, lineNo);
+      if (!request.isCurrent() || blameLineNo !== lineNo) return;
       blameCache.set(lineNo, b);
-      if (blameLineNo === lineNo) {
-        activeBlame = b;
-      }
+      activeBlame = b;
     } catch {
-      if (blameLineNo === lineNo) {
-        activeBlame = null;
-      }
+      if (!request.isCurrent() || blameLineNo !== lineNo) return;
+      activeBlame = null;
     }
   }
 
@@ -413,28 +523,42 @@
     </div>
 
     <div class="actions">
-      <button
-        type="button"
-        class="viewer-icon-btn"
-        class:active={isWrapped}
-        aria-pressed={isWrapped}
-        onclick={() => (isWrapped = !isWrapped)}
-        title="Toggle word wrap (Alt+Z) · Currently {isWrapped ? 'On' : 'Off'}"
-        aria-label="Toggle word wrap"
-      >
-        <Icon name="wrap" size={15} />
-      </button>
+      {#if isMarkdown}
+        <button
+          type="button"
+          class="viewer-icon-btn"
+          onclick={() => (previewMode = !previewMode)}
+          title={previewMode ? "View raw markdown" : "View rendered markdown"}
+          aria-label={previewMode ? "View raw markdown" : "View rendered markdown"}
+        >
+          <Icon name={previewMode ? "code" : "eye"} size={15} />
+        </button>
+      {/if}
 
-      <button
-        type="button"
-        class="viewer-icon-btn"
-        class:active={findOpen}
-        onclick={toggleFindBar}
-        title="Find in file ({isMac() ? '⌘F' : 'Ctrl+F'})"
-        aria-label="Find in file"
-      >
-        <Icon name="search" size={14} />
-      </button>
+      {#if !(isMarkdown && previewMode)}
+        <button
+          type="button"
+          class="viewer-icon-btn"
+          class:active={isWrapped}
+          aria-pressed={isWrapped}
+          onclick={() => (isWrapped = !isWrapped)}
+          title="Toggle word wrap (Alt+Z) · Currently {isWrapped ? 'On' : 'Off'}"
+          aria-label="Toggle word wrap"
+        >
+          <Icon name="wrap" size={15} />
+        </button>
+
+        <button
+          type="button"
+          class="viewer-icon-btn"
+          class:active={findOpen}
+          onclick={toggleFindBar}
+          title="Find in file ({isMac() ? '⌘F' : 'Ctrl+F'})"
+          aria-label="Find in file"
+        >
+          <Icon name="search" size={14} />
+        </button>
+      {/if}
 
       <button
         type="button"
@@ -487,6 +611,18 @@
   <div class="code-body" bind:this={viewerBodyEl}>
     {#if isLoading}
       <div class="loading-state text-sm text-muted" role="status">Loading file…</div>
+    {:else if isMarkdown && previewMode}
+      <!-- svelte-ignore a11y_click_events_have_key_events -->
+      <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
+      <div
+        class="markdown-body"
+        bind:this={previewEl}
+        onclick={handlePreviewActivate}
+        onkeydown={handlePreviewKeydown}
+        role="document"
+      >
+        {@html previewHtml}
+      </div>
     {:else}
       <div class="lines-container font-mono" class:wrapped={isWrapped}>
         {#each lines as lineHtml, idx (idx)}
@@ -591,8 +727,8 @@
   }
 
   .viewer-header {
-    height: 40px;
-    min-height: 40px;
+    height: 32px;
+    min-height: 32px;
     background-color: var(--bg);
     border-bottom: 1px solid var(--border);
     display: flex;
@@ -643,7 +779,7 @@
     align-items: center;
     justify-content: center;
     border: 1px solid transparent;
-    border-radius: 5px;
+    border-radius: var(--r-sm);
     background: transparent;
     color: var(--text-muted);
     cursor: pointer;
@@ -721,7 +857,7 @@
 
   :global(.find-match) {
     background-color: var(--warning-bg);
-    border-radius: 2px;
+    border-radius: var(--r-sm);
     color: inherit;
   }
   :global(.find-match-current) {

@@ -7,7 +7,7 @@ import {
   parseCoAuthor,
   removeCoAuthor,
   type CoAuthor,
-} from "../src/lib/coauthors";
+} from "../src/lib/domain/coauthors";
 
 describe("parseCoAuthor", () => {
   it("accepts and normalizes a Name <email> entry", () => {

@@ -77,7 +77,7 @@
     top: 7px;
     bottom: 7px;
     width: 3px;
-    border-radius: 0 3px 3px 0;
+    border-radius: var(--r-sm);
     background: var(--accent);
   }
 

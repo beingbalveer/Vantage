@@ -1,0 +1,140 @@
+*, *::before, *::after {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+button, input, select, textarea {
+  border-radius: 0;
+}
+
+html, body, #app {
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  background-color: var(--bg);
+  color: var(--text);
+  font-family: var(--font-ui);
+  font-size: 13px;
+  line-height: 20px;
+  -webkit-font-smoothing: antialiased;
+  user-select: none;
+}
+
+/* Scrollbars */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--border);
+  border-radius: var(--r-sm);
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--text-faint);
+}
+
+/* Focus Ring */
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+/* Tabular numbers for counts and times */
+.tabular-nums {
+  font-variant-numeric: tabular-nums;
+}
+
+/* Mono text */
+.font-mono {
+  font-family: var(--font-mono);
+}
+
+/* Utility text weights & sizes */
+.text-xs { font-size: 11px; line-height: 16px; font-weight: 500; }
+.text-sm { font-size: 12px; line-height: 16px; font-weight: 400; }
+.text-base { font-size: 13px; line-height: 20px; font-weight: 400; }
+.text-strong { font-size: 13px; line-height: 20px; font-weight: 600; }
+.text-lg { font-size: 15px; line-height: 24px; font-weight: 600; }
+.text-muted { color: var(--text-muted); }
+.text-faint { color: var(--text-faint); }
+
+/* Layout utilities */
+.flex { display: flex; }
+.flex-col { display: flex; flex-direction: column; }
+.flex-1 { flex: 1 1 0%; min-width: 0; }
+.inline-block { display: inline-block; vertical-align: middle; }
+.inline-flex { display: inline-flex; align-items: center; }
+.items-center { align-items: center; }
+.justify-between { justify-content: space-between; }
+.gap-1 { gap: var(--s-1); }
+.gap-2 { gap: var(--s-2); }
+.gap-3 { gap: var(--s-3); }
+.truncate { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* Reduced motion preference */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+/* Metadata stays copyable even when it lives inside a clickable row. */
+.commit-title,
+.commit-meta,
+.commit-subject,
+.commit-body-text,
+.commit-extra-meta,
+.commit-sha,
+.commit-subj,
+.commit-target-branch,
+.file-path,
+.dir-text,
+.file-name,
+.path-chip,
+.rev-chip,
+.repo-name,
+.branch-name,
+.hover-path,
+.history-footer,
+.backup-ref,
+.blame-sha,
+.blame-author,
+.blame-date,
+.blame-subject,
+.term-title,
+.term-cwd,
+.row-subtitle,
+.row-title,
+.branch-picker-name,
+input,
+textarea,
+select,
+[contenteditable="true"] {
+  user-select: text;
+}
+
+/* Global column drag styles */
+body.resizing-col {
+  cursor: col-resize !important;
+  user-select: none !important;
+}
+body.resizing-col * {
+  cursor: col-resize !important;
+  user-select: none !important;
+}
+
+/* Sidebar repo reordering (pointer-driven, see Sidebar.svelte) */
+body.repo-dragging,
+body.repo-dragging * {
+  cursor: grabbing !important;
+  user-select: none !important;
+}

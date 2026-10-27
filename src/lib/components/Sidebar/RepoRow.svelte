@@ -1,22 +1,22 @@
 <script lang="ts">
   import { onDestroy, onMount } from "svelte";
-  import type { RepoEntry, RepoStatus, BranchInfo } from "../../types";
+  import type { RepoEntry, RepoStatus, BranchInfo } from "../../platform/types";
   import {
     openRepoInFocusedPane,
     openRepoInNextPane,
     focusedPaneIndex,
     panes,
     paneCount,
-  } from "../../stores/panes";
-  import { repos, loadRepos, activeRepoId, removeRepo } from "../../stores/repos";
-  import { addToast, sidebarCollapsed, openDialog } from "../../stores/ui";
-  import { registerDismiss } from "../../commands";
-  import * as api from "../../api";
+  } from "../../domain/stores/panes";
+  import { repos, loadRepos, activeRepoId, removeRepo } from "../../domain/stores/repos";
+  import { addToast, sidebarCollapsed, openDialog } from "../../app/ui";
+  import { registerDismiss } from "../../app/commands";
+  import * as api from "../../platform/api";
   import { get } from "svelte/store";
   import Icon from "../common/Icon.svelte";
   import { Modal } from "../common";
   import RepoIcon from "./RepoIcon.svelte";
-  import { formatCount, pluralize } from "../../format";
+  import { formatCount, pluralize } from "../../domain/format";
 
   interface Props {
     repo: RepoEntry;
@@ -512,14 +512,21 @@
         {:else}
           {#each filtered as b (b.name)}
             <div class="branch-picker-item" class:is-head={b.isHead}>
-              <span class="branch-picker-name font-mono text-xs">
+              <span class="branch-picker-name text-xs">
                 <Icon name="git-branch" size={12} class="mr-1 inline-block" />
                 {b.name}
                 {#if b.isHead}
                   <span class="head-pill text-xs">current</span>
                 {/if}
               </span>
-              <button class="pick-btn" onclick={() => handleAddBranch(b.name)}>Add view</button>
+              <button
+                class="pick-btn"
+                onclick={() => handleAddBranch(b.name)}
+                title="Add branch view"
+                aria-label={`Add branch view for ${b.name}`}
+              >
+                <Icon name="plus" size={12} />
+              </button>
             </div>
           {/each}
         {/if}
@@ -536,7 +543,7 @@
     min-height: 52px;
     padding: 6px 12px;
     cursor: pointer;
-    border-radius: 12px;
+    border-radius: var(--r-sm);
     margin: 2px 6px;
     position: relative;
     transition: background-color 100ms ease;
@@ -570,7 +577,7 @@
     right: 4px;
     height: 3px;
     background: var(--accent);
-    border-radius: 2px;
+    border-radius: var(--r-sm);
     z-index: 20;
     pointer-events: none;
   }
@@ -583,7 +590,7 @@
     right: 4px;
     height: 3px;
     background: var(--accent);
-    border-radius: 2px;
+    border-radius: var(--r-sm);
     z-index: 20;
     pointer-events: none;
   }
@@ -597,7 +604,7 @@
     padding: 0;
     margin: 4px auto;
     justify-content: center;
-    border-radius: 12px;
+    border-radius: var(--r-sm);
     gap: 0;
     flex-shrink: 0;
   }
@@ -617,7 +624,7 @@
   .repo-icon-box {
     width: 36px;
     height: 36px;
-    border-radius: 10px;
+    border-radius: var(--r-sm);
     display: flex;
     align-items: center;
     justify-content: center;
@@ -644,7 +651,7 @@
     min-width: 14px;
     height: 14px;
     padding: 0 4px;
-    border-radius: 7px;
+    border-radius: var(--r-sm);
     box-sizing: border-box;
     background-color: var(--accent);
     color: var(--accent-fg);
@@ -789,7 +796,7 @@
     padding: 15px 17px;
     background: var(--bg);
     border: 1px solid var(--border);
-    border-radius: 14px;
+    border-radius: var(--r-sm);
     box-shadow: 0 9px 28px rgba(0, 0, 0, 0.075);
     z-index: 100;
     pointer-events: none;
@@ -962,6 +969,8 @@
     align-items: center;
     gap: 6px;
     color: var(--text);
+    font-family: var(--font-ui);
+    letter-spacing: -0.01em;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
@@ -969,7 +978,7 @@
 
   .head-pill {
     padding: 0 4px;
-    border-radius: 3px;
+    border-radius: var(--r-sm);
     background-color: var(--accent);
     color: var(--accent-fg);
     font-size: 9px;
@@ -977,10 +986,12 @@
   }
 
   .pick-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 24px;
     height: 24px;
-    padding: 0 8px;
-    font-size: 11px;
-    font-weight: 500;
+    padding: 0;
     border-radius: var(--r-sm);
     border: 1px solid var(--border);
     background-color: var(--bg);

@@ -1,20 +1,21 @@
 <script lang="ts">
   import { get } from "svelte/store";
   import { onDestroy, onMount } from "svelte";
-  import { repos, statuses, loadRepos, refreshSingleStatus } from "../../stores/repos";
+  import { repos, statuses, loadRepos, refreshSingleStatus } from "../../domain/stores/repos";
   import {
     panes,
     focusedPaneIndex,
     toggleTerminalInPane,
     setPaneTab,
-  } from "../../stores/panes";
-  import { paletteOpen, settingsOpen, shortcutsHelpOpen, sidebarCollapsed, addToast } from "../../stores/ui";
-  import { setOperationRunning, setOperationSuccess, setOperationError } from "../../stores/operation";
-  import { formatRelativeTime } from "../../format";
-  import { registerDismiss } from "../../commands";
-  import * as api from "../../api";
+  } from "../../domain/stores/panes";
+  import { paletteOpen, settingsOpen, shortcutsHelpOpen, sidebarCollapsed, addToast } from "../../app/ui";
+  import { setOperationRunning, setOperationSuccess, setOperationError } from "../../domain/stores/operation";
+  import { formatRelativeTime } from "../../domain/format";
+  import { registerDismiss } from "../../app/commands";
+  import * as api from "../../platform/api";
   import Icon from "../common/Icon.svelte";
   import { Modal } from "../common";
+  import BranchDropdown from "../Pane/BranchDropdown.svelte";
 
   let currentPane = $derived($panes[$focusedPaneIndex]);
   let currentTab = $derived(currentPane?.tab || "history");
@@ -186,10 +187,16 @@
       aria-label="Toggle repositories"
       aria-expanded={!$sidebarCollapsed}
     >
-      <Icon name="sidebar" size={18} />
+      <Icon name="sidebar" size={16} />
     </button>
 
     {#if activeRepo}
+      <span class="operation-divider"></span>
+
+      <div class="header-branch">
+        <BranchDropdown repo={activeRepo} status={activeStatus} inline />
+      </div>
+
       <span class="operation-divider"></span>
 
       <!-- Combined GitHub Desktop-style button matching original fetch button style -->
@@ -202,9 +209,8 @@
         aria-label={syncLabel}
       >
         <span class="op-icon" class:spinning={isSyncing}>
-          <Icon name={syncIconName} size={16} />
+          <Icon name={syncIconName} size={14} />
         </span>
-        <span class="label">{syncLabel}</span>
         {#if syncCount > 0}
           <span class="op-count">{syncCount}</span>
         {/if}
@@ -223,7 +229,7 @@
       aria-label="Toggle terminal"
       aria-pressed={isTerminalOpen}
     >
-      <Icon name="terminal" size={17} />
+      <Icon name="terminal" size={16} />
     </button>
 
     <span class="operation-divider"></span>
@@ -238,7 +244,7 @@
       aria-haspopup="menu"
       aria-expanded={showMore}
     >
-      <Icon name="more-horizontal" size={18} />
+      <Icon name="more-horizontal" size={16} />
     </button>
     <button
       class="icon-button"
@@ -246,7 +252,7 @@
       title="Preferences (⌘,)"
       aria-label="Preferences"
     >
-      <Icon name="gear" size={17} />
+      <Icon name="gear" size={16} />
     </button>
 
     {#if showMore}
@@ -344,16 +350,18 @@
 
 <style>
   .top-header {
-    /* 26px center line; Tauri's native titlebar inset is 28 (not CSS top). */
-    --header-height: 52px;
+    /* 18px center line; Tauri's native titlebar inset is 18 (not CSS top). */
+    --header-height: 36px;
     height: var(--header-height);
     min-height: var(--header-height);
     flex-shrink: 0;
-    padding: 0 16px 0 20px;
+    padding: 0 10px;
     display: flex;
     align-items: center;
     background: var(--chrome);
+    /* Hairline fence so the chrome reads separately from the workspace. */
     border: 0;
+    border-bottom: 1px solid var(--border);
     position: relative;
     color: #353a40;
     z-index: 40;
@@ -363,26 +371,34 @@
   .header-left {
     display: flex;
     align-items: center;
-    gap: 8px;
+    gap: 4px;
     min-width: 0;
     flex-shrink: 0;
   }
 
   .traffic-lights-spacer {
-    width: 70px;
+    width: 68px;
+    flex-shrink: 0;
+  }
+
+  .header-branch {
+    display: flex;
+    align-items: center;
+    min-width: 0;
+    max-width: 240px;
     flex-shrink: 0;
   }
 
   .icon-button {
-    width: 30px;
-    height: 30px;
+    width: 26px;
+    height: 26px;
     flex-shrink: 0;
     display: flex;
     align-items: center;
     justify-content: center;
     border: 0;
     background: none;
-    border-radius: 7px;
+    border-radius: var(--r-sm);
     color: #3d454e;
     cursor: pointer;
     padding: 0;
@@ -407,15 +423,14 @@
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    gap: 6px;
-    height: 33px;
-    padding: 0 9px;
-    font-size: 13px;
-    font-weight: 500;
+    gap: 5px;
+    min-width: 26px;
+    height: 26px;
+    padding: 0 6px;
     color: #3d454e;
     background: transparent;
     border: 0;
-    border-radius: 7px;
+    border-radius: var(--r-sm);
     cursor: pointer;
     white-space: nowrap;
     transition: background 100ms ease, color 100ms ease;
@@ -462,13 +477,13 @@
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    min-width: 17px;
-    height: 17px;
-    padding: 0 5px;
-    font-size: 11px;
+    min-width: 16px;
+    height: 16px;
+    padding: 0 4px;
+    font-size: 10px;
     font-weight: 600;
     line-height: 1;
-    border-radius: 9px;
+    border-radius: var(--r-sm);
     background: rgba(0, 0, 0, 0.08);
     color: #3d454e;
     font-variant-numeric: tabular-nums;
@@ -517,7 +532,7 @@
     min-width: 220px;
     padding: 5px;
     background: var(--bg);
-    border-radius: 10px;
+    border-radius: var(--r-sm);
     box-shadow: 0 7px 28px rgba(0, 0, 0, 0.11), 0 0 0 1px rgba(0, 0, 0, 0.03);
     z-index: 120;
     max-height: 420px;
@@ -541,7 +556,7 @@
     padding: 8px 10px;
     border: 0;
     background: none;
-    border-radius: 6px;
+    border-radius: var(--r-sm);
     justify-content: flex-start;
     text-align: left;
     font-size: 13px;

@@ -22,4 +22,17 @@ export default defineConfig({
       ignored: ["**/src-tauri/**"],
     },
   },
+  build: {
+    rollupOptions: {
+      output: {
+        // Keep the syntax highlighter and the Svelte runtime in stable chunks
+        // so an app-code change does not invalidate them in the webview cache.
+        manualChunks(id) {
+          if (id.includes("node_modules/highlight.js")) return "highlight";
+          if (id.includes("node_modules/svelte")) return "svelte";
+          return undefined;
+        },
+      },
+    },
+  },
 });
