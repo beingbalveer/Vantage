@@ -114,10 +114,7 @@ fn parse_range(token: &[u8]) -> (u32, u32) {
     let text = String::from_utf8_lossy(token);
     let mut parts = text.split(',');
     let start = parts.next().and_then(|s| s.parse().ok()).unwrap_or(1);
-    let lines = parts
-        .next()
-        .and_then(|s| s.parse().ok())
-        .unwrap_or(1);
+    let lines = parts.next().and_then(|s| s.parse().ok()).unwrap_or(1);
     (start, lines)
 }
 
@@ -187,8 +184,7 @@ fn parse_file_diff(raw: &[u8]) -> Result<ParsedFile, AppError> {
             continue;
         }
 
-        if let Some((old_start, old_lines, new_start, new_lines, suffix)) =
-            parse_hunk_header(line)
+        if let Some((old_start, old_lines, new_start, new_lines, suffix)) = parse_hunk_header(line)
         {
             if let Some(h) = current.take() {
                 hunks.push(h);
@@ -415,7 +411,11 @@ fn file_mode(parsed: &ParsedFile) -> Vec<u8> {
 
 /// Build the header for the patch. Some cases need the file-level metadata to
 /// change because a partial operation is no longer a whole-file add/delete.
-fn build_header(parsed: &ParsedFile, target: PatchTarget, all_file_lines_selected: bool) -> Vec<u8> {
+fn build_header(
+    parsed: &ParsedFile,
+    target: PatchTarget,
+    all_file_lines_selected: bool,
+) -> Vec<u8> {
     let mut out = Vec::new();
 
     // Unstage a whole added/deleted file: reset the index entry instead of
@@ -432,9 +432,8 @@ fn build_header(parsed: &ParsedFile, target: PatchTarget, all_file_lines_selecte
     let new_to_modified = parsed.new_file
         && (target == PatchTarget::Unstage || target == PatchTarget::Discard)
         && !all_file_lines_selected;
-    let deleted_to_modified = parsed.deleted_file
-        && target == PatchTarget::Stage
-        && !all_file_lines_selected;
+    let deleted_to_modified =
+        parsed.deleted_file && target == PatchTarget::Stage && !all_file_lines_selected;
 
     let plus_token = header_path(&parsed.header, b"+++ ");
     let minus_token = header_path(&parsed.header, b"--- ");
@@ -545,9 +544,9 @@ fn build_partial_restore_new_file(
     Ok(out)
 }
 
-fn selected_set<'a>(
+fn selected_set(
     parsed: &ParsedFile,
-    selected: &'a [SelectedLine],
+    selected: &[SelectedLine],
 ) -> Result<Vec<(usize, usize)>, AppError> {
     let mut index = std::collections::HashMap::new();
     for (h_idx, hunk) in parsed.hunks.iter().enumerate() {
@@ -613,7 +612,10 @@ fn all_file_lines_selected(parsed: &ParsedFile, selected: &[(usize, usize)]) -> 
 /// A hunk that changes the final newline cannot be split safely: dropping one
 /// side of a replacement produces a syntactically valid but wrong file. Require
 /// the whole hunk up front rather than silently corrupting the file.
-fn validate_no_newline_groups(parsed: &ParsedFile, selected: &[(usize, usize)]) -> Result<(), AppError> {
+fn validate_no_newline_groups(
+    parsed: &ParsedFile,
+    selected: &[(usize, usize)],
+) -> Result<(), AppError> {
     let selected_set: std::collections::HashSet<(usize, usize)> =
         selected.iter().copied().collect();
     for (h_idx, hunk) in parsed.hunks.iter().enumerate() {
@@ -621,14 +623,10 @@ fn validate_no_newline_groups(parsed: &ParsedFile, selected: &[(usize, usize)]) 
         if !has_marker {
             continue;
         }
-        let any_selected = hunk
-            .lines
-            .iter()
-            .enumerate()
-            .any(|(l_idx, l)| {
-                (l.kind == LineKind::Add || l.kind == LineKind::Del)
-                    && selected_set.contains(&(h_idx, l_idx))
-            });
+        let any_selected = hunk.lines.iter().enumerate().any(|(l_idx, l)| {
+            (l.kind == LineKind::Add || l.kind == LineKind::Del)
+                && selected_set.contains(&(h_idx, l_idx))
+        });
         if !any_selected {
             continue;
         }

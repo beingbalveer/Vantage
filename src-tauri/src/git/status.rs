@@ -295,10 +295,9 @@ pub async fn query_repo_status(
     // Determine last_activity_at
     let last_activity_at = get_last_activity(runner, repo_path, target_branch).await;
 
-    let git_dir = match crate::git::ops::get_real_git_dir(runner, repo_path).await {
-        Ok(dir) => Some(dir),
-        Err(_) => None,
-    };
+    let git_dir = crate::git::ops::get_real_git_dir(runner, repo_path)
+        .await
+        .ok();
     let operation = git_dir.as_deref().and_then(detect_operation);
 
     let is_checked_out = match target_branch {
@@ -428,7 +427,7 @@ mod tests {
 
     #[test]
     fn test_parse_porcelain_v2_dirty_files_and_renames() {
-        let input = b"# branch.oid abc\0# branch.head feat\01 .M N... 100644 100644 100644 abc abc src/main.rs\02 R. N... 100644 100644 100644 abc abc R100 new.rs\0old.rs\0? untracked.txt\0";
+        let input = b"# branch.oid abc\x00# branch.head feat\x001 .M N... 100644 100644 100644 abc abc src/main.rs\x002 R. N... 100644 100644 100644 abc abc R100 new.rs\x00old.rs\x00? untracked.txt\x00";
         let parsed = parse_porcelain_v2(input);
         assert_eq!(parsed.branch, Some("feat".to_string()));
         assert_eq!(parsed.dirty_count, 3);

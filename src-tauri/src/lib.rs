@@ -25,7 +25,7 @@ pub fn run() {
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_process::init())
         .manage(app_state)
-        .menu(|app| crate::menu::build(app))
+        .menu(crate::menu::build)
         .on_menu_event(|app, event| {
             let Some(action) = MenuAction::from_id(event.id().as_ref()) else {
                 // Predefined items (About/Edit/etc.) are handled by the OS.

@@ -242,10 +242,7 @@ async fn commit_using_temp_index(
     body: Option<&str>,
     trailer_block: Option<&str>,
 ) -> Result<CommitSummary, AppError> {
-    let temp_index = git_dir.join(format!(
-        "vantage-index-{}",
-        uuid::Uuid::new_v4().simple()
-    ));
+    let temp_index = git_dir.join(format!("vantage-index-{}", uuid::Uuid::new_v4().simple()));
     let temp_index_str = temp_index.to_string_lossy().to_string();
 
     let real_index = git_dir.join("index");
@@ -372,9 +369,7 @@ async fn commit_using_temp_index(
         for p in &add_paths {
             reset_args.push(p.as_str());
         }
-        let _ = runner
-            .run_write_literal(repo_path, &reset_args, 30)
-            .await;
+        let _ = runner.run_write_literal(repo_path, &reset_args, 30).await;
     }
 
     latest_head_summary(runner, repo_path).await
@@ -493,9 +488,8 @@ pub async fn commit(
                     }
                 }
                 i += 1;
-            } else if part.starts_with(b"u ") {
-                i += 1;
             } else {
+                // Unmerged ("u ") and unrelated entries hold no staging.
                 i += 1;
             }
         }
@@ -969,9 +963,7 @@ fn validate_relative_path(path: &str) -> Result<(), AppError> {
     }
     for component in p.components() {
         if matches!(component, std::path::Component::ParentDir) {
-            return Err(AppError::other(
-                "Invalid file path for a partial operation",
-            ));
+            return Err(AppError::other("Invalid file path for a partial operation"));
         }
     }
     Ok(())
@@ -1052,13 +1044,7 @@ async fn partial_diff(
     // unstaged changes (that would fake an entire-file addition).
     let full_path = repo_path.join(path);
     if full_path.exists() && !path_is_tracked(runner, repo_path, path).await? {
-        let mut no_index_args = vec![
-            "diff",
-            "--no-index",
-            "-U0",
-            "--no-color",
-            "--no-ext-diff",
-        ];
+        let mut no_index_args = vec!["diff", "--no-index", "-U0", "--no-color", "--no-ext-diff"];
         if ignore_whitespace {
             no_index_args.push("-w");
         }
@@ -1295,7 +1281,7 @@ pub async fn partial_lines(
             if !out.success() {
                 return Err(AppError::other(out.stderr));
             }
-            return Ok(None);
+            Ok(None)
         }
         Synthesized::AddFile(patch) => {
             // Creating a partial index entry cannot be done by reversing a
@@ -1316,8 +1302,7 @@ pub async fn partial_lines(
             let line_count = selection
                 .iter()
                 .filter(|s| {
-                    s.kind == crate::state::LineKind::Add
-                        || s.kind == crate::state::LineKind::Del
+                    s.kind == crate::state::LineKind::Add || s.kind == crate::state::LineKind::Del
                 })
                 .count();
 
@@ -2090,7 +2075,6 @@ pub async fn abort_operation(runner: &GitRunner, repo_path: &Path) -> Result<(),
 
     Ok(())
 }
-
 
 #[cfg(test)]
 mod tests {
@@ -3139,9 +3123,7 @@ mod tests {
             .run_write(&repo.path, &["commit", "-am", "main"], 10)
             .await
             .unwrap();
-        let _ = runner
-            .run_write(&repo.path, &["merge", "side"], 10)
-            .await;
+        let _ = runner.run_write(&repo.path, &["merge", "side"], 10).await;
 
         let err = partial_lines(
             &runner,
@@ -3896,5 +3878,4 @@ mod tests {
             err.message
         );
     }
-
 }

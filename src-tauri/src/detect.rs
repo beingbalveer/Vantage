@@ -61,25 +61,37 @@ const EDITOR_SPECS: &[EditorSpec] = &[
     EditorSpec {
         id: "sublime",
         label: "Sublime Text",
-        programs: &["subl", "/Applications/Sublime Text.app/Contents/SharedSupport/bin/subl"],
+        programs: &[
+            "subl",
+            "/Applications/Sublime Text.app/Contents/SharedSupport/bin/subl",
+        ],
         args: "{full}:{line}",
     },
     EditorSpec {
         id: "idea",
         label: "IntelliJ IDEA",
-        programs: &["idea", "/Applications/IntelliJ IDEA.app/Contents/MacOS/idea"],
+        programs: &[
+            "idea",
+            "/Applications/IntelliJ IDEA.app/Contents/MacOS/idea",
+        ],
         args: "--line {line} {full}",
     },
     EditorSpec {
         id: "webstorm",
         label: "WebStorm",
-        programs: &["webstorm", "/Applications/WebStorm.app/Contents/MacOS/webstorm"],
+        programs: &[
+            "webstorm",
+            "/Applications/WebStorm.app/Contents/MacOS/webstorm",
+        ],
         args: "--line {line} {full}",
     },
     EditorSpec {
         id: "pycharm",
         label: "PyCharm",
-        programs: &["pycharm", "/Applications/PyCharm.app/Contents/MacOS/pycharm"],
+        programs: &[
+            "pycharm",
+            "/Applications/PyCharm.app/Contents/MacOS/pycharm",
+        ],
         args: "--line {line} {full}",
     },
     EditorSpec {
@@ -91,7 +103,10 @@ const EDITOR_SPECS: &[EditorSpec] = &[
     EditorSpec {
         id: "rustrover",
         label: "RustRover",
-        programs: &["rustrover", "/Applications/RustRover.app/Contents/MacOS/rustrover"],
+        programs: &[
+            "rustrover",
+            "/Applications/RustRover.app/Contents/MacOS/rustrover",
+        ],
         args: "--line {line} {full}",
     },
 ];
@@ -240,11 +255,7 @@ pub fn detect_shells(default_shell: &str) -> Vec<DetectedApp> {
 
         for name in ["zsh", "bash", "fish", "nu", "sh"] {
             if let Ok(path) = which::which(name) {
-                push_shell(
-                    &mut shells,
-                    &mut seen,
-                    &path.to_string_lossy().to_string(),
-                );
+                push_shell(&mut shells, &mut seen, path.to_string_lossy().as_ref());
             }
         }
     }
@@ -253,11 +264,7 @@ pub fn detect_shells(default_shell: &str) -> Vec<DetectedApp> {
     {
         for name in ["pwsh.exe", "powershell.exe", "cmd.exe"] {
             if let Ok(path) = which::which(name) {
-                push_shell(
-                    &mut shells,
-                    &mut seen,
-                    &path.to_string_lossy().to_string(),
-                );
+                push_shell(&mut shells, &mut seen, &path.to_string_lossy().to_string());
             }
         }
     }
@@ -327,6 +334,8 @@ mod tests {
     #[test]
     fn shell_detection_always_includes_default() {
         let shells = detect_shells("/definitely/not/a/real/shell");
-        assert!(shells.iter().any(|s| s.command == "/definitely/not/a/real/shell"));
+        assert!(shells
+            .iter()
+            .any(|s| s.command == "/definitely/not/a/real/shell"));
     }
 }

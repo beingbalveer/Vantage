@@ -253,7 +253,10 @@ impl RepoWatcherManager {
                             continue;
                         }
                         Some(previous)
-                            if !auto_fetch_due(now.duration_since(*previous).as_secs(), minutes) =>
+                            if !auto_fetch_due(
+                                now.duration_since(*previous).as_secs(),
+                                minutes,
+                            ) =>
                         {
                             continue;
                         }

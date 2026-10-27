@@ -401,7 +401,11 @@ pub fn validate_branch_name(name: &str) -> Result<(), String> {
 /// always wins. Otherwise, a repository with no commits (unborn HEAD) uses the
 /// configured default branch name; a normal repository tracks its checked-out
 /// HEAD exactly as before.
-pub fn resolve_initial_branch(requested: Option<&str>, has_head: bool, default_branch: &str) -> Option<String> {
+pub fn resolve_initial_branch(
+    requested: Option<&str>,
+    has_head: bool,
+    default_branch: &str,
+) -> Option<String> {
     if let Some(branch) = requested.map(str::trim).filter(|b| !b.is_empty()) {
         return Some(branch.to_string());
     }
@@ -621,8 +625,14 @@ mod tests {
         for ok in ["main", "feature/ALPH-162", "release-1.0", "a_b"] {
             assert!(validate_branch_name(ok).is_ok(), "{ok} should be valid");
         }
-        for bad in ["", " ", "HEAD", "@", "-x", "/x", "x/", "x.", "a..b", "a b", "a~b", "a:b", "a?", "a*", "a[b", "a//b", ".hidden", "x.lock"] {
-            assert!(validate_branch_name(bad).is_err(), "{bad} should be invalid");
+        for bad in [
+            "", " ", "HEAD", "@", "-x", "/x", "x/", "x.", "a..b", "a b", "a~b", "a:b", "a?", "a*",
+            "a[b", "a//b", ".hidden", "x.lock",
+        ] {
+            assert!(
+                validate_branch_name(bad).is_err(),
+                "{bad} should be invalid"
+            );
         }
     }
 

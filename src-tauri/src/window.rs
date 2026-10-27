@@ -11,9 +11,7 @@ use crate::cmd::AppState;
 use crate::state::{Layout, WindowBounds};
 use std::sync::atomic::Ordering;
 use std::time::Duration;
-use tauri::{
-    AppHandle, Manager, PhysicalPosition, PhysicalSize, Runtime, WebviewWindow, Window,
-};
+use tauri::{AppHandle, Manager, PhysicalPosition, PhysicalSize, Runtime, WebviewWindow, Window};
 
 /// Mirrors `minWidth` / `minHeight` in `tauri.conf.json`.
 pub const MIN_WINDOW_WIDTH: u32 = 900;
@@ -50,10 +48,9 @@ impl MonitorRect {
     fn intersection(&self, bounds: &WindowBounds) -> (i64, i64) {
         let left = (bounds.x as i64).max(self.x as i64);
         let top = (bounds.y as i64).max(self.y as i64);
-        let right = (bounds.x as i64 + bounds.width as i64)
-            .min(self.x as i64 + self.width as i64);
-        let bottom = (bounds.y as i64 + bounds.height as i64)
-            .min(self.y as i64 + self.height as i64);
+        let right = (bounds.x as i64 + bounds.width as i64).min(self.x as i64 + self.width as i64);
+        let bottom =
+            (bounds.y as i64 + bounds.height as i64).min(self.y as i64 + self.height as i64);
         ((right - left).max(0), (bottom - top).max(0))
     }
 }
@@ -363,8 +360,10 @@ mod tests {
             Some(stored.clone())
         );
 
-        let mut layout = Layout::default();
-        layout.window_bounds = Some(stored.clone());
+        let layout = Layout {
+            window_bounds: Some(stored.clone()),
+            ..Layout::default()
+        };
         let incoming = Layout {
             pane_count: 2,
             panes: vec![PaneLayout {

@@ -514,6 +514,7 @@ pub async fn get_scope_files(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 pub async fn get_scope_file_diff(
     runner: &GitRunner,
     repo_path: &Path,
@@ -599,10 +600,7 @@ pub async fn get_scope_file_diff(
     };
 
     Ok(parse_unified_diff_with_limits(
-        &diff_text,
-        change,
-        force,
-        limits,
+        &diff_text, change, force, limits,
     ))
 }
 
@@ -726,8 +724,13 @@ pub async fn get_working_file_diff(
             .unwrap_or(false);
         if !tracked && repo_path.join(path).exists() {
             let null_path = if cfg!(windows) { "NUL" } else { "/dev/null" };
-            let mut no_index_args =
-                vec!["diff", "--no-index", &ctx_flag, "--no-color", "--no-ext-diff"];
+            let mut no_index_args = vec![
+                "diff",
+                "--no-index",
+                &ctx_flag,
+                "--no-color",
+                "--no-ext-diff",
+            ];
             if ignore_whitespace {
                 no_index_args.push("-w");
             }
@@ -1033,7 +1036,7 @@ mod tests {
         );
 
         let numstat_raw =
-            b"10\t0\tmod.rs\025\t0\tnew.rs\00\t8\tdel.rs\05\t2\t\0prev.rs\0renamed.rs\0";
+            b"10\t0\tmod.rs\x0025\t0\tnew.rs\x000\t8\tdel.rs\x005\t2\t\x00prev.rs\x00renamed.rs\x00";
         let initial_changes = parse_numstat_z(numstat_raw);
         let merged = merge_changes_with_status(initial_changes, status_map);
 

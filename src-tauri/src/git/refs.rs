@@ -25,7 +25,6 @@ pub struct TagInfo {
 /// unit separator (0x1f). `%(*objectname)` is empty for lightweight tags.
 const TAG_FORMAT: &str = "%(refname:short)\x1f%(objecttype)\x1f%(objectname)\x1f%(*objectname)\x1f%(creatordate:iso-strict)\x1f%(contents:subject)";
 
-
 pub async fn list_branches(
     runner: &GitRunner,
     repo_path: &Path,
@@ -500,7 +499,6 @@ pub async fn is_branch_merged(
 
     Ok(false)
 }
-
 
 // ---------------- Tags (ALPH-157) ----------------
 

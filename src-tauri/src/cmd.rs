@@ -7,27 +7,24 @@ use crate::git::diff::{
     get_scope_file_diff, get_scope_files, get_working_file_diff, get_working_part_counts,
     WorkingPartCounts,
 };
-use crate::git::identity::{
-    read_identity, write_identity, GitIdentity, IdentityScope,
-};
 use crate::git::grep::{blame_line as git_blame_line, grep_definitions};
+use crate::git::identity::{read_identity, write_identity, GitIdentity, IdentityScope};
 use crate::git::log::{get_history_page, get_log_page};
 use crate::git::ops::{
-    amend_commit as git_amend_commit, check_pushed as git_check_pushed, commit as git_commit,
-    discard as git_discard, head_commit_info as git_head_commit_info, list_backups,
+    abort_operation as git_abort_operation, amend_commit as git_amend_commit,
+    check_pushed as git_check_pushed, commit as git_commit,
+    continue_operation as git_continue_operation, discard as git_discard, get_real_git_dir,
+    head_commit_info as git_head_commit_info, list_backups, partial_lines,
     reset_to as git_reset_to, restore_backup, revert as git_revert,
     revert_range as git_revert_range, undo_last_commit as git_undo_last_commit, HeadCommitInfo,
-    UndoCommitResult, abort_operation as git_abort_operation,
-    continue_operation as git_continue_operation, get_real_git_dir,
-    partial_lines, PartialAction,
+    PartialAction, UndoCommitResult,
 };
 use crate::git::patch::SelectedLine;
 use crate::git::refs::{
-    checkout_target, create_branch, delete_branch, get_remote_url, is_branch_merged, list_branches,
-    rename_branch, sync_fetch as git_sync_fetch, sync_pull as git_sync_pull,
-    sync_push as git_sync_push,
-    create_tag as git_create_tag, list_tags as git_list_tags,
-    push_all_tags as git_push_all_tags, push_tag as git_push_tag, TagInfo,
+    checkout_target, create_branch, create_tag as git_create_tag, delete_branch, get_remote_url,
+    is_branch_merged, list_branches, list_tags as git_list_tags,
+    push_all_tags as git_push_all_tags, push_tag as git_push_tag, rename_branch,
+    sync_fetch as git_sync_fetch, sync_pull as git_sync_pull, sync_push as git_sync_push, TagInfo,
 };
 use crate::git::runner::GitRunner;
 use crate::git::stash::{
@@ -143,7 +140,8 @@ async fn register_repo(
         .await
         .map(|o| o.success())
         .unwrap_or(false);
-    let effective_branch = resolve_initial_branch(target_branch.as_deref(), has_head, &default_branch);
+    let effective_branch =
+        resolve_initial_branch(target_branch.as_deref(), has_head, &default_branch);
 
     // Duplicate check: both path and branch must match
     if let Some(existing) = data
@@ -387,7 +385,8 @@ pub async fn repo_reorder(
             }
         }
     }
-    data.repos.sort_by_key(|r| (if r.pinned { 0 } else { 1 }, r.order));
+    data.repos
+        .sort_by_key(|r| (if r.pinned { 0 } else { 1 }, r.order));
     state.persistence.save(&data)?;
     Ok(())
 }
@@ -468,14 +467,7 @@ pub async fn repo_refresh_all(state: State<'_, AppState>) -> Result<Vec<RepoStat
     for (id, path, branch, marker) in specs {
         let runner = runner.clone();
         tasks.spawn(async move {
-            query_repo_status(
-                &runner,
-                &id,
-                &path,
-                branch.as_deref(),
-                marker.as_deref(),
-            )
-            .await
+            query_repo_status(&runner, &id, &path, branch.as_deref(), marker.as_deref()).await
         });
     }
 
@@ -701,6 +693,8 @@ pub async fn scope_files(
     get_scope_files(&state.runner, &repo_path, &scope, ignore_ws).await
 }
 
+// The IPC contract fixes this signature; every argument comes from the webview.
+#[allow(clippy::too_many_arguments)]
 #[tauri::command]
 pub async fn scope_file_diff(
     state: State<'_, AppState>,
@@ -2547,7 +2541,9 @@ mod tests {
     #[test]
     fn splits_quoted_paths_with_spaces() {
         assert_eq!(
-            split_command_template("\"/Applications/Visual Studio Code.app/bin/code\" -g {full}:{line}"),
+            split_command_template(
+                "\"/Applications/Visual Studio Code.app/bin/code\" -g {full}:{line}"
+            ),
             vec![
                 "/Applications/Visual Studio Code.app/bin/code",
                 "-g",
@@ -2562,14 +2558,17 @@ mod tests {
 
     #[test]
     fn handles_escapes_and_empty_input() {
-        assert_eq!(split_command_template("my\\ editor {full}"), vec!["my editor", "{full}"]);
+        assert_eq!(
+            split_command_template("my\\ editor {full}"),
+            vec!["my editor", "{full}"]
+        );
         assert!(split_command_template("   ").is_empty());
-        assert_eq!(split_command_template("open \"\""), vec!["open", ""]);
+        assert_eq!(split_command_template("open \"\""), ["open", ""]);
     }
 
     #[test]
     fn reorders_repos_by_order_and_pinned() {
-        let mut repos = vec![
+        let mut repos = [
             crate::state::RepoEntry {
                 id: "1".into(),
                 path: "/a".into(),

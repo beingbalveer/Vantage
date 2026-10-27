@@ -81,7 +81,11 @@ pub fn validate_email(value: &str) -> Result<String, String> {
     if local.is_empty() || domain.is_empty() || parts.next().is_some() {
         return Err("Enter a valid email address (name@example.com).".to_string());
     }
-    if local.starts_with('.') || local.ends_with('.') || domain.starts_with('.') || domain.ends_with('.') {
+    if local.starts_with('.')
+        || local.ends_with('.')
+        || domain.starts_with('.')
+        || domain.ends_with('.')
+    {
         return Err("Enter a valid email address (name@example.com).".to_string());
     }
     if !domain.contains('.') || domain.split('.').any(|part| part.is_empty()) {
@@ -92,10 +96,7 @@ pub fn validate_email(value: &str) -> Result<String, String> {
 
 /// A missing effective identity must produce an actionable message instead of
 /// whatever raw text `git commit` happens to print.
-pub fn missing_identity_error(
-    name: Option<&str>,
-    email: Option<&str>,
-) -> Option<AppError> {
+pub fn missing_identity_error(name: Option<&str>, email: Option<&str>) -> Option<AppError> {
     let missing_name = name.map(|v| v.trim().is_empty()).unwrap_or(true);
     let missing_email = email.map(|v| v.trim().is_empty()).unwrap_or(true);
     if !missing_name && !missing_email {
@@ -157,10 +158,16 @@ pub async fn read_identity(
         None => (None, None, global_name.clone(), global_email.clone()),
     };
 
-    let name_source =
-        config_source(local_name.as_deref(), global_name.as_deref(), effective_name.as_deref());
-    let email_source =
-        config_source(local_email.as_deref(), global_email.as_deref(), effective_email.as_deref());
+    let name_source = config_source(
+        local_name.as_deref(),
+        global_name.as_deref(),
+        effective_name.as_deref(),
+    );
+    let email_source = config_source(
+        local_email.as_deref(),
+        global_email.as_deref(),
+        effective_email.as_deref(),
+    );
 
     Ok(GitIdentity {
         global_name,
@@ -220,27 +227,40 @@ pub async fn write_identity(
         ));
     }
 
-    let name = name.map(validate_name).transpose().map_err(|e| {
-        AppError::new("Validation", e)
-    })?;
-    let email = email.map(validate_email).transpose().map_err(|e| {
-        AppError::new("Validation", e)
-    })?;
+    let name = name
+        .map(validate_name)
+        .transpose()
+        .map_err(|e| AppError::new("Validation", e))?;
+    let email = email
+        .map(validate_email)
+        .transpose()
+        .map_err(|e| AppError::new("Validation", e))?;
 
     let config_scope = match scope {
         IdentityScope::Global => "--global",
         IdentityScope::Repo => "--local",
     };
 
-    set_config(runner, repo_path, config_scope, "user.name", name.as_deref()).await?;
-    set_config(runner, repo_path, config_scope, "user.email", email.as_deref()).await?;
+    set_config(
+        runner,
+        repo_path,
+        config_scope,
+        "user.name",
+        name.as_deref(),
+    )
+    .await?;
+    set_config(
+        runner,
+        repo_path,
+        config_scope,
+        "user.email",
+        email.as_deref(),
+    )
+    .await?;
     Ok(())
 }
 
-pub async fn ensure_commit_identity(
-    runner: &GitRunner,
-    repo_path: &Path,
-) -> Result<(), AppError> {
+pub async fn ensure_commit_identity(runner: &GitRunner, repo_path: &Path) -> Result<(), AppError> {
     let name = read_config(runner, Some(repo_path), None, "user.name").await;
     let email = read_config(runner, Some(repo_path), None, "user.email").await;
     if let Some(err) = missing_identity_error(name.as_deref(), email.as_deref()) {
@@ -266,15 +286,32 @@ mod tests {
         for ok in ["ada@example.com", "a.b+tag@sub.example.co.uk"] {
             assert!(validate_email(ok).is_ok(), "{ok} should be valid");
         }
-        for bad in ["", "  ", "ada", "ada@", "@example.com", "ada@example", "a b@example.com", "a@@example.com", "ada@.com", "ada@example..com"] {
+        for bad in [
+            "",
+            "  ",
+            "ada",
+            "ada@",
+            "@example.com",
+            "ada@example",
+            "a b@example.com",
+            "a@@example.com",
+            "ada@.com",
+            "ada@example..com",
+        ] {
             assert!(validate_email(bad).is_err(), "{bad} should be invalid");
         }
     }
 
     #[test]
     fn resolves_config_source() {
-        assert_eq!(config_source(Some("Repo"), Some("Global"), Some("Repo")), "repo");
-        assert_eq!(config_source(None, Some("Global"), Some("Global")), "global");
+        assert_eq!(
+            config_source(Some("Repo"), Some("Global"), Some("Repo")),
+            "repo"
+        );
+        assert_eq!(
+            config_source(None, Some("Global"), Some("Global")),
+            "global"
+        );
         assert_eq!(config_source(None, None, Some("System")), "system");
         assert_eq!(config_source(None, None, None), "unset");
         assert_eq!(config_source(Some("  "), None, None), "unset");
@@ -299,10 +336,8 @@ mod tests {
     #[tokio::test]
     async fn repo_local_identity_round_trips_and_can_be_cleared() {
         let runner = GitRunner::new();
-        let path = std::env::temp_dir().join(format!(
-            "vantage_identity_test_{}",
-            uuid::Uuid::new_v4()
-        ));
+        let path =
+            std::env::temp_dir().join(format!("vantage_identity_test_{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&path).unwrap();
         runner.run_write(&path, &["init"], 10).await.unwrap();
 
@@ -335,10 +370,8 @@ mod tests {
     #[tokio::test]
     async fn rejects_invalid_identity_before_writing() {
         let runner = GitRunner::new();
-        let path = std::env::temp_dir().join(format!(
-            "vantage_identity_invalid_{}",
-            uuid::Uuid::new_v4()
-        ));
+        let path =
+            std::env::temp_dir().join(format!("vantage_identity_invalid_{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&path).unwrap();
         runner.run_write(&path, &["init"], 10).await.unwrap();
 
