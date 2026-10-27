@@ -32,8 +32,16 @@ sudo apt-get update && sudo apt-get install -y \
 npm install
 
 # Start the Tauri development window with hot reload
-npm run tauri dev
+npm run dev:app
+
+# Or build a real "Vantage Dev" app (amber icon, same identifier as the release
+# app so it opens your existing repos and settings)
+npm run dev:bundle
 ```
+
+Dev runs are named **Vantage Dev**, use an amber icon and show a `DEV` chip in
+the header, so they are never mistaken for the released app. `npm run tauri dev`
+still works when you do not need the dev identity.
 
 ---
 

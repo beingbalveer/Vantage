@@ -16,7 +16,10 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
+    "dev:app": "tauri dev --config src-tauri/tauri.dev.conf.json",
+    "dev:bundle": "tauri build --debug --config src-tauri/tauri.dev.conf.json",
     "build": "vite build",
+    "build:dev": "vite build --mode development",
     "preview": "vite preview",
     "check": "svelte-check --tsconfig ./tsconfig.json",
     "test": "vitest run",
