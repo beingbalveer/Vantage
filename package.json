@@ -1,7 +1,7 @@
 {
   "name": "vantage",
   "private": true,
-  "version": "0.3.0",
+  "version": "0.3.1",
   "description": "A lightweight multi-repo Git desktop client, read-only code viewer, and terminal workspace",
   "author": "Balveer Dhanoriya <https://github.com/beingbalveer>",
   "license": "MIT",
