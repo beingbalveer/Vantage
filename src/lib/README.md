@@ -53,6 +53,9 @@ A layer may import **only itself and layers below it**. `src/App.svelte` and
    entry when a selector can narrow the invalidation.
 6. **Async work is cancellable.** Use `platform/request.ts` for latest-wins
    loads so switching repos/files cannot apply a stale result.
+7. **Keep optional UI off the startup path.** Panels that only some users open
+   (the terminal, heavy viewers) should be dynamically imported so the window
+   paints from the smallest possible bundle.
 
 ## Design ratchet
 

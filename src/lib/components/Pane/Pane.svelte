@@ -14,6 +14,7 @@
     WorkingPartCounts,
   } from "../../platform/types";
   import * as api from "../../platform/api";
+  import { RequestTracker } from "../../platform/request";
   import { settings } from "../../domain/stores/settings";
   import { panes, paneCount, focusedPaneIndex, focusPane, setPaneTab } from "../../domain/stores/panes";
   import { addToast, openDialog, activeDialog, paletteOpen, settingsOpen, shortcutsHelpOpen, addRepoDialogOpen, scanFolderDialogOpen } from "../../app/ui";
@@ -40,7 +41,6 @@
   import ConflictBanner from "./ConflictBanner.svelte";
   import DiffView from "../Diff/DiffView.svelte";
   import FilesTab from "./FilesTab.svelte";
-  import TerminalDrawer from "../Terminal/TerminalDrawer.svelte";
   import Icon from "../common/Icon.svelte";
   import { viewportPaneWidths, savedPaneWidth } from "../../app/layout";
   import {
@@ -244,18 +244,66 @@
   let extendedShas = $state<Set<string>>(new Set());
   let flagsScanInFlight = false;
 
-  // Generation IDs to avoid stale async overwrites (R11)
-  let historyGen = 0;
-  let scopeGen = 0;
-  let diffGen = 0;
+  // Latest-wins guards for async loads (R11). Tauri commands cannot be aborted
+  // once sent, so each load checks that it is still the newest before applying.
+  const historyRequests = new RequestTracker();
+  const scopeRequests = new RequestTracker();
+  const diffRequests = new RequestTracker();
+  const countsRequests = new RequestTracker();
+
+  onDestroy(() => {
+    historyRequests.dispose();
+    scopeRequests.dispose();
+    diffRequests.dispose();
+    countsRequests.dispose();
+  });
 
   let lastLoadedRepoId = "";
+
+  // Xterm is only needed once a terminal is opened. Keeping it in a dynamic
+  // chunk removes ~300 kB of JavaScript from the startup path.
+  let terminalModule = $state<typeof import("../Terminal/TerminalDrawer.svelte") | null>(null);
+  let terminalLoading = $state(false);
+  let terminalLoadError = $state<string | null>(null);
+
+  function loadTerminal() {
+    if (terminalModule || terminalLoading) return;
+    terminalLoading = true;
+    terminalLoadError = null;
+    import("../Terminal/TerminalDrawer.svelte")
+      .then((mod) => {
+        terminalModule = mod;
+      })
+      .catch((e: any) => {
+        console.error("Failed to load terminal:", e);
+        terminalLoadError = e?.message || "Failed to load terminal";
+      })
+      .finally(() => {
+        terminalLoading = false;
+      });
+  }
+
+  $effect(() => {
+    if (currentPane?.terminalOpen && repo) {
+      // untrack the loader state so the effect only re-runs when a terminal is
+      // opened (and not again after a failed load, which would retry forever).
+      untrack(() => loadTerminal());
+    }
+  });
 
   // Watch repo changes
   $effect(() => {
     const currentId = repo?.id || "";
     if (currentId !== lastLoadedRepoId) {
       lastLoadedRepoId = currentId;
+      // A repo switch must not let the previous repo's in-flight loads write
+      // into the new repo's panes.
+      historyRequests.cancel();
+      scopeRequests.cancel();
+      diffRequests.cancel();
+      countsRequests.cancel();
+      historyLoading = false;
+      historyLoadingMore = false;
       flagsBySha = {};
       untrack(() => {
         diffIsFullContext = false;
@@ -380,13 +428,13 @@
 
   async function loadHistory(preserveSelection = false) {
     if (!repo) return;
-    const gen = ++historyGen;
+    const request = historyRequests.begin();
     historyLoading = true;
     historyLoadingMore = false;
     const query = historyFilterApplied;
     try {
       const page = await api.historyPage(repo.id, 0, HISTORY_PAGE_SIZE, query || undefined);
-      if (gen !== historyGen) return;
+      if (!request.isCurrent()) return;
       commits = page.commits;
       historyTotal = page.total;
       historyCapped = page.capped;
@@ -395,7 +443,7 @@
       // Batch-request triage flags for the loaded page. Failures are ignored
       // per-SHA (the backend omits SHAs it could not evaluate) so the list
       // never breaks because flagging failed (ALPH-147).
-      void loadFlags(repo.id, page.commits.map((c) => c.sha), gen);
+      void loadFlags(repo.id, page.commits.map((c) => c.sha));
 
       if (!preserveSelection) {
         if (query) {
@@ -438,7 +486,7 @@
         }
       }
     } catch (e) {
-      if (gen !== historyGen) return;
+      if (!request.isCurrent()) return;
       historyLoading = false;
       console.error("Failed to load history:", e);
     }
@@ -448,7 +496,7 @@
   async function loadMoreHistory() {
     if (!repo || historyLoading || historyLoadingMore) return;
     if (!hasMoreHistory(historyMeta)) return;
-    const gen = historyGen;
+    const request = historyRequests.begin();
     const skip = commits.length;
     historyLoadingMore = true;
     try {
@@ -458,19 +506,19 @@
         HISTORY_PAGE_SIZE,
         historyFilterApplied || undefined
       );
-      if (gen !== historyGen) return;
+      if (!request.isCurrent()) return;
       const seen = new Set(commits.map((c) => c.sha));
       const newCommits = page.commits.filter((c) => !seen.has(c.sha));
       commits = [...commits, ...newCommits];
       historyTotal = page.total;
       historyCapped = page.capped;
-      void loadFlags(repo.id, newCommits.map((c) => c.sha), gen);
+      void loadFlags(repo.id, newCommits.map((c) => c.sha));
     } catch (e: any) {
-      if (gen !== historyGen) return;
+      if (!request.isCurrent()) return;
       console.error("Failed to load more history:", e);
       addToast({ message: e.message || "Failed to load more commits", kind: "error" });
     } finally {
-      if (gen === historyGen) historyLoadingMore = false;
+      if (request.isCurrent()) historyLoadingMore = false;
     }
   }
 
@@ -548,11 +596,14 @@
 
   // Fetch triage flags for a set of SHAs and merge them into the cache.
   // Per-SHA failures are silent by design: a flagged SHA simply stays blank.
-  async function loadFlags(repoId: string, shas: string[], gen: number) {
+  async function loadFlags(repoId: string, shas: string[]) {
     if (shas.length === 0) return;
     try {
       const result = await api.commitFlags(repoId, shas);
-      if (gen !== historyGen) return;
+      // Flags are per-SHA, so a late response is still valid for this repo even
+      // if the history filter changed meanwhile. Only a repo switch invalidates
+      // it (the cache was cleared and the keys belong to another repo).
+      if (repo?.id !== repoId) return;
       flagsBySha = { ...flagsBySha, ...result };
     } catch (e) {
       console.warn("Failed to load triage flags:", e);
@@ -668,22 +719,27 @@
 
   async function loadWorkingCounts() {
     if (!repo) return;
+    const request = countsRequests.begin();
     try {
-      workingCounts = await api.workingPartCounts(repo.id);
+      const counts = await api.workingPartCounts(repo.id);
+      if (!request.isCurrent()) return;
+      workingCounts = counts;
     } catch (e) {
       console.warn("Failed to load staged/unstaged counts:", e);
     }
   }
   async function loadScopeFiles(scope: DiffScope, preserveFile = false) {
     if (!repo) return;
-    const gen = ++scopeGen;
+    const request = scopeRequests.begin();
+    // The old scope's diff is no longer relevant while the file list loads.
+    diffRequests.cancel();
     try {
       const isWorking = scope.type === "working";
       const files = await api.scopeFiles(repo.id, scope, $settings.ignoreWhitespace);
       if (isWorking) {
         loadWorkingCounts();
       }
-      if (gen !== scopeGen) return;
+      if (!request.isCurrent()) return;
 
       scopeFilesList = files;
       checkedPaths = files.map((f) => f.path);
@@ -699,7 +755,7 @@
         currentDiffFile = null;
       }
     } catch (e: any) {
-      if (gen !== scopeGen) return;
+      if (!request.isCurrent()) return;
       console.error("Failed to load scope files:", e);
       addToast({ message: e.message || "Failed to load files for commit", kind: "error" });
     }
@@ -713,7 +769,7 @@
     if (!repo) return;
     const force = opts.force ?? false;
     const fullContext = opts.fullContext ?? false;
-    const gen = ++diffGen;
+    const request = diffRequests.begin();
     selectedFilePath = path;
     // Reflect the intended state immediately so a scope/file switch never shows
     // a stale "Whole file" indicator while the new request is in flight.
@@ -742,10 +798,10 @@
               force,
               fullContext
             );
-      if (gen !== diffGen) return;
+      if (!request.isCurrent()) return;
       currentDiffFile = diff;
     } catch (e: any) {
-      if (gen !== diffGen) return;
+      if (!request.isCurrent()) return;
       console.error("Failed to load file diff:", e);
       addToast({ message: e.message || "Failed to load diff", kind: "error" });
     }
@@ -1491,22 +1547,34 @@
       }}
     ></div>
 
-    {#key repo.id}
-      <TerminalDrawer
-        repoId={repo.id}
-        repoName={repo.name}
-        repoPath={repo.path}
-        height={terminalHeight}
-        onclose={() => {
-          panes.update((list) => {
-            if (list[paneIndex]) {
-              list[paneIndex] = { ...list[paneIndex], terminalOpen: false };
-            }
-            return list;
-          });
-        }}
-      />
-    {/key}
+    {#if terminalModule}
+      {#key repo.id}
+        {@const TerminalDrawer = terminalModule.default}
+        <TerminalDrawer
+          repoId={repo.id}
+          repoName={repo.name}
+          repoPath={repo.path}
+          height={terminalHeight}
+          onclose={() => {
+            panes.update((list) => {
+              if (list[paneIndex]) {
+                list[paneIndex] = { ...list[paneIndex], terminalOpen: false };
+              }
+              return list;
+            });
+          }}
+        />
+      {/key}
+    {:else}
+      <div class="terminal-loading" style="height: {terminalHeight}px">
+        <span class="text-xs text-muted">
+          {terminalLoadError ?? "Starting terminal…"}
+        </span>
+        {#if terminalLoadError}
+          <button type="button" class="terminal-retry" onclick={loadTerminal}>Retry</button>
+        {/if}
+      </div>
+    {/if}
   {/if}
 
   <!-- Row context menu (commit / changed file). Recreated per open so it
@@ -1870,5 +1938,28 @@
   :global(body.resizing-row) .terminal-sash::after {
     background-color: var(--accent);
     opacity: 0.6;
+  }
+
+  /* Placeholder shown while the xterm chunk downloads on first open. */
+  .terminal-loading {
+    display: flex;
+    flex: 0 0 auto;
+    align-items: center;
+    justify-content: center;
+    gap: 10px;
+    border-top: 1px solid var(--border);
+    background-color: var(--bg-subtle);
+  }
+  .terminal-retry {
+    border: 1px solid var(--border);
+    border-radius: var(--r-sm);
+    background: var(--bg);
+    color: var(--text);
+    padding: 2px 10px;
+    cursor: pointer;
+  }
+  .terminal-retry:hover {
+    border-color: var(--accent);
+    color: var(--accent);
   }
 </style>
