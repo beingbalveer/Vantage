@@ -51,8 +51,9 @@
   } | null = null;
 
   $effect(() => {
-    // Every markdown file starts in preview, like a rendered document.
-    if (MARKDOWN_PATH.test(path)) previewMode = true;
+    // Markdown opens rendered — unless the caller is navigating to a line, in
+    // which case the raw source is the only view where that line exists.
+    if (MARKDOWN_PATH.test(path)) previewMode = !targetLine;
   });
 
   // Rendering is lazy: marked + DOMPurify only load when a document is first
