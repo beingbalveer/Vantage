@@ -235,6 +235,10 @@
     <path d="M4 6h16M4 12h12a3 3 0 0 1 3 3v0a3 3 0 0 1-3 3H11" />
     <path d="m14 15-3 3 3 3" />
     <path d="M4 18h3" />
+  {:else if name === "eye"}
+    <!-- Eye: view / preview -->
+    <path d="M2.5 12s3.5-6.5 9.5-6.5S21.5 12 21.5 12s-3.5 6.5-9.5 6.5S2.5 12 2.5 12Z" />
+    <circle cx="12" cy="12" r="2.6" />
   {:else if name === "image"}
     <!-- Picture: frame, sun, ridge -->
     <rect x="3" y="3" width="18" height="18" rx="2" />

@@ -500,6 +500,10 @@ export async function revealInFileManager(path: string): Promise<void> {
   return invoke("reveal_in_file_manager", { path });
 }
 
+export async function openUrl(url: string): Promise<void> {
+  return invoke("open_url", { url });
+}
+
 export async function runCommitMessageCmd(
   id: string,
   paths: string[]

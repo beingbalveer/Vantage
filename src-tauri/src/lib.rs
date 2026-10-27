@@ -213,6 +213,7 @@ pub fn run() {
             layout_set,
             open_external_editor,
             reveal_in_file_manager,
+            open_url,
             run_commit_message_cmd,
             env_check,
             git_identity_get,

@@ -14,6 +14,7 @@ export type IconName =
   | "search"
   | "file-text"
   | "image"
+  | "eye"
   | "terminal"
   | "gear"
   | "question"
