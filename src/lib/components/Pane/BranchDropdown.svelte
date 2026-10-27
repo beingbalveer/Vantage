@@ -9,9 +9,11 @@
   interface Props {
     repo: RepoEntry | null;
     status: RepoStatus | null;
+    /** Inline mode sits in the app header: content-width trigger, compact row. */
+    inline?: boolean;
   }
 
-  let { repo, status }: Props = $props();
+  let { repo, status, inline = false }: Props = $props();
 
   let currentBranch = $derived(repo?.branch || status?.branch || "HEAD");
   let isInactiveView = $derived(status?.isCheckedOut === false);
@@ -195,7 +197,7 @@
   }
 </script>
 
-<div class="branch-dropdown-wrapper">
+<div class="branch-dropdown-wrapper" class:inline>
   <button
     bind:this={triggerEl}
     type="button"
@@ -404,6 +406,19 @@
     width: 100%;
     display: flex;
     align-items: center;
+  }
+
+  /* Header placement: hug the label instead of filling the pane header. */
+  .branch-dropdown-wrapper.inline {
+    width: auto;
+    max-width: 240px;
+  }
+  .branch-dropdown-wrapper.inline .branch-trigger-btn {
+    width: auto;
+    min-height: 26px;
+    height: 26px;
+    padding: 0 6px;
+    gap: 5px;
   }
 
   .branch-trigger-btn {

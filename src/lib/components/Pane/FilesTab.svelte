@@ -1,12 +1,11 @@
 <script lang="ts">
   import { untrack } from "svelte";
+  import { setPaneTab } from "../../domain/stores/panes";
   import * as api from "../../platform/api";
   import { normalizeError, createDelayedToggle, type NormalizedError } from "../../domain/asyncState";
   import type { RepoEntry, RepoStatus } from "../../platform/types";
-  import { setPaneTab } from "../../domain/stores/panes";
   import CodeViewer from "../Viewer/CodeViewer.svelte";
   import FileTree from "./FileTree.svelte";
-  import BranchDropdown from "./BranchDropdown.svelte";
   import { createHorizontalResizer, createHorizontalResizerKeyboard } from "../../app/resizer";
   import { registerHandler, ownsPaneKeyboard } from "../../app/commands";
   import Icon from "../common/Icon.svelte";
@@ -201,34 +200,32 @@
 <div class="files-tab-container">
   <!-- Left Tree Pane -->
   <div class="tree-pane" style="width: {treeWidth}px;">
-    <!-- Coordinated 40px Header matching commits-header in Pane.svelte -->
+    <!-- View tabs fill the tree column; branch lives in the app header -->
     <div class="tree-header">
-      <div class="branch-wrap">
-        <BranchDropdown {repo} {status} />
-      </div>
-
-      <div class="pane-view-tabs">
+      <div class="pane-tabs" role="tablist" aria-label="Pane view">
         <button
           type="button"
-          class="view-tab"
-          onclick={() => setPaneTab(paneIndex, "history")}
+          role="tab"
+          aria-selected="false"
+          class="pane-tab"
           title="Switch to Commits & History"
-          aria-label="Commits view"
+          onclick={() => setPaneTab(paneIndex, "history")}
         >
           <Icon name="commit" size={14} />
+          <span>Commits</span>
         </button>
         <button
           type="button"
-          class="view-tab active"
+          role="tab"
+          aria-selected="true"
+          class="pane-tab active"
           title="Project Files Explorer"
-          aria-label="Files explorer"
-          aria-current="true"
         >
           <Icon name="folder" size={14} />
+          <span>Files</span>
         </button>
       </div>
     </div>
-
     <!-- Tree Body -->
     <div class="tree-body">
       {#if treeLoading && fileList.length === 0}
@@ -326,60 +323,12 @@
 
   .tree-header {
     flex-shrink: 0;
-    height: 40px;
+    height: 32px;
+    display: flex;
+    align-items: stretch;
+    padding: 0;
+    background-color: var(--bg-subtle);
     border-bottom: 1px solid var(--border);
-    display: flex;
-    align-items: stretch;
-    justify-content: space-between;
-    padding: 0;
-    background-color: var(--bg);
-    gap: 0;
-  }
-
-  .branch-wrap {
-    min-width: 0;
-    flex: 1;
-    align-self: stretch;
-    overflow: hidden;
-  }
-
-  .pane-view-tabs {
-    display: flex;
-    align-items: stretch;
-    gap: 0;
-    padding: 0;
-    background: transparent;
-    border: 0;
-    border-left: 1px solid var(--border);
-    border-radius: 0;
-    flex-shrink: 0;
-  }
-
-  .view-tab {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    width: 34px;
-    height: auto;
-    padding: 0;
-    border: 0;
-    background: transparent;
-    border-radius: 0;
-    color: var(--text-muted);
-    cursor: pointer;
-    transition: background 120ms ease, color 120ms ease;
-    white-space: nowrap;
-  }
-  .view-tab + .view-tab {
-    border-left: 1px solid var(--border-subtle);
-  }
-  .view-tab:hover:not(.active) {
-    color: var(--text);
-    background: var(--bg-muted);
-  }
-  .view-tab.active {
-    background: var(--bg-muted);
-    color: var(--text);
   }
 
   .tree-body {

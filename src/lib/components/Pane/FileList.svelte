@@ -511,12 +511,12 @@
 
   .file-list-header {
     position: relative;
-    height: 43px;
-    min-height: 43px;
+    height: 32px;
+    min-height: 32px;
     display: flex;
     align-items: center;
-    gap: 8px;
-    padding: 0 12px;
+    gap: 6px;
+    padding: 0 10px;
     background-color: var(--bg);
     border-bottom: 1px solid var(--border);
     flex-shrink: 0;

@@ -35,7 +35,6 @@
   import UncommittedRow from "./UncommittedRow.svelte";
   import CommitRow from "./CommitRow.svelte";
   import CommitHeader from "./CommitHeader.svelte";
-  import BranchDropdown from "./BranchDropdown.svelte";
   import FileList from "./FileList.svelte";
   import CommitBox from "./CommitBox.svelte";
   import ConflictBanner from "./ConflictBanner.svelte";
@@ -1312,29 +1311,29 @@
         <!-- Commits Column -->
         {#if !focusDiff}
           <div class="commits-col" style="width: {commitsColWidth}px;">
-            <!-- Branch Selector Header with View Tabs -->
+            <!-- View tabs fill the commits column; branch lives in the app header -->
             <div class="commits-header">
-              <div class="branch-wrap">
-                <BranchDropdown {repo} {status} />
-              </div>
-              <div class="pane-view-tabs">
+              <div class="pane-tabs" role="tablist" aria-label="Pane view">
                 <button
                   type="button"
-                  class="view-tab active"
+                  role="tab"
+                  aria-selected="true"
+                  class="pane-tab active"
                   title="Commits & History"
-                  aria-label="Commits view"
-                  aria-current="true"
                 >
                   <Icon name="commit" size={14} />
+                  <span>Commits</span>
                 </button>
                 <button
                   type="button"
-                  class="view-tab"
-                  onclick={() => setPaneTab(paneIndex, "files")}
+                  role="tab"
+                  aria-selected="false"
+                  class="pane-tab"
                   title="Project Files Explorer"
-                  aria-label="Files explorer"
+                  onclick={() => setPaneTab(paneIndex, "files")}
                 >
                   <Icon name="folder" size={14} />
+                  <span>Files</span>
                 </button>
               </div>
             </div>
@@ -1698,63 +1697,15 @@
     border-right: 1px solid var(--border);
   }
 
+  /* Commits column header: the view tabs fill the column width. */
   .commits-header {
     flex-shrink: 0;
-    height: 40px;
+    height: 32px;
+    display: flex;
+    align-items: stretch;
+    padding: 0;
+    background-color: var(--bg-subtle);
     border-bottom: 1px solid var(--border);
-    display: flex;
-    align-items: stretch;
-    justify-content: space-between;
-    padding: 0;
-    background-color: var(--bg);
-    gap: 0;
-  }
-
-  .branch-wrap {
-    min-width: 0;
-    flex: 1;
-    align-self: stretch;
-    position: relative;
-  }
-
-  /* Icon-only view toggle. Adjacent controls are separated by a full-height
-     hairline instead of margins, so the header reads as one toolbar. */
-  .pane-view-tabs {
-    display: flex;
-    align-items: stretch;
-    gap: 0;
-    padding: 0;
-    background: transparent;
-    border: 0;
-    border-left: 1px solid var(--border);
-    border-radius: 0;
-    flex-shrink: 0;
-  }
-  .view-tab {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    width: 34px;
-    height: auto;
-    padding: 0;
-    border: 0;
-    background: transparent;
-    border-radius: 0;
-    color: var(--text-muted);
-    cursor: pointer;
-    transition: background 120ms ease, color 120ms ease;
-    white-space: nowrap;
-  }
-  .view-tab + .view-tab {
-    border-left: 1px solid var(--border-subtle);
-  }
-  .view-tab:hover:not(.active) {
-    color: var(--text);
-    background: var(--bg-muted);
-  }
-  .view-tab.active {
-    background: var(--bg-muted);
-    color: var(--text);
   }
 
   .commits-scroll {

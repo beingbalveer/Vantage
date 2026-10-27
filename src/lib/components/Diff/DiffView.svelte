@@ -1276,15 +1276,15 @@
   }
 
   .file-header {
-    height: 43px;
-    min-height: 43px;
+    height: 32px;
+    min-height: 32px;
     flex-shrink: 0;
     background-color: var(--bg);
     border-bottom: 1px solid var(--border);
     display: flex;
     align-items: center;
     justify-content: space-between;
-    padding: 0 0 0 14px;
+    padding: 0 0 0 12px;
     z-index: 10;
   }
 

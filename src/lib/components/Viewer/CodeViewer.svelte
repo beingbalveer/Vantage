@@ -606,8 +606,8 @@
   }
 
   .viewer-header {
-    height: 40px;
-    min-height: 40px;
+    height: 32px;
+    min-height: 32px;
     background-color: var(--bg);
     border-bottom: 1px solid var(--border);
     display: flex;

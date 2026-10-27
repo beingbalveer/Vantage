@@ -60,6 +60,61 @@ body,
   color: #5a5d58;
 }
 
+/* Pane view tabs (Commits / Files). The strip spans the full pane header, tabs
+ * share the width equally, and each boundary is a hairline so the chrome stays
+ * flat. The active tab keeps its underline instead of a heavier border. */
+.pane-tabs {
+  display: flex;
+  align-items: stretch;
+  width: 100%;
+  gap: 0;
+  padding: 0;
+  margin: 0;
+  background: transparent;
+  border: 0;
+}
+.pane-tab {
+  flex: 1 1 0;
+  min-width: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  height: 100%;
+  padding: 0 8px;
+  border: 0;
+  border-left: 1px solid var(--border-subtle);
+  border-radius: 0;
+  background: transparent;
+  color: var(--text-muted);
+  font-family: var(--font-ui);
+  font-size: 11.5px;
+  font-weight: 500;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background-color 80ms linear, color 80ms linear;
+}
+.pane-tab:first-child {
+  border-left: 0;
+}
+.pane-tab > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.pane-tab:hover:not(.active) {
+  background-color: var(--bg-muted);
+  color: var(--text);
+}
+.pane-tab.active {
+  background-color: var(--bg);
+  color: var(--text);
+  box-shadow: inset 0 -2px 0 var(--accent);
+}
+.pane-tab:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+
 /* Syntax highlighting uses the prototype's restrained palette. Values come
  * from the --syn-* tokens so dark mode stays usable (RELAY-UI · UI-01/UI-06). */
 .hljs-keyword,
