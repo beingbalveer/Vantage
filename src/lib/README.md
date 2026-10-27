@@ -53,7 +53,13 @@ A layer may import **only itself and layers below it**. `src/App.svelte` and
    entry when a selector can narrow the invalidation.
 6. **Async work is cancellable.** Use `platform/request.ts` for latest-wins
    loads so switching repos/files cannot apply a stale result.
-7. **Keep optional UI off the startup path.** Panels that only some users open
+7. **Loaders stay out of effect dependencies.** An `$effect` that kicks off a
+   load must not read the loader's own reactive bookkeeping (in-flight counters,
+   loading flags). Those writes would become dependencies of the effect, and
+   completing a request would retrigger it — an endless reload loop. Wrap the
+   call in `untrack(...)` and depend only on the identity that should reload
+   (`repoId`, `rev`, …).
+8. **Keep optional UI off the startup path.** Panels that only some users open
    (the terminal, heavy viewers) should be dynamically imported so the window
    paints from the smallest possible bundle.
 

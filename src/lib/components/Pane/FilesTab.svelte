@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { untrack } from "svelte";
   import * as api from "../../platform/api";
   import { normalizeError, createDelayedToggle, type NormalizedError } from "../../domain/asyncState";
   import type { RepoEntry, RepoStatus } from "../../platform/types";
@@ -49,14 +50,14 @@
   let treeInFlight = $derived(treeRequests > 0);
   const treePending = createDelayedToggle(150, (v) => (treeLoading = v));
 
-  async function loadTree() {
+  async function loadTree(revision: string = rev || "HEAD") {
     if (!repoId) return;
     const gen = ++treeGen;
     treeRequests += 1;
     treePending.begin();
     treeError = null;
     try {
-      const files = await api.treeList(repoId, rev || "HEAD");
+      const files = await api.treeList(repoId, revision);
       if (gen !== treeGen) return;
       fileList = files;
       if (files.length > 0 && (!selectedFile || !files.includes(selectedFile))) {
@@ -73,12 +74,19 @@
   }
 
   $effect(() => {
-    // Track identity so a repo/rev switch clears the previous tree.
     if (!repoId) return;
-    fileList = [];
-    selectedFile = null;
-    treeError = null;
-    loadTree();
+    // Depend on the revision too, so switching branches reloads the tree.
+    const revision = rev || "HEAD";
+    // `loadTree` bumps its own in-flight counter, which is reactive. Running it
+    // inside `untrack` keeps that bookkeeping out of this effect's dependency
+    // set — otherwise every completed request retriggers the effect and the
+    // tree reloads forever.
+    untrack(() => {
+      fileList = [];
+      selectedFile = null;
+      treeError = null;
+      loadTree(revision);
+    });
     return () => {
       // Only invalidate the in-flight request; the pending toggle is left to
       // its own begin/end balance so overlapping loads stay tracked.

@@ -333,16 +333,20 @@
   $effect(() => {
     if ($navigationTarget && repo) {
       if (!$navigationTarget.repoId || $navigationTarget.repoId === repo.id) {
-        if ($navigationTarget.tab && currentPane) {
-          $panes[paneIndex].tab = $navigationTarget.tab;
-        }
-        if ($navigationTarget.commitSha) {
-          selectCommit($navigationTarget.commitSha);
-        }
-        if ($navigationTarget.path) {
-          selectedFilePath = $navigationTarget.path;
-          selectFile($navigationTarget.path);
-        }
+        // Selections kick off async loads that touch reactive state; keep those
+        // writes from becoming dependencies of this effect.
+        untrack(() => {
+          if ($navigationTarget?.tab && currentPane) {
+            $panes[paneIndex].tab = $navigationTarget.tab;
+          }
+          if ($navigationTarget?.commitSha) {
+            selectCommit($navigationTarget.commitSha);
+          }
+          if ($navigationTarget?.path) {
+            selectedFilePath = $navigationTarget.path;
+            selectFile($navigationTarget.path);
+          }
+        });
       }
     }
   });
@@ -353,13 +357,15 @@
     const req = $composerRequest;
     if (!req) return;
     if (repo && req.repoId === repo.id) {
-      isUncommittedSelected = true;
-      selectedCommitSha = null;
-      currentScope = { type: "working" };
-      commitMode = true;
-      showCommitDetails = false;
-      amendRequestToken += 1;
-      loadScopeFiles({ type: "working" });
+      untrack(() => {
+        isUncommittedSelected = true;
+        selectedCommitSha = null;
+        currentScope = { type: "working" };
+        commitMode = true;
+        showCommitDetails = false;
+        amendRequestToken += 1;
+        loadScopeFiles({ type: "working" });
+      });
     }
     composerRequest.set(null);
   });
