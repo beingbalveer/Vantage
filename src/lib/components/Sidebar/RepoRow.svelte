@@ -536,7 +536,7 @@
     min-height: 52px;
     padding: 6px 12px;
     cursor: pointer;
-    border-radius: 12px;
+    border-radius: var(--r-sm);
     margin: 2px 6px;
     position: relative;
     transition: background-color 100ms ease;
@@ -570,7 +570,7 @@
     right: 4px;
     height: 3px;
     background: var(--accent);
-    border-radius: 2px;
+    border-radius: var(--r-sm);
     z-index: 20;
     pointer-events: none;
   }
@@ -583,7 +583,7 @@
     right: 4px;
     height: 3px;
     background: var(--accent);
-    border-radius: 2px;
+    border-radius: var(--r-sm);
     z-index: 20;
     pointer-events: none;
   }
@@ -597,7 +597,7 @@
     padding: 0;
     margin: 4px auto;
     justify-content: center;
-    border-radius: 12px;
+    border-radius: var(--r-sm);
     gap: 0;
     flex-shrink: 0;
   }
@@ -617,7 +617,7 @@
   .repo-icon-box {
     width: 36px;
     height: 36px;
-    border-radius: 10px;
+    border-radius: var(--r-sm);
     display: flex;
     align-items: center;
     justify-content: center;
@@ -644,7 +644,7 @@
     min-width: 14px;
     height: 14px;
     padding: 0 4px;
-    border-radius: 7px;
+    border-radius: var(--r-sm);
     box-sizing: border-box;
     background-color: var(--accent);
     color: var(--accent-fg);
@@ -789,7 +789,7 @@
     padding: 15px 17px;
     background: var(--bg);
     border: 1px solid var(--border);
-    border-radius: 14px;
+    border-radius: var(--r-sm);
     box-shadow: 0 9px 28px rgba(0, 0, 0, 0.075);
     z-index: 100;
     pointer-events: none;
@@ -969,7 +969,7 @@
 
   .head-pill {
     padding: 0 4px;
-    border-radius: 3px;
+    border-radius: var(--r-sm);
     background-color: var(--accent);
     color: var(--accent-fg);
     font-size: 9px;

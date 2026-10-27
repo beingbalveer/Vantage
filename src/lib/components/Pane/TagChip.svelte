@@ -50,7 +50,7 @@
     max-width: 160px;
     height: 18px;
     padding: 0 6px;
-    border-radius: 9px;
+    border-radius: var(--r-sm);
     border: 1px solid var(--border);
     background-color: var(--bg-subtle);
     color: var(--text-muted);

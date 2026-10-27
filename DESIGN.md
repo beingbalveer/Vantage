@@ -115,7 +115,7 @@ Tabular numbers (`font-variant-numeric: tabular-nums`) for all counts, line numb
 ### 2.5 Spacing, radius, elevation, sizing
 
 - **Spacing scale (4px base):** `--s-1: 4px`, `--s-2: 8px`, `--s-3: 12px`, `--s-4: 16px`, `--s-5: 20px`, `--s-6: 24px`, `--s-8: 32px`.
-- **Radius:** `--r-sm: 4px` (chips, kbd), `--r-md: 6px` (buttons, inputs, menus), `--r-lg: 10px` (dialogs, palette).
+- **Radius:** flat chrome. `--r-sm`, `--r-md` and `--r-lg` are all `0`, so buttons, inputs, menus, chips and dialogs have square corners. Only true circles (status dots, radio indicators, spinners) use `border-radius: 50%`. Radii quoted elsewhere in this document are historical.
 - **Borders:** 1px hairline. Never 2px except the focus ring.
 - **Focus ring:** `outline: 2px solid var(--accent); outline-offset: 1px;` on `:focus-visible` for every interactive element. Inside lists, the focused row shows the ring inset.
 - **Z-index layers:** content 0, sticky headers 10, pane drawers 20, popovers/menus 100, palette/dialogs 200, toasts 300.
@@ -125,7 +125,7 @@ Tabular numbers (`font-variant-numeric: tabular-nums`) for all counts, line numb
 
 | Control | Height | Notes |
 |---|---|---|
-| Button (default) | 28px | Horizontal padding 12px, radius 6px, text-base 600 |
+| Button (default) | 28px | Horizontal padding 12px, text-base 600 |
 | Button (small) | 24px | Padding 8px |
 | Icon button | 28 x 28 (24 x 24 small) | Icon 16px, hover bg `--bg-muted` |
 | Input / select | 28px | Border `--border`, focus border `--accent` plus ring |

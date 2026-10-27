@@ -799,7 +799,7 @@
           {/if}
         {:else}
           <div style="display: flex; align-items: center; gap: 14px; margin-bottom: 12px;">
-            <img src="/favicon.png" alt="Vantage" width="36" height="36" style="border-radius: 8px;" />
+            <img src="/favicon.png" alt="Vantage" width="36" height="36" />
             <div>
               <h3 class="text-strong" style="margin: 0;">Vantage</h3>
               <p class="text-xs text-muted" style="margin: 0;">v0.2.0</p>
@@ -1224,7 +1224,7 @@
     color: var(--accent);
     background-color: var(--accent-subtle, rgba(88, 166, 255, 0.1));
     padding: 1px 6px;
-    border-radius: 4px;
+    border-radius: var(--r-sm);
   }
 
   .flag-desc {

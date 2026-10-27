@@ -585,7 +585,7 @@
     background: var(--bg);
     box-shadow: var(--shadow-pop);
     border: 1px solid var(--border-subtle);
-    border-radius: 8px;
+    border-radius: var(--r-sm);
     padding: 5px;
     min-width: 200px;
   }
@@ -598,7 +598,7 @@
     background: none;
     border: 0;
     color: var(--text);
-    border-radius: 4px;
+    border-radius: var(--r-sm);
     cursor: pointer;
   }
   .files-options button:hover {
@@ -754,7 +754,7 @@
     height: 13px;
     border: 1.5px solid var(--warning);
     color: var(--warning);
-    border-radius: 1px;
+    border-radius: var(--r-sm);
     font-size: 12px;
     line-height: 1;
     flex-shrink: 0;

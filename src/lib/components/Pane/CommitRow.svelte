@@ -228,7 +228,7 @@
     top: 7px;
     bottom: 7px;
     width: 3px;
-    border-radius: 0 3px 3px 0;
+    border-radius: var(--r-sm);
     background: var(--accent);
   }
 
@@ -245,7 +245,7 @@
     z-index: 1;
   }
   .merge-commit .commit-node {
-    border-radius: 2px;
+    border-radius: var(--r-sm);
     transform: rotate(45deg);
   }
 
@@ -318,7 +318,7 @@
   .merge-badge {
     flex-shrink: 0;
     padding: 3px 6px;
-    border-radius: 5px;
+    border-radius: var(--r-sm);
     background: var(--bg-muted);
     color: var(--text-muted);
     font-size: 10px;
@@ -352,7 +352,7 @@
     justify-content: center;
     width: 26px;
     height: 16px;
-    border-radius: 9999px;
+    border-radius: var(--r-sm);
     color: #2f363e;
     background: #e2e4e8;
     flex-shrink: 0;

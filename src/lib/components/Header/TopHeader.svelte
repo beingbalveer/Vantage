@@ -382,7 +382,7 @@
     justify-content: center;
     border: 0;
     background: none;
-    border-radius: 7px;
+    border-radius: var(--r-sm);
     color: #3d454e;
     cursor: pointer;
     padding: 0;
@@ -415,7 +415,7 @@
     color: #3d454e;
     background: transparent;
     border: 0;
-    border-radius: 7px;
+    border-radius: var(--r-sm);
     cursor: pointer;
     white-space: nowrap;
     transition: background 100ms ease, color 100ms ease;
@@ -468,7 +468,7 @@
     font-size: 11px;
     font-weight: 600;
     line-height: 1;
-    border-radius: 9px;
+    border-radius: var(--r-sm);
     background: rgba(0, 0, 0, 0.08);
     color: #3d454e;
     font-variant-numeric: tabular-nums;
@@ -517,7 +517,7 @@
     min-width: 220px;
     padding: 5px;
     background: var(--bg);
-    border-radius: 10px;
+    border-radius: var(--r-sm);
     box-shadow: 0 7px 28px rgba(0, 0, 0, 0.11), 0 0 0 1px rgba(0, 0, 0, 0.03);
     z-index: 120;
     max-height: 420px;
@@ -541,7 +541,7 @@
     padding: 8px 10px;
     border: 0;
     background: none;
-    border-radius: 6px;
+    border-radius: var(--r-sm);
     justify-content: flex-start;
     text-align: left;
     font-size: 13px;

@@ -1751,11 +1751,11 @@
 
   :global(.diff-add-word) {
     background-color: var(--diff-add-word);
-    border-radius: 2px;
+    border-radius: var(--r-sm);
   }
   :global(.diff-del-word) {
     background-color: var(--diff-del-word);
-    border-radius: 2px;
+    border-radius: var(--r-sm);
   }
 
   /* Floating Action Bar */

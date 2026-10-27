@@ -270,7 +270,7 @@
   .copy-sha-btn {
     background: transparent;
     border: 1px solid var(--border-subtle);
-    border-radius: 3px;
+    border-radius: var(--r-sm);
     padding: 1px 5px;
     cursor: pointer;
     color: var(--text-muted);

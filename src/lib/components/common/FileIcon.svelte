@@ -190,7 +190,7 @@
     min-width: 13px;
     height: 13px;
     padding: 0 2px;
-    border-radius: 3px;
+    border-radius: var(--r-sm);
     font-weight: 700;
     font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
     line-height: 1;

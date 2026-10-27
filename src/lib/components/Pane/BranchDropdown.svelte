@@ -586,7 +586,7 @@
     padding: 2px 5px;
     background-color: rgba(125, 125, 125, 0.18);
     color: var(--text);
-    border-radius: 4px;
+    border-radius: var(--r-sm);
     letter-spacing: 0.04em;
   }
 
@@ -726,7 +726,7 @@
     align-items: center;
     justify-content: space-between;
     padding: 6px 8px;
-    border-radius: 4px;
+    border-radius: var(--r-sm);
   }
 
   .branch-picker-item:hover {

@@ -658,7 +658,7 @@
     align-items: center;
     justify-content: center;
     border: 1px solid transparent;
-    border-radius: 5px;
+    border-radius: var(--r-sm);
     background: transparent;
     color: var(--text-muted);
     cursor: pointer;
@@ -736,7 +736,7 @@
 
   :global(.find-match) {
     background-color: var(--warning-bg);
-    border-radius: 2px;
+    border-radius: var(--r-sm);
     color: inherit;
   }
   :global(.find-match-current) {

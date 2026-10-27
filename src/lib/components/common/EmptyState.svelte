@@ -52,7 +52,7 @@
     width: 40px;
     height: 40px;
     margin-bottom: 2px;
-    border-radius: 50%;
+    border-radius: var(--r-sm);
     background-color: var(--bg-subtle);
     color: var(--text-faint);
   }

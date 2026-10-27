@@ -340,7 +340,7 @@
     align-items: center;
     background: var(--bg-hover, rgba(0, 0, 0, 0.05));
     padding: 2px;
-    border-radius: 6px;
+    border-radius: var(--r-sm);
     border: 1px solid var(--border);
     flex-shrink: 0;
   }
@@ -358,7 +358,7 @@
     font-weight: 500;
     border: 0;
     background: transparent;
-    border-radius: 4px;
+    border-radius: var(--r-sm);
     color: var(--text-muted);
     cursor: pointer;
     transition: background 120ms ease, color 120ms ease;
@@ -439,7 +439,7 @@
     font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
     background: var(--bg-hover, rgba(0, 0, 0, 0.08));
     border: 1px solid var(--border);
-    border-radius: 4px;
+    border-radius: var(--r-sm);
     box-shadow: 0 1px 0 rgba(0, 0, 0, 0.1);
   }
 

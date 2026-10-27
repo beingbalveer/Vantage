@@ -411,7 +411,7 @@
     padding: 2px;
     margin-bottom: 12px;
     border: 1px solid #dedfe2;
-    border-radius: 7px;
+    border-radius: var(--r-sm);
   }
   .path-control:focus-within {
     border-color: #a1adbb;
@@ -439,7 +439,7 @@
     padding: 5px 8px;
     background: #f0f1f3;
     border: 0;
-    border-radius: 5px;
+    border-radius: var(--r-sm);
     font-size: 11px;
     color: #505963;
     cursor: pointer;
@@ -459,7 +459,7 @@
     height: 31px;
     padding: 6px 9px;
     border: 1px solid #dedfe2;
-    border-radius: 7px;
+    border-radius: var(--r-sm);
     font-size: 12px;
     color: #454545;
     background: transparent;
@@ -483,7 +483,7 @@
   }
   .add-actions button {
     border: 0;
-    border-radius: 7px;
+    border-radius: var(--r-sm);
     padding: 7px 11px;
     font-size: 12px;
     cursor: pointer;

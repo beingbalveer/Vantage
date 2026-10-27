@@ -31,7 +31,7 @@
     font-family: var(--font-ui);
     font-weight: 600;
     line-height: 1;
-    border-radius: 9999px;
+    border-radius: var(--r-sm);
     white-space: nowrap;
     user-select: none;
     letter-spacing: 0.02em;

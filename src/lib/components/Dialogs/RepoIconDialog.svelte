@@ -119,7 +119,7 @@
     padding: 10px 12px;
     background-color: var(--bg-muted, #f3f4f6);
     border: 1px solid var(--border-subtle, #e5e7eb);
-    border-radius: 12px;
+    border-radius: var(--r-sm);
     margin-bottom: 14px;
   }
   :global([data-theme="dark"]) .preview-banner {
@@ -130,7 +130,7 @@
   .preview-box {
     width: 36px;
     height: 36px;
-    border-radius: 10px;
+    border-radius: var(--r-sm);
     display: flex;
     align-items: center;
     justify-content: center;
@@ -189,7 +189,7 @@
     font-size: 11px;
     font-weight: 500;
     padding: 5px 9px;
-    border-radius: 6px;
+    border-radius: var(--r-sm);
     border: 1px solid var(--border, #d1d5db);
     background: var(--bg);
     color: var(--text);
