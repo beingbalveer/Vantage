@@ -1,6 +1,10 @@
 <script lang="ts">
   import { untrack } from "svelte";
-  import { leftColumnWidth, setLeftColumnWidth, viewportPaneWidths } from "../../app/layout";
+  import {
+    persistLeftColumnWidth,
+    defaultLeftColumnWidth,
+    LEFT_COLUMN_KEY,
+  } from "../../app/layout";
   import { setPaneTab } from "../../domain/stores/panes";
   import * as api from "../../platform/api";
   import { normalizeError, createDelayedToggle, type NormalizedError } from "../../domain/asyncState";
@@ -32,6 +36,9 @@
     repo?: RepoEntry | null;
     status?: RepoStatus | null;
     paneIndex?: number;
+    /** Leading column width, owned by the pane so panes stay independent. */
+    leftWidth?: number;
+    onleftwidthchange?: (width: number) => void;
   }
 
   let {
@@ -42,12 +49,16 @@
     repo = null,
     status = null,
     paneIndex = 0,
+    leftWidth = defaultLeftColumnWidth(),
+    onleftwidthchange,
   }: Props = $props();
 
   let fileList = $state<string[]>([]);
-  // Open files live in a store keyed by repository, so tabs survive a switch
-  // to the Commits view and back.
-  let tabState = $derived(getFileTabState($fileTabs, repoId));
+  // Tabs are scoped to this pane (not just the repo): two panes showing the
+  // same repo keep independent tab strips. Survives Commits ↔ Files because the
+  // key is stable for the pane.
+  const tabKey = $derived(`${repoId}#${paneIndex}`);
+  let tabState = $derived(getFileTabState($fileTabs, tabKey));
   let openTabs = $derived(tabState.tabs);
   let activeFile = $derived(tabState.active);
   let activeTargetLine = $state<number | null>(null);
@@ -72,12 +83,12 @@
       const files = await api.treeList(repoId, revision);
       if (gen !== treeGen) return;
       fileList = files;
-      pruneFileTabs(repoId, files);
+      pruneFileTabs(tabKey, files);
       // First visit to a repo opens its first file, like the old single-view
       // behaviour; later visits restore whatever tabs were left open, and a
       // deliberately emptied strip is not re-filled on the next refresh.
       if (files.length > 0 && openTabs.length === 0 && !tabState.openedOnce) {
-        openFileTab(repoId, files[0]);
+        openFileTab(tabKey, files[0]);
       }
     } catch (e) {
       if (gen !== treeGen) return;
@@ -110,31 +121,33 @@
   });
 
   $effect(() => {
-    if (targetFile) openFileTab(repoId, targetFile);
+    if (targetFile) openFileTab(tabKey, targetFile);
     if (initialTargetLine) activeTargetLine = initialTargetLine;
   });
 
   // Shared with the commits column: the leading edge must not move when the
   // pane switches between Commits and Files.
   const startTreeResize = createHorizontalResizer({
-    getWidth: () => $leftColumnWidth,
-    setWidth: (w) => setLeftColumnWidth(w),
+    getWidth: () => leftWidth,
+    setWidth: (w) => onleftwidthchange?.(w),
     minWidth: 180,
     maxWidth: 700,
+    storageKey: LEFT_COLUMN_KEY,
   });
 
   const nudgeTreeResize = createHorizontalResizerKeyboard({
-    getWidth: () => $leftColumnWidth,
-    setWidth: (w) => setLeftColumnWidth(w),
+    getWidth: () => leftWidth,
+    setWidth: (w) => onleftwidthchange?.(w),
     minWidth: 160,
     maxWidth: 600,
+    storageKey: LEFT_COLUMN_KEY,
   });
 
   $effect(() => {
     if ($navigationTarget) {
       if (!$navigationTarget.repoId || $navigationTarget.repoId === repoId) {
         if ($navigationTarget.path) {
-          openFileTab(repoId, $navigationTarget.path);
+          openFileTab(tabKey, $navigationTarget.path);
         }
         if ($navigationTarget.line) {
           activeTargetLine = $navigationTarget.line;
@@ -177,7 +190,7 @@
     const file = fileList[index];
     if (!file) return;
     activeTargetLine = null;
-    openFileTab(repoId, file);
+    openFileTab(tabKey, file);
   }
 
   function moveFile(delta: 1 | -1): boolean {
@@ -210,7 +223,7 @@
 
 <div class="files-tab-container">
   <!-- Left Tree Pane -->
-  <div class="tree-pane" style="width: {$leftColumnWidth}px;">
+  <div class="tree-pane" style="width: {leftWidth}px;">
     <!-- View tabs fill the tree column; branch lives in the app header -->
     <div class="tree-header">
       <div class="pane-tabs" role="tablist" aria-label="Pane view">
@@ -255,7 +268,7 @@
           {repoId}
           onselectfile={(path) => {
             activeTargetLine = null;
-            openFileTab(repoId, path);
+            openFileTab(tabKey, path);
           }}
         />
       {/if}
@@ -271,13 +284,14 @@
     aria-label="Resize file tree"
     aria-valuemin={160}
     aria-valuemax={600}
-    aria-valuenow={Math.round($leftColumnWidth)}
+    aria-valuenow={Math.round(leftWidth)}
     tabindex="0"
     title="Drag to resize file tree (Double-click to reset, Arrow keys to nudge)"
     onpointerdown={startTreeResize}
     onkeydown={nudgeTreeResize}
     ondblclick={() => {
-      setLeftColumnWidth(viewportPaneWidths().commits);
+      onleftwidthchange?.(defaultLeftColumnWidth());
+      persistLeftColumnWidth(defaultLeftColumnWidth());
     }}
   ></div>
 
@@ -289,9 +303,9 @@
         active={activeFile}
         onactivate={(path) => {
           activeTargetLine = null;
-          openFileTab(repoId, path);
+          openFileTab(tabKey, path);
         }}
-        onclose={(path) => closeFileTab(repoId, path)}
+        onclose={(path) => closeFileTab(tabKey, path)}
       />
       <div class="viewer-body" id="file-viewer">
         <CodeViewer
@@ -303,7 +317,7 @@
           onopenineditor={openInEditor}
           onnavigatetofile={(filePath, line) => {
             activeTargetLine = line || null;
-            openFileTab(repoId, filePath);
+            openFileTab(tabKey, filePath);
           }}
         />
       </div>

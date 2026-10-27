@@ -41,7 +41,14 @@
   import DiffView from "../Diff/DiffView.svelte";
   import FilesTab from "./FilesTab.svelte";
   import Icon from "../common/Icon.svelte";
-  import { viewportPaneWidths, savedPaneWidth, leftColumnWidth, setLeftColumnWidth } from "../../app/layout";
+  import {
+    viewportPaneWidths,
+    savedPaneWidth,
+    savedLeftColumnWidth,
+    defaultLeftColumnWidth,
+    persistLeftColumnWidth,
+    LEFT_COLUMN_KEY,
+  } from "../../app/layout";
   import {
     createHorizontalResizer,
     createHorizontalResizerKeyboard,
@@ -71,13 +78,17 @@
   // Bumped when the palette asks to amend the last commit, so the composer
   // opens already in amend mode (ALPH-154).
   let amendRequestToken = $state(0);
+  // Per-pane: the commits column and the file tree share this inside the pane,
+  // but other panes keep their own width.
+  let leftColWidth = $state(savedLeftColumnWidth());
   let filesColWidth = $state(savedPaneWidth("vantage_files_col_width", viewportPaneWidths().files));
 
   const startCommitsResize = createHorizontalResizer({
-    getWidth: () => $leftColumnWidth,
-    setWidth: (w) => setLeftColumnWidth(w),
+    getWidth: () => leftColWidth,
+    setWidth: (w) => (leftColWidth = w),
     minWidth: 180,
     maxWidth: 700,
+    storageKey: LEFT_COLUMN_KEY,
   });
 
   const startFilesResize = createHorizontalResizer({
@@ -89,10 +100,11 @@
   });
 
   const nudgeCommitsResize = createHorizontalResizerKeyboard({
-    getWidth: () => $leftColumnWidth,
-    setWidth: (w) => setLeftColumnWidth(w),
+    getWidth: () => leftColWidth,
+    setWidth: (w) => (leftColWidth = w),
     minWidth: 180,
     maxWidth: 700,
+    storageKey: LEFT_COLUMN_KEY,
   });
 
   const nudgeFilesResize = createHorizontalResizerKeyboard({
@@ -1301,13 +1313,15 @@
         {repo}
         {status}
         {paneIndex}
+        leftWidth={leftColWidth}
+        onleftwidthchange={(w) => (leftColWidth = w)}
       />
     {:else}
       <!-- History Tab 3-Column Layout -->
       <div class="history-layout">
         <!-- Commits Column -->
         {#if !focusDiff}
-          <div class="commits-col" style="width: {$leftColumnWidth}px;">
+          <div class="commits-col" style="width: {leftColWidth}px;">
             <!-- View tabs fill the commits column; branch lives in the app header -->
             <div class="commits-header">
               <div class="pane-tabs" role="tablist" aria-label="Pane view">
@@ -1427,13 +1441,14 @@
             aria-label="Resize commit list"
             aria-valuemin={180}
             aria-valuemax={700}
-            aria-valuenow={Math.round($leftColumnWidth)}
+            aria-valuenow={Math.round(leftColWidth)}
             tabindex="0"
             title="Drag to resize commits column (Double-click to reset, Arrow keys to nudge)"
             onpointerdown={startCommitsResize}
             onkeydown={nudgeCommitsResize}
             ondblclick={() => {
-              setLeftColumnWidth(viewportPaneWidths().commits);
+              leftColWidth = defaultLeftColumnWidth();
+              persistLeftColumnWidth(leftColWidth);
             }}
           ></div>
         {/if}
