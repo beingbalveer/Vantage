@@ -122,66 +122,6 @@ export function buildFileTree(
   return convertDir(root, 0);
 }
 
-/**
- * Filter tree nodes matching query string.
- * Returns filtered nodes and set of folder IDs that must be opened to reveal matches.
- */
-export function filterFileTree(
-  nodes: TreeNode[],
-  query: string
-): { filtered: TreeNode[]; autoExpanded: Set<string>; matchCount: number } {
-  const cleanQuery = query.trim().toLowerCase();
-  if (!cleanQuery) {
-    return { filtered: nodes, autoExpanded: new Set(), matchCount: 0 };
-  }
-
-  const autoExpanded = new Set<string>();
-  let matchCount = 0;
-
-  function filterNode(node: TreeNode): TreeNode | null {
-    if (node.isDir) {
-      const filteredChildren: TreeNode[] = [];
-      for (const child of node.children) {
-        const filteredChild = filterNode(child);
-        if (filteredChild) {
-          filteredChildren.push(filteredChild);
-        }
-      }
-
-      const dirMatches = node.name.toLowerCase().includes(cleanQuery) ||
-        node.fullPath.toLowerCase().includes(cleanQuery);
-
-      if (filteredChildren.length > 0 || dirMatches) {
-        autoExpanded.add(node.id);
-        return {
-          ...node,
-          children: filteredChildren,
-        };
-      }
-
-      return null;
-    }
-
-    // File node
-    const fileMatches = node.name.toLowerCase().includes(cleanQuery) ||
-      node.fullPath.toLowerCase().includes(cleanQuery);
-
-    if (fileMatches) {
-      matchCount++;
-      return node;
-    }
-
-    return null;
-  }
-
-  const filtered: TreeNode[] = [];
-  for (const node of nodes) {
-    const res = filterNode(node);
-    if (res) filtered.push(res);
-  }
-
-  return { filtered, autoExpanded, matchCount };
-}
 
 /**
  * Flattens tree into visible row nodes according to expanded directories.

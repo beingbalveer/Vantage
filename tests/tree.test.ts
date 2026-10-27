@@ -1,7 +1,6 @@
 import { describe, it, expect } from "vitest";
 import {
   buildFileTree,
-  filterFileTree,
   flattenVisibleTree,
   collectAllFolderIds,
   getAncestorFolderIds,
@@ -51,39 +50,6 @@ describe("buildFileTree", () => {
   it("handles empty or root files gracefully", () => {
     expect(buildFileTree([])).toEqual([]);
     expect(buildFileTree(["", "  "])).toEqual([]);
-  });
-});
-
-describe("filterFileTree", () => {
-  it("filters files matching query and returns autoExpanded folders", () => {
-    const paths = [
-      "src/components/Header.svelte",
-      "src/components/Footer.svelte",
-      "src/utils/math.ts",
-      "README.md",
-    ];
-    const tree = buildFileTree(paths, { compactSingleChildDirs: false });
-
-    const result = filterFileTree(tree, "head");
-    expect(result.matchCount).toBe(1);
-    expect(result.filtered.length).toBe(1); // src
-
-    const src = result.filtered[0];
-    expect(src.name).toBe("src");
-    expect(result.autoExpanded.has(src.id)).toBe(true);
-
-    const components = src.children[0];
-    expect(components.name).toBe("components");
-    expect(result.autoExpanded.has(components.id)).toBe(true);
-    expect(components.children.map((c) => c.name)).toEqual(["Header.svelte"]);
-  });
-
-  it("returns original tree on empty filter", () => {
-    const paths = ["src/index.ts", "README.md"];
-    const tree = buildFileTree(paths);
-    const result = filterFileTree(tree, "");
-    expect(result.filtered).toBe(tree);
-    expect(result.matchCount).toBe(0);
   });
 });
 
