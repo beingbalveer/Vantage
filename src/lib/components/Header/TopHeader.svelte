@@ -359,7 +359,9 @@
     display: flex;
     align-items: center;
     background: var(--chrome);
+    /* Hairline fence so the chrome reads separately from the workspace. */
     border: 0;
+    border-bottom: 1px solid var(--border);
     position: relative;
     color: #353a40;
     z-index: 40;
