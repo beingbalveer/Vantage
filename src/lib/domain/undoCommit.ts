@@ -1,6 +1,7 @@
-import * as api from "./api";
-import type { UndoCommitResult } from "./types";
-import { addToast, pendingCommitMessage } from "./stores/ui";
+import * as api from "../platform/api";
+import type { UndoCommitResult } from "../platform/types";
+import { addToast } from "../util/toast";
+import { pendingCommitMessage } from "./stores/composer";
 import { refreshSingleStatus, loadRepos } from "./stores/repos";
 
 /**

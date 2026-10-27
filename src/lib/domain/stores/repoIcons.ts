@@ -1,6 +1,6 @@
 import { writable, get } from "svelte/store";
-import type { RepoStackInfo } from "../types";
-import { repoDetectStack } from "../api";
+import type { RepoStackInfo } from "../../platform/types";
+import { repoDetectStack } from "../../platform/api";
 
 /**
  * Repository icon metadata, persisted by repository-entry id so that different

@@ -12,7 +12,7 @@ import {
   type Command,
   type KeyEventLike,
   type ShortcutContext,
-} from "../src/lib/keys";
+} from "../src/lib/platform/keys";
 
 function key(k: string, mods: Partial<KeyEventLike> = {}): KeyEventLike {
   return {

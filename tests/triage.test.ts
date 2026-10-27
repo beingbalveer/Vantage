@@ -1,11 +1,11 @@
 import { describe, it, expect } from "vitest";
-import type { TriageFlag } from "../src/lib/types";
+import type { TriageFlag } from "../src/lib/platform/types";
 import {
   flagLabel,
   formatFlagAriaLabel,
   formatFlagTooltip,
   sortFlagsBySeverity,
-} from "../src/lib/triage";
+} from "../src/lib/domain/triage";
 
 const flag = (kind: TriageFlag["kind"], severity: TriageFlag["severity"], detail: string): TriageFlag => ({
   kind,

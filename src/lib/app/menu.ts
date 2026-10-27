@@ -3,14 +3,14 @@
  * and frontend dispatcher for native menu commands (ALPH-163).
  */
 import { get } from "svelte/store";
-import type { RepoEntry } from "./types";
-import * as api from "./api";
+import type { RepoEntry } from "../platform/types";
+import * as api from "../platform/api";
 import {
   activeRepoId,
   refreshSingleStatus,
   repos,
   statuses,
-} from "./stores/repos";
+} from "../domain/stores/repos";
 import {
   closePane,
   cyclePaneCount,
@@ -19,7 +19,7 @@ import {
   panes,
   setPaneCount,
   toggleTerminalInPane,
-} from "./stores/panes";
+} from "../domain/stores/panes";
 import {
   addRepoDialogOpen,
   addToast,
@@ -27,7 +27,7 @@ import {
   settingsOpen,
   shortcutsHelpOpen,
   sidebarCollapsed,
-} from "./stores/ui";
+} from "./ui";
 
 export interface MenuItem {
   id: string;

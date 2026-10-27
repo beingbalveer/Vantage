@@ -1,7 +1,7 @@
 <script lang="ts">
   import Icon from "../common/Icon.svelte";
   import BinaryDiff from "./BinaryDiff.svelte";
-  import { formatBytes, formatSizeChange } from "../../diff-content";
+  import { formatBytes, formatSizeChange } from "../../domain/diff-content";
 
   interface Props {
     path: string;

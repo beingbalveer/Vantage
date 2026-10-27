@@ -3,8 +3,8 @@
   import { Terminal } from "@xterm/xterm";
   import { FitAddon } from "@xterm/addon-fit";
   import "@xterm/xterm/css/xterm.css";
-  import * as api from "../../api";
-  import { settings } from "../../stores/settings";
+  import * as api from "../../platform/api";
+  import { settings } from "../../domain/stores/settings";
   import type { UnlistenFn } from "@tauri-apps/api/event";
   import Icon from "../common/Icon.svelte";
 

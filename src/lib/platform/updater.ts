@@ -1,6 +1,6 @@
 import { check, type Update } from "@tauri-apps/plugin-updater";
 import { relaunch } from "@tauri-apps/plugin-process";
-import { addToast } from "./stores/ui";
+import { addToast } from "../util/toast";
 
 export interface UpdateStatus {
   checking: boolean;

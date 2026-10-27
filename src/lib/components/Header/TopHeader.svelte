@@ -1,18 +1,18 @@
 <script lang="ts">
   import { get } from "svelte/store";
   import { onDestroy, onMount } from "svelte";
-  import { repos, statuses, loadRepos, refreshSingleStatus } from "../../stores/repos";
+  import { repos, statuses, loadRepos, refreshSingleStatus } from "../../domain/stores/repos";
   import {
     panes,
     focusedPaneIndex,
     toggleTerminalInPane,
     setPaneTab,
-  } from "../../stores/panes";
-  import { paletteOpen, settingsOpen, shortcutsHelpOpen, sidebarCollapsed, addToast } from "../../stores/ui";
-  import { setOperationRunning, setOperationSuccess, setOperationError } from "../../stores/operation";
-  import { formatRelativeTime } from "../../format";
-  import { registerDismiss } from "../../commands";
-  import * as api from "../../api";
+  } from "../../domain/stores/panes";
+  import { paletteOpen, settingsOpen, shortcutsHelpOpen, sidebarCollapsed, addToast } from "../../app/ui";
+  import { setOperationRunning, setOperationSuccess, setOperationError } from "../../domain/stores/operation";
+  import { formatRelativeTime } from "../../domain/format";
+  import { registerDismiss } from "../../app/commands";
+  import * as api from "../../platform/api";
   import Icon from "../common/Icon.svelte";
   import { Modal } from "../common";
 

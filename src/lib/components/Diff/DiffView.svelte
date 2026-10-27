@@ -1,8 +1,8 @@
 <script lang="ts">
   import { tick } from "svelte";
-  import { isFeatureEnabled } from "../../featureFlags.svelte";
-  import type { NormalizedError } from "../../asyncState";
-  import { emptyDiffMessage } from "../../asyncState";
+  import { isFeatureEnabled } from "../../config/featureFlags.svelte";
+  import type { NormalizedError } from "../../domain/asyncState";
+  import { emptyDiffMessage } from "../../domain/asyncState";
   import Skeleton from "../common/Skeleton.svelte";
   import EmptyState from "../common/EmptyState.svelte";
   import Banner from "../common/Banner.svelte";
@@ -18,20 +18,20 @@
     LineSelection,
     WorkingPart,
     WorkingPartCounts,
-  } from "../../types";
-  import { getLanguageFromPath, highlightCodeLines } from "../../highlight";
-  import * as api from "../../api";
-  import { repos, activeRepoId } from "../../stores/repos";
-  import { panes, focusedPaneIndex } from "../../stores/panes";
-  import { addToast } from "../../stores/ui";
-  import { settings, updateSettings } from "../../stores/settings";
-  import { registerHandler, registerDismiss, ownsPaneKeyboard } from "../../commands";
+  } from "../../platform/types";
+  import { getLanguageFromPath, highlightCodeLines } from "../../design/highlight";
+  import * as api from "../../platform/api";
+  import { repos, activeRepoId } from "../../domain/stores/repos";
+  import { panes, focusedPaneIndex } from "../../domain/stores/panes";
+  import { addToast } from "../../app/ui";
+  import { settings, updateSettings } from "../../domain/stores/settings";
+  import { registerHandler, registerDismiss, ownsPaneKeyboard } from "../../app/commands";
   import Icon from "../common/Icon.svelte";
   import { Modal, Button } from "../common";
   import BinaryDiff from "./BinaryDiff.svelte";
   import ImageDiff from "./ImageDiff.svelte";
-  import { classifyDiffContent } from "../../diff-content";
-  import { buildSplitRows, type SplitRow, type SplitCell } from "../../diff-split";
+  import { classifyDiffContent } from "../../domain/diff-content";
+  import { buildSplitRows, type SplitRow, type SplitCell } from "../../domain/diff-split";
 
   interface Props {
     diffFile: DiffFile | null;

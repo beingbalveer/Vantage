@@ -1,10 +1,10 @@
 <script lang="ts">
-  import { isFeatureEnabled } from "../../featureFlags.svelte";
-  import type { FileChange } from "../../types";
-  import type { NormalizedError } from "../../asyncState";
-  import { computeVirtualWindow, splitPath } from "../../format";
-  import { addToast } from "../../stores/ui";
-  import { registerDismiss } from "../../commands";
+  import { isFeatureEnabled } from "../../config/featureFlags.svelte";
+  import type { FileChange } from "../../platform/types";
+  import type { NormalizedError } from "../../domain/asyncState";
+  import { computeVirtualWindow, splitPath } from "../../domain/format";
+  import { addToast } from "../../app/ui";
+  import { registerDismiss } from "../../app/commands";
   import Icon from "../common/Icon.svelte";
   import Skeleton from "../common/Skeleton.svelte";
   import EmptyState from "../common/EmptyState.svelte";

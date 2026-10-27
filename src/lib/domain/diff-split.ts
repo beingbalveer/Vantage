@@ -5,7 +5,7 @@
 // additions on the right, context on both, and unmatched lines get an empty
 // placeholder cell opposite them.
 
-import type { DiffLine } from "./types";
+import type { DiffLine } from "../platform/types";
 
 export type SplitCellKind = "context" | "add" | "del" | "empty";
 

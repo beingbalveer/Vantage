@@ -8,12 +8,12 @@
     getAncestorFolderIds,
     type TreeNode,
     type VisibleNode,
-  } from "../../tree";
+  } from "../../domain/tree";
   import FileIcon from "../common/FileIcon.svelte";
   import Icon from "../common/Icon.svelte";
-  import * as api from "../../api";
-  import { repos } from "../../stores/repos";
-  import { addToast } from "../../stores/ui";
+  import * as api from "../../platform/api";
+  import { repos } from "../../domain/stores/repos";
+  import { addToast } from "../../app/ui";
 
   interface Props {
     files: string[];

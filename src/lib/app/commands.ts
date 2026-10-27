@@ -21,7 +21,7 @@ import {
   openDialog,
   openSettingsAt,
   addToast,
-} from "./stores/ui";
+} from "./ui";
 import {
   repos,
   sortedRepos,
@@ -30,7 +30,7 @@ import {
   refreshSingleStatus,
   statuses,
   loadRepos,
-} from "./stores/repos";
+} from "../domain/stores/repos";
 import {
   panes,
   focusedPaneIndex,
@@ -41,9 +41,9 @@ import {
   openRepoInFocusedPane,
   toggleTerminalInPane,
   setPaneTab,
-} from "./stores/panes";
-import { settings, updateSettings } from "./stores/settings";
-import * as api from "./api";
+} from "../domain/stores/panes";
+import { settings, updateSettings } from "../domain/stores/settings";
+import * as api from "../platform/api";
 import {
   COMMANDS,
   commandById,
@@ -52,7 +52,7 @@ import {
   isTerminalTarget,
   type Command,
   type ShortcutContext,
-} from "./keys";
+} from "../platform/keys";
 
 type Handler = () => boolean | void | Promise<unknown>;
 

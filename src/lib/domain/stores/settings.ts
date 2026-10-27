@@ -1,7 +1,7 @@
 import { writable, get } from "svelte/store";
-import type { Settings } from "../types";
-import * as api from "../api";
-import { addToast } from "./ui";
+import type { Settings } from "../../platform/types";
+import * as api from "../../platform/api";
+import { addToast } from "../../util/toast";
 
 export const settings = writable<Settings>({
   theme: "system",

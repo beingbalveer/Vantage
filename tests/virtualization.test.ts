@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { computeVirtualWindow } from "../src/lib/format";
+import { computeVirtualWindow } from "../src/lib/domain/format";
 
 describe("computeVirtualWindow", () => {
   it("handles empty or zero items correctly", () => {

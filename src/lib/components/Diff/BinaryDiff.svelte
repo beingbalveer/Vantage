@@ -1,6 +1,6 @@
 <script lang="ts">
   import Icon from "../common/Icon.svelte";
-  import { formatSizeChange } from "../../diff-content";
+  import { formatSizeChange } from "../../domain/diff-content";
 
   interface Props {
     path: string;

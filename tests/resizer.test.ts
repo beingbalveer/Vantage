@@ -3,7 +3,7 @@ import {
   createHorizontalResizerKeyboard,
   createVerticalBottomResizer,
   createVerticalBottomResizerKeyboard,
-} from "../src/lib/resizer";
+} from "../src/lib/app/resizer";
 
 function fakeStorage() {
   const store = new Map<string, string>();

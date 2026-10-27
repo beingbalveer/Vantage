@@ -1,7 +1,7 @@
 // Formatting helpers for stash entries (PRODUCT_SPEC: parse machine output only,
 // so the backend hands us structured entries; this module only shapes display text).
 
-import type { StashEntry } from "./types";
+import type { StashEntry } from "../platform/types";
 
 /** The canonical human selector for a stash: `stash@{0}`. */
 export function formatStashIndex(index: number): string {

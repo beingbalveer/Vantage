@@ -1,12 +1,13 @@
 <script lang="ts">
-  import { isFeatureEnabled } from "../../featureFlags.svelte";
-  import { settings } from "../../stores/settings";
-  import * as api from "../../api";
-  import { addToast, pendingCommitMessage } from "../../stores/ui";
-  import { registerHandler } from "../../commands";
-  import type { HeadCommitInfo } from "../../types";
-  import { canAmendLastCommit, amendWarning } from "../../commitActions";
-  import { runUndoLastCommit } from "../../undoCommit";
+  import { isFeatureEnabled } from "../../config/featureFlags.svelte";
+  import { settings } from "../../domain/stores/settings";
+  import * as api from "../../platform/api";
+  import { addToast } from "../../app/ui";
+  import { pendingCommitMessage } from "../../domain/stores/composer";
+  import { registerHandler } from "../../app/commands";
+  import type { HeadCommitInfo } from "../../platform/types";
+  import { canAmendLastCommit, amendWarning } from "../../domain/commitActions";
+  import { runUndoLastCommit } from "../../domain/undoCommit";
   import Icon from "../common/Icon.svelte";
   import {
     addCoAuthor,
@@ -14,7 +15,7 @@
     formatCoAuthor,
     parseCoAuthor,
     type CoAuthor,
-  } from "../../coauthors";
+  } from "../../domain/coauthors";
 
   interface Props {
     repoId: string;

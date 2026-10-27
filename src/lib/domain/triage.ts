@@ -1,4 +1,4 @@
-import type { FlagKind, Severity, TriageFlag } from "./types";
+import type { FlagKind, Severity, TriageFlag } from "../platform/types";
 
 // Human-readable rule names, matching the heuristic in src-tauri/src/triage.rs.
 const FLAG_LABELS: Record<FlagKind, string> = {

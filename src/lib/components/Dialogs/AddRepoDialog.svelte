@@ -1,12 +1,12 @@
 <script lang="ts">
   import { get } from "svelte/store";
   import type { UnlistenFn } from "@tauri-apps/api/event";
-  import { addRepoDialogOpen, addRepoInitialTab, addToast } from "../../stores/ui";
-  import { loadRepos, activeRepoId } from "../../stores/repos";
-  import { openRepoInFocusedPane } from "../../stores/panes";
-  import { saveRepoIcon, type RepoIcon } from "../../stores/repoIcons";
-  import { isSafeFolderName, suggestFolderName } from "../../clone";
-  import * as api from "../../api";
+  import { addRepoDialogOpen, addRepoInitialTab, addToast } from "../../app/ui";
+  import { loadRepos, activeRepoId } from "../../domain/stores/repos";
+  import { openRepoInFocusedPane } from "../../domain/stores/panes";
+  import { saveRepoIcon, type RepoIcon } from "../../domain/stores/repoIcons";
+  import { isSafeFolderName, suggestFolderName } from "../../domain/clone";
+  import * as api from "../../platform/api";
   import { Modal, Icon } from "../common";
   import RepoIconPicker from "./RepoIconPicker.svelte";
 

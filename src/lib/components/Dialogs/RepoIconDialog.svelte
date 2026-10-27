@@ -1,13 +1,13 @@
 <script lang="ts">
-  import { activeDialog, closeDialog, addToast } from "../../stores/ui";
+  import { activeDialog, closeDialog, addToast } from "../../app/ui";
   import {
     repoIcons,
     detectedStacks,
     saveRepoIcon,
     clearRepoIcon,
     type RepoIcon,
-  } from "../../stores/repoIcons";
-  import type { RepoEntry } from "../../types";
+  } from "../../domain/stores/repoIcons";
+  import type { RepoEntry } from "../../platform/types";
   import { Modal, Button, Icon } from "../common";
   import RepoIconView from "../Sidebar/RepoIcon.svelte";
   import RepoIconPicker from "./RepoIconPicker.svelte";

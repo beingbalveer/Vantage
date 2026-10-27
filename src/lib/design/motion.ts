@@ -2,11 +2,11 @@
  * Motion helpers shared by CSS-driven and JS-driven animation.
  *
  * CSS transitions/animations are already neutralised by the
- * `prefers-reduced-motion` media query in `styles/base.css`; this keeps
+ * `prefers-reduced-motion` media query in `design/styles/base.css`; this keeps
  * imperative scrolling in CodeViewer consistent with that preference.
  */
 
-import { isFeatureEnabled } from "./featureFlags.svelte";
+import { isFeatureEnabled } from "../config/featureFlags.svelte";
 
 export type MotionMatcher = (query: string) => { matches: boolean };
 

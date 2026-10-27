@@ -1,6 +1,6 @@
 <script lang="ts">
   import { tick } from "svelte";
-  import { clampMenuPosition, type MenuItem } from "../../menu";
+  import { clampMenuPosition, type MenuItem } from "../../app/menu";
 
   interface Props {
     x: number;

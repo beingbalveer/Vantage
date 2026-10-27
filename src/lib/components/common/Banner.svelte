@@ -3,7 +3,7 @@
   // failure so it survives a dismissed toast, with a Retry action and an
   // on-demand details block instead of a permanent wall of stderr.
   import Icon from "./Icon.svelte";
-  import type { NormalizedError } from "../../asyncState";
+  import type { NormalizedError } from "../../domain/asyncState";
 
   interface Props {
     kind?: "warning" | "error" | "info";

@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { formatKey } from "../../keys";
+  import { formatKey } from "../../platform/keys";
 
   interface Props {
     shortcut: string;

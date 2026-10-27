@@ -1,5 +1,5 @@
 import { writable, get } from "svelte/store";
-import type { PaneLayout } from "../types";
+import type { PaneLayout } from "../../platform/types";
 import { repos, sortedRepos } from "./repos";
 
 export interface PaneState {

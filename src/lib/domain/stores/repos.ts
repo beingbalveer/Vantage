@@ -1,6 +1,6 @@
 import { writable, derived, get } from "svelte/store";
-import type { RepoEntry, RepoStatus } from "../types";
-import * as api from "../api";
+import type { RepoEntry, RepoStatus } from "../../platform/types";
+import * as api from "../../platform/api";
 
 export const repos = writable<RepoEntry[]>([]);
 export const statuses = writable<Record<string, RepoStatus>>({});

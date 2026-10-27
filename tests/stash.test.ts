@@ -3,8 +3,8 @@ import {
   formatStashIndex,
   formatStashLabel,
   summarizeStashSubject,
-} from "../src/lib/stash";
-import type { StashEntry } from "../src/lib/types";
+} from "../src/lib/domain/stash";
+import type { StashEntry } from "../src/lib/platform/types";
 
 function entry(partial: Partial<StashEntry>): StashEntry {
   return {

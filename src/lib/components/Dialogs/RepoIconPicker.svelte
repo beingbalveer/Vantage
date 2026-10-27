@@ -5,8 +5,8 @@
     presetEmojis,
     readIconFile,
     type RepoIcon,
-  } from "../../stores/repoIcons";
-  import * as api from "../../api";
+  } from "../../domain/stores/repoIcons";
+  import * as api from "../../platform/api";
   import { Icon, TechIcon, Button } from "../common";
   import RepoIconView from "../Sidebar/RepoIcon.svelte";
 

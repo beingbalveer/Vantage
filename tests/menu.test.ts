@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { clampMenuPosition } from "../src/lib/menu";
+import { clampMenuPosition } from "../src/lib/app/menu";
 
 describe("clampMenuPosition", () => {
   it("keeps a menu fully inside the viewport", () => {

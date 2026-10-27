@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount, onDestroy, tick, untrack } from "svelte";
   import { get } from "svelte/store";
-  import { isFeatureEnabled } from "../../featureFlags.svelte";
+  import { isFeatureEnabled } from "../../config/featureFlags.svelte";
   import type {
     RepoEntry,
     RepoStatus,
@@ -12,23 +12,24 @@
     TriageFlag,
     WorkingPart,
     WorkingPartCounts,
-  } from "../../types";
-  import * as api from "../../api";
-  import { settings } from "../../stores/settings";
-  import { panes, paneCount, focusedPaneIndex, focusPane, setPaneTab } from "../../stores/panes";
-  import { addToast, openDialog, activeDialog, paletteOpen, settingsOpen, shortcutsHelpOpen, addRepoDialogOpen, scanFolderDialogOpen, composerRequest } from "../../stores/ui";
-  import { refreshSingleStatus, loadRepos, setRepoSelection, getRepoSelection, statuses } from "../../stores/repos";
-  import { tagsByRepo, loadTags, groupTagsByTarget } from "../../stores/tags";
-  import { navigationTarget, navigateTo } from "../../stores/navigation";
+  } from "../../platform/types";
+  import * as api from "../../platform/api";
+  import { settings } from "../../domain/stores/settings";
+  import { panes, paneCount, focusedPaneIndex, focusPane, setPaneTab } from "../../domain/stores/panes";
+  import { addToast, openDialog, activeDialog, paletteOpen, settingsOpen, shortcutsHelpOpen, addRepoDialogOpen, scanFolderDialogOpen } from "../../app/ui";
+  import { composerRequest } from "../../domain/stores/composer";
+  import { refreshSingleStatus, loadRepos, setRepoSelection, getRepoSelection, statuses } from "../../domain/stores/repos";
+  import { tagsByRepo, loadTags, groupTagsByTarget } from "../../domain/stores/tags";
+  import { navigationTarget, navigateTo } from "../../domain/stores/navigation";
   import {
     HISTORY_PAGE_SIZE,
     formatHistoryFooter,
     hasMoreHistory,
     isEditableTarget,
-  } from "../../history";
-  import { findFlaggedCommitIndex, matchShortcut } from "../../keys";
-  import { registerHandler, markRepoReviewed, ownsPaneKeyboard } from "../../commands";
-  import type { MenuItem } from "../../menu";
+  } from "../../domain/history";
+  import { findFlaggedCommitIndex, matchShortcut } from "../../platform/keys";
+  import { registerHandler, markRepoReviewed, ownsPaneKeyboard } from "../../app/commands";
+  import type { MenuItem } from "../../app/menu";
   import ContextMenu from "../common/ContextMenu.svelte";
   import UncommittedRow from "./UncommittedRow.svelte";
   import CommitRow from "./CommitRow.svelte";
@@ -41,13 +42,13 @@
   import FilesTab from "./FilesTab.svelte";
   import TerminalDrawer from "../Terminal/TerminalDrawer.svelte";
   import Icon from "../common/Icon.svelte";
-  import { viewportPaneWidths, savedPaneWidth } from "../../layout";
+  import { viewportPaneWidths, savedPaneWidth } from "../../app/layout";
   import {
     createHorizontalResizer,
     createHorizontalResizerKeyboard,
     createVerticalBottomResizer,
     createVerticalBottomResizerKeyboard,
-  } from "../../resizer";
+  } from "../../app/resizer";
 
   interface Props {
     paneIndex: number;

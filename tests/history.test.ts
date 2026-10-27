@@ -3,7 +3,7 @@ import {
   HISTORY_PAGE_SIZE,
   formatHistoryFooter,
   hasMoreHistory,
-} from "../src/lib/history";
+} from "../src/lib/domain/history";
 
 describe("history footer label", () => {
   it("exposes the 200-commit page size", () => {

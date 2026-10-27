@@ -1,4 +1,4 @@
-import type { DetectedApp, Settings } from "./types";
+import type { DetectedApp, Settings } from "../platform/types";
 
 /** Shared, framework-free validation helpers for the settings dialog. */
 

@@ -1,9 +1,9 @@
 <script lang="ts">
-  import { repos, loadRepos } from "../../stores/repos";
-  import { openRepoInFocusedPane } from "../../stores/panes";
-  import { addToast, openDialog, branchesVersion } from "../../stores/ui";
-  import * as api from "../../api";
-  import type { BranchInfo, RepoEntry, RepoStatus } from "../../types";
+  import { repos, loadRepos } from "../../domain/stores/repos";
+  import { openRepoInFocusedPane } from "../../domain/stores/panes";
+  import { addToast, openDialog, branchesVersion } from "../../app/ui";
+  import * as api from "../../platform/api";
+  import type { BranchInfo, RepoEntry, RepoStatus } from "../../platform/types";
   import Icon from "../common/Icon.svelte";
 
   interface Props {

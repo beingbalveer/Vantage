@@ -5,7 +5,7 @@ import {
   createDelayedToggle,
   emptyFileListMessage,
   emptyDiffMessage,
-} from "../src/lib/asyncState";
+} from "../src/lib/domain/asyncState";
 
 describe("normalizeError", () => {
   it("reads a serialized Tauri AppError object", () => {

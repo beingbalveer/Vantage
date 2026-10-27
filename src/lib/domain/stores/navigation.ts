@@ -1,5 +1,5 @@
 import { writable } from "svelte/store";
-import type { NavigationTarget } from "../types";
+import type { NavigationTarget } from "../../platform/types";
 
 export const navigationTarget = writable<NavigationTarget | null>(null);
 

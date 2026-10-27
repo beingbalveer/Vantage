@@ -56,6 +56,12 @@ jobs:
       - name: Check Svelte types and syntax
         run: npm run check
 
+      - name: Check design-system regressions
+        run: npm run lint:design
+
+      - name: Check layer boundaries
+        run: npm run lint:layers
+
       - name: Run frontend unit tests (Vitest)
         run: npm test
 

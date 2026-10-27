@@ -1,14 +1,14 @@
 <script lang="ts">
-  import { settingsOpen, addToast, settingsSection, settingsRecoveryRepoId, type SettingsSection } from "../../stores/ui";
-  import { settings, updateSettings } from "../../stores/settings";
-  import { FEATURE_METADATA, isFeatureEnabled, setFeatureFlag, resetFeatureFlags, type FeatureFlagKey } from "../../featureFlags.svelte";
-  import { repos, activeRepoId, refreshSingleStatus, loadRepos } from "../../stores/repos";
-  import * as api from "../../api";
-  import * as settingsLib from "../../settings";
-  import type { Settings, BackupInfo, EnvInfo, GitIdentity } from "../../types";
-  import { formatRelativeTime, formatFullTimestamp } from "../../format";
+  import { settingsOpen, addToast, settingsSection, settingsRecoveryRepoId, type SettingsSection } from "../../app/ui";
+  import { settings, updateSettings } from "../../domain/stores/settings";
+  import { FEATURE_METADATA, isFeatureEnabled, setFeatureFlag, resetFeatureFlags, type FeatureFlagKey } from "../../config/featureFlags.svelte";
+  import { repos, activeRepoId, refreshSingleStatus, loadRepos } from "../../domain/stores/repos";
+  import * as api from "../../platform/api";
+  import * as settingsLib from "../../domain/settings";
+  import type { Settings, BackupInfo, EnvInfo, GitIdentity } from "../../platform/types";
+  import { formatRelativeTime, formatFullTimestamp } from "../../domain/format";
   import { Modal, Button, Checkbox, Badge, Input } from "../common";
-  import { checkForAppUpdates, downloadAndInstallUpdate } from "../../updater";
+  import { checkForAppUpdates, downloadAndInstallUpdate } from "../../platform/updater";
   import type { Update } from "@tauri-apps/plugin-updater";
 
   let activeSection = $state<SettingsSection>("general");

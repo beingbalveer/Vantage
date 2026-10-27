@@ -5,7 +5,7 @@ import {
   flattenVisibleTree,
   collectAllFolderIds,
   getAncestorFolderIds,
-} from "../src/lib/tree";
+} from "../src/lib/domain/tree";
 
 describe("buildFileTree", () => {
   it("builds a nested tree with directories sorted before files", () => {

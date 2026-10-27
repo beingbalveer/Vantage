@@ -1,10 +1,10 @@
 <script lang="ts">
-  import type { DirtyAction } from "../../types";
-  import * as api from "../../api";
-  import { addToast, checkoutRequest, clearCheckoutRequest } from "../../stores/ui";
-  import { refreshSingleStatus, loadRepos } from "../../stores/repos";
+  import type { DirtyAction } from "../../platform/types";
+  import * as api from "../../platform/api";
+  import { addToast, checkoutRequest, clearCheckoutRequest } from "../../app/ui";
+  import { refreshSingleStatus, loadRepos } from "../../domain/stores/repos";
   import { Modal, Button, Input, Checkbox } from "../common";
-  import { formatStashIndex, summarizeStashSubject } from "../../stash";
+  import { formatStashIndex, summarizeStashSubject } from "../../domain/stash";
 
   let isOpen = $derived($checkoutRequest !== null);
   let request = $derived($checkoutRequest);

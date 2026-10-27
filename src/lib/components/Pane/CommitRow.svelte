@@ -1,13 +1,13 @@
 <script lang="ts">
   import type { ComponentProps } from "svelte";
-  import type { CommitSummary, FlagKind, TriageFlag, TagInfo } from "../../types";
-  import { isFeatureEnabled } from "../../featureFlags.svelte";
-  import { formatRelativeTime } from "../../format";
+  import type { CommitSummary, FlagKind, TriageFlag, TagInfo } from "../../platform/types";
+  import { isFeatureEnabled } from "../../config/featureFlags.svelte";
+  import { formatRelativeTime } from "../../domain/format";
   import {
     formatFlagAriaLabel,
     formatFlagTooltip,
     sortFlagsBySeverity,
-  } from "../../triage";
+  } from "../../domain/triage";
   import Icon from "../common/Icon.svelte";
   import TagChip from "./TagChip.svelte";
 

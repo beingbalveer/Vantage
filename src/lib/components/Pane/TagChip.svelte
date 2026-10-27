@@ -1,6 +1,6 @@
 <script lang="ts">
-  import type { TagInfo } from "../../types";
-  import { openTagDetailsDialog } from "../../stores/ui";
+  import type { TagInfo } from "../../platform/types";
+  import { openTagDetailsDialog } from "../../app/ui";
   import Icon from "../common/Icon.svelte";
 
   interface Props {

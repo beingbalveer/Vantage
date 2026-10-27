@@ -1,13 +1,14 @@
 <script lang="ts">
-  import { onMount, tick } from "svelte";
-  import * as api from "../../api";
-  import type { BlameInfo, DefHit } from "../../types";
-  import { highlightCodeLines, getLanguageFromPath } from "../../highlight";
-  import { formatRelativeTime } from "../../format";
-  import { scrollBehavior } from "../../motion";
-  import { isMac } from "../../keys";
-  import { addToast } from "../../stores/ui";
-  import { registerHandler, registerDismiss, ownsPaneKeyboard } from "../../commands";
+  import { onMount, onDestroy, tick } from "svelte";
+  import * as api from "../../platform/api";
+  import type { BlameInfo, DefHit } from "../../platform/types";
+  import { RequestTracker } from "../../platform/request";
+  import { highlightCodeLines, getLanguageFromPath } from "../../design/highlight";
+  import { formatRelativeTime } from "../../domain/format";
+  import { scrollBehavior } from "../../design/motion";
+  import { isMac } from "../../platform/keys";
+  import { addToast } from "../../app/ui";
+  import { registerHandler, registerDismiss, ownsPaneKeyboard } from "../../app/commands";
   import Icon from "../common/Icon.svelte";
   import FileIcon from "../common/FileIcon.svelte";
 
@@ -66,6 +67,16 @@
   let peekOpen = $state(false);
 
   let language = $derived(getLanguageFromPath(path));
+
+  // Latest-wins guards: switching files must not let a slow BlobText or blame
+  // response overwrite the file the user is looking at now.
+  const fileRequests = new RequestTracker();
+  const blameRequests = new RequestTracker();
+
+  onDestroy(() => {
+    fileRequests.dispose();
+    blameRequests.dispose();
+  });
 
   // Find matches computation
   interface MatchPos {
@@ -137,6 +148,8 @@
   });
 
   async function loadFile() {
+    const request = fileRequests.begin();
+    blameRequests.cancel();
     isLoading = true;
     blameCache.clear();
     activeBlame = null;
@@ -144,19 +157,22 @@
 
     try {
       const res = await api.blobText(repoId, rev, path);
+      if (!request.isCurrent()) return;
       codeText = res.text;
       rawLines = res.text.split("\n");
       lines = highlightCodeLines(res.text, language);
     } catch (e) {
+      if (!request.isCurrent()) return;
       console.error("Failed to load file:", e);
       codeText = "";
       rawLines = [];
       lines = [];
     } finally {
+      if (!request.isCurrent()) return;
       isLoading = false;
       if (targetLine) {
         await tick();
-        navigateToLine(targetLine);
+        if (request.isCurrent()) navigateToLine(targetLine);
       }
     }
   }
@@ -192,16 +208,15 @@
       return;
     }
 
+    const request = blameRequests.begin();
     try {
       const b = await api.blameLine(repoId, rev, path, lineNo);
+      if (!request.isCurrent() || blameLineNo !== lineNo) return;
       blameCache.set(lineNo, b);
-      if (blameLineNo === lineNo) {
-        activeBlame = b;
-      }
+      activeBlame = b;
     } catch {
-      if (blameLineNo === lineNo) {
-        activeBlame = null;
-      }
+      if (!request.isCurrent() || blameLineNo !== lineNo) return;
+      activeBlame = null;
     }
   }
 

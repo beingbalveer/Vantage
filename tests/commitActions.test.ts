@@ -4,7 +4,7 @@ import {
   canUndoLastCommit,
   undoCommitMessage,
   amendWarning,
-} from "../src/lib/commitActions";
+} from "../src/lib/domain/commitActions";
 
 describe("commitActions guards", () => {
   describe("canAmendLastCommit", () => {

@@ -1,7 +1,7 @@
 <script lang="ts">
-  import type { CommitSummary, TagInfo } from "../../types";
-  import { formatRelativeTime, formatFullTimestamp } from "../../format";
-  import { addToast, openTagCreateDialog } from "../../stores/ui";
+  import type { CommitSummary, TagInfo } from "../../platform/types";
+  import { formatRelativeTime, formatFullTimestamp } from "../../domain/format";
+  import { addToast, openTagCreateDialog } from "../../app/ui";
   import Icon from "../common/Icon.svelte";
   import TagChip from "./TagChip.svelte";
 

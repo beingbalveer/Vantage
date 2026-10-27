@@ -1,11 +1,11 @@
 <script lang="ts">
-  import * as api from "../../api";
+  import * as api from "../../platform/api";
   import {
     tagDetailsRequest,
     closeTagDetailsDialog,
     addToast,
-  } from "../../stores/ui";
-  import { formatRelativeTime, formatFullTimestamp } from "../../format";
+  } from "../../app/ui";
+  import { formatRelativeTime, formatFullTimestamp } from "../../domain/format";
   import { Modal, Button } from "../common";
 
   let request = $derived($tagDetailsRequest);

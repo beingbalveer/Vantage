@@ -1,11 +1,11 @@
 <script lang="ts">
-  import * as api from "../../api";
+  import * as api from "../../platform/api";
   import {
     tagCreateRequest,
     closeTagCreateDialog,
     addToast,
-  } from "../../stores/ui";
-  import { loadTags } from "../../stores/tags";
+  } from "../../app/ui";
+  import { loadTags } from "../../domain/stores/tags";
   import { Modal, Button, Checkbox } from "../common";
 
   let request = $derived($tagCreateRequest);

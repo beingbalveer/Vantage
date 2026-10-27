@@ -1,9 +1,9 @@
 <script lang="ts">
   import { onDestroy } from "svelte";
-  import { sortedRepos, statuses, loadRepos, reorderRepos } from "../../stores/repos";
-  import { sidebarCollapsed, addRepoDialogOpen, addToast } from "../../stores/ui";
-  import * as api from "../../api";
-  import { moveItem, findDropTarget, type DropPosition } from "../../reorder";
+  import { sortedRepos, statuses, loadRepos, reorderRepos } from "../../domain/stores/repos";
+  import { sidebarCollapsed, addRepoDialogOpen, addToast } from "../../app/ui";
+  import * as api from "../../platform/api";
+  import { moveItem, findDropTarget, type DropPosition } from "../../domain/reorder";
   import RepoRow from "./RepoRow.svelte";
   import Icon from "../common/Icon.svelte";
 

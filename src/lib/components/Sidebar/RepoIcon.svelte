@@ -6,7 +6,7 @@
     detectedStacks,
     detectAndCacheStack,
     type RepoIcon as RepoIconValue,
-  } from "../../stores/repoIcons";
+  } from "../../domain/stores/repoIcons";
 
   interface Props {
     id?: string;

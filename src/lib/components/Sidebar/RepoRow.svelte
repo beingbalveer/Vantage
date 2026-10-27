@@ -1,22 +1,22 @@
 <script lang="ts">
   import { onDestroy, onMount } from "svelte";
-  import type { RepoEntry, RepoStatus, BranchInfo } from "../../types";
+  import type { RepoEntry, RepoStatus, BranchInfo } from "../../platform/types";
   import {
     openRepoInFocusedPane,
     openRepoInNextPane,
     focusedPaneIndex,
     panes,
     paneCount,
-  } from "../../stores/panes";
-  import { repos, loadRepos, activeRepoId, removeRepo } from "../../stores/repos";
-  import { addToast, sidebarCollapsed, openDialog } from "../../stores/ui";
-  import { registerDismiss } from "../../commands";
-  import * as api from "../../api";
+  } from "../../domain/stores/panes";
+  import { repos, loadRepos, activeRepoId, removeRepo } from "../../domain/stores/repos";
+  import { addToast, sidebarCollapsed, openDialog } from "../../app/ui";
+  import { registerDismiss } from "../../app/commands";
+  import * as api from "../../platform/api";
   import { get } from "svelte/store";
   import Icon from "../common/Icon.svelte";
   import { Modal } from "../common";
   import RepoIcon from "./RepoIcon.svelte";
-  import { formatCount, pluralize } from "../../format";
+  import { formatCount, pluralize } from "../../domain/format";
 
   interface Props {
     repo: RepoEntry;

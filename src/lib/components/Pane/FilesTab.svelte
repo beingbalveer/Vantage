@@ -1,19 +1,19 @@
 <script lang="ts">
-  import * as api from "../../api";
-  import { normalizeError, createDelayedToggle, type NormalizedError } from "../../asyncState";
-  import type { RepoEntry, RepoStatus } from "../../types";
-  import { setPaneTab } from "../../stores/panes";
+  import * as api from "../../platform/api";
+  import { normalizeError, createDelayedToggle, type NormalizedError } from "../../domain/asyncState";
+  import type { RepoEntry, RepoStatus } from "../../platform/types";
+  import { setPaneTab } from "../../domain/stores/panes";
   import CodeViewer from "../Viewer/CodeViewer.svelte";
   import FileTree from "./FileTree.svelte";
   import BranchDropdown from "./BranchDropdown.svelte";
-  import { createHorizontalResizer, createHorizontalResizerKeyboard } from "../../resizer";
-  import { registerHandler, ownsPaneKeyboard } from "../../commands";
+  import { createHorizontalResizer, createHorizontalResizerKeyboard } from "../../app/resizer";
+  import { registerHandler, ownsPaneKeyboard } from "../../app/commands";
   import Icon from "../common/Icon.svelte";
   import Skeleton from "../common/Skeleton.svelte";
   import Banner from "../common/Banner.svelte";
-  import { navigationTarget } from "../../stores/navigation";
-  import { addToast } from "../../stores/ui";
-  import { matchShortcut } from "../../keys";
+  import { navigationTarget } from "../../domain/stores/navigation";
+  import { addToast } from "../../app/ui";
+  import { matchShortcut } from "../../platform/keys";
 
   interface Props {
     repoId: string;

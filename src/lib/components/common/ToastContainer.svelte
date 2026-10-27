@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { toasts, removeToast, pauseToastTimer, resumeToastTimer } from "../../stores/ui";
+  import { toasts, removeToast, pauseToastTimer, resumeToastTimer } from "../../app/ui";
   import Icon from "./Icon.svelte";
 
   let toastList = $derived($toasts);

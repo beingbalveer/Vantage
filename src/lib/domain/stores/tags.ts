@@ -1,6 +1,6 @@
 import { writable } from "svelte/store";
-import type { TagInfo } from "../types";
-import * as api from "../api";
+import type { TagInfo } from "../../platform/types";
+import * as api from "../../platform/api";
 
 /** Local tags per repo id, refreshed on demand (history load, tag create/push). */
 export const tagsByRepo = writable<Record<string, TagInfo[]>>({});

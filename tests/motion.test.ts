@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { prefersReducedMotion, scrollBehavior } from "../src/lib/motion";
+import { prefersReducedMotion, scrollBehavior } from "../src/lib/design/motion";
 
 describe("motion helpers", () => {
   it("uses smooth scrolling when motion is allowed", () => {
