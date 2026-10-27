@@ -65,8 +65,18 @@
           <span class="text-muted">No additional details.</span>
         {/if}
         <div class="banner-details-actions">
-          <button type="button" class="link-btn" onclick={copyDetails}>
-            {copied ? "Copied" : "Copy"}
+          <button
+            type="button"
+            class="link-btn icon-only"
+            onclick={copyDetails}
+            title={copied ? "Copied" : "Copy details"}
+            aria-label={copied ? "Copied" : "Copy details"}
+          >
+            {#if copied}
+              <Icon name="check" size={12} strokeWidth={2.2} />
+            {:else}
+              <Icon name="copy" size={12} strokeWidth={2.2} />
+            {/if}
           </button>
         </div>
       </div>

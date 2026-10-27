@@ -385,8 +385,10 @@
                 type="button"
                 class="pick-btn"
                 onclick={() => handleAddBranchView(b.name)}
+                title="Add branch view"
+                aria-label={`Add branch view for ${b.name}`}
               >
-                Add view
+                <Icon name="plus" size={12} />
               </button>
             </div>
           {/each}
@@ -741,8 +743,12 @@
   }
 
   .pick-btn {
-    font-size: 11px;
-    padding: 2px 8px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 22px;
+    height: 22px;
+    padding: 0;
     background-color: var(--bg-subtle);
     border: 1px solid var(--border);
     border-radius: var(--r-sm, 6px);

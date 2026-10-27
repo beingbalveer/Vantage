@@ -204,7 +204,6 @@
         <span class="op-icon" class:spinning={isSyncing}>
           <Icon name={syncIconName} size={16} />
         </span>
-        <span class="label">{syncLabel}</span>
         {#if syncCount > 0}
           <span class="op-count">{syncCount}</span>
         {/if}
@@ -407,11 +406,10 @@
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    gap: 6px;
+    gap: 5px;
+    min-width: 33px;
     height: 33px;
-    padding: 0 9px;
-    font-size: 13px;
-    font-weight: 500;
+    padding: 0 8px;
     color: #3d454e;
     background: transparent;
     border: 0;

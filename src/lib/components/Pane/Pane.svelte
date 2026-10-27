@@ -1571,7 +1571,15 @@
           {terminalLoadError ?? "Starting terminal…"}
         </span>
         {#if terminalLoadError}
-          <button type="button" class="terminal-retry" onclick={loadTerminal}>Retry</button>
+          <button
+            type="button"
+            class="terminal-retry"
+            onclick={loadTerminal}
+            title="Retry loading terminal"
+            aria-label="Retry loading terminal"
+          >
+            <Icon name="refresh" size={13} />
+          </button>
         {/if}
       </div>
     {/if}
@@ -1951,11 +1959,16 @@
     background-color: var(--bg-subtle);
   }
   .terminal-retry {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 24px;
+    height: 24px;
+    padding: 0;
     border: 1px solid var(--border);
     border-radius: var(--r-sm);
     background: var(--bg);
     color: var(--text);
-    padding: 2px 10px;
     cursor: pointer;
   }
   .terminal-retry:hover {

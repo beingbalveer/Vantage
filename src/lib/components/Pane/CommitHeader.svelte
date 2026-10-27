@@ -63,10 +63,10 @@
           type="button"
           class="create-tag-btn"
           title="Create tag at this commit…"
+          aria-label="Create tag at this commit"
           onclick={handleCreateTag}
         >
-          <Icon name="tag" size={12} strokeWidth={2} />
-          <span>Tag</span>
+          <Icon name="tag" size={13} strokeWidth={2} />
         </button>
       {/if}
 
@@ -168,15 +168,14 @@
   .create-tag-btn {
     display: inline-flex;
     align-items: center;
-    gap: 4px;
+    justify-content: center;
+    width: 20px;
     height: 20px;
-    padding: 0 7px;
+    padding: 0;
     border: 1px solid var(--border-subtle);
     border-radius: var(--r-md);
     background-color: transparent;
     color: var(--text-muted);
-    font-size: 11px;
-    font-weight: 500;
     cursor: pointer;
     flex-shrink: 0;
   }

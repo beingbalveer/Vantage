@@ -121,6 +121,9 @@
     <!-- SF Symbol plus -->
     <path d="M5 12h14" />
     <path d="M12 5v14" />
+  {:else if name === "minus"}
+    <!-- SF Symbol minus -->
+    <path d="M5 12h14" />
   {:else if name === "close"}
     <!-- SF Symbol xmark -->
     <path d="m18 6-12 12" />

@@ -519,7 +519,14 @@
                   <span class="head-pill text-xs">current</span>
                 {/if}
               </span>
-              <button class="pick-btn" onclick={() => handleAddBranch(b.name)}>Add view</button>
+              <button
+                class="pick-btn"
+                onclick={() => handleAddBranch(b.name)}
+                title="Add branch view"
+                aria-label={`Add branch view for ${b.name}`}
+              >
+                <Icon name="plus" size={12} />
+              </button>
             </div>
           {/each}
         {/if}
@@ -977,10 +984,12 @@
   }
 
   .pick-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 24px;
     height: 24px;
-    padding: 0 8px;
-    font-size: 11px;
-    font-weight: 500;
+    padding: 0;
     border-radius: var(--r-sm);
     border: 1px solid var(--border);
     background-color: var(--bg);

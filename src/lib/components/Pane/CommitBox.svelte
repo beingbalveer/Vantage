@@ -384,8 +384,10 @@
             class="coauthor-add-btn"
             disabled={!coAuthorInput.trim()}
             onclick={addTypedCoAuthor}
+            title="Add co-author"
+            aria-label="Add co-author"
           >
-            Add
+            <Icon name="plus" size={13} />
           </button>
         </div>
 
@@ -728,14 +730,16 @@
   }
 
   .coauthor-add-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 26px;
     height: 26px;
-    padding: 0 10px;
+    padding: 0;
     border: none;
     border-radius: var(--r-md);
     background-color: var(--accent);
     color: var(--accent-fg);
-    font-size: 12px;
-    font-weight: 600;
     cursor: pointer;
   }
   .coauthor-add-btn:disabled {

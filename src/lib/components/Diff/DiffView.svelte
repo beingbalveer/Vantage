@@ -837,8 +837,7 @@
               aria-label="Expand whole file"
               onclick={() => onexpandwholefile?.()}
             >
-              <Icon name="unfold" size={13} />
-              <span>Expand whole file</span>
+              <Icon name="unfold" size={14} />
             </button>
           {/if}
         {/if}
@@ -944,9 +943,10 @@
                     title={workingPart === "staged"
                       ? "Unstage every changed line in this hunk"
                       : "Stage every changed line in this hunk"}
+                    aria-label={workingPart === "staged" ? "Unstage hunk" : "Stage hunk"}
                     onclick={() => stageHunk(hunk)}
                   >
-                    {workingPart === "staged" ? "Unstage hunk" : "Stage hunk"}
+                    <Icon name={workingPart === "staged" ? "minus" : "plus"} size={12} />
                   </button>
                 {/if}
               </div>
@@ -1039,9 +1039,10 @@
                   title={workingPart === "staged"
                     ? "Unstage every changed line in this hunk"
                     : "Stage every changed line in this hunk"}
+                  aria-label={workingPart === "staged" ? "Unstage hunk" : "Stage hunk"}
                   onclick={() => stageHunk(hunk)}
                 >
-                  {workingPart === "staged" ? "Unstage hunk" : "Stage hunk"}
+                  <Icon name={workingPart === "staged" ? "minus" : "plus"} size={12} />
                 </button>
               {/if}
             </div>
@@ -1127,11 +1128,21 @@
           ({selectedRange.side})
         </span>
 
-        <button class="fab-btn" onclick={handleCopyReference}>
-          Copy reference
+        <button
+          class="fab-btn icon-only"
+          onclick={handleCopyReference}
+          title="Copy reference"
+          aria-label="Copy reference"
+        >
+          <Icon name="copy" size={13} />
         </button>
-        <button class="fab-btn" onclick={handleCopySnippet}>
-          Copy snippet
+        <button
+          class="fab-btn icon-only"
+          onclick={handleCopySnippet}
+          title="Copy snippet"
+          aria-label="Copy snippet"
+        >
+          <Icon name="code" size={13} />
         </button>
 
         {#if stagingEnabled && workingPart === "unstaged"}
@@ -1139,29 +1150,35 @@
             {lineCountLabel(selectedChangeLines.length)} selected
           </span>
           <button
-            class="fab-btn primary"
+            class="fab-btn primary icon-only"
             disabled={!canApplySelection}
             onclick={stageSelection}
+            title={isApplying ? "Applying…" : "Stage selection"}
+            aria-label={isApplying ? "Applying…" : "Stage selection"}
           >
-            {isApplying ? "Applying…" : "Stage selection"}
+            <Icon name="plus" size={13} />
           </button>
           <button
-            class="fab-btn danger"
+            class="fab-btn danger icon-only"
             disabled={!canApplySelection}
             onclick={requestDiscardSelection}
+            title="Discard selection"
+            aria-label="Discard selection"
           >
-            Discard selection
+            <Icon name="trash" size={13} />
           </button>
         {:else if stagingEnabled && workingPart === "staged"}
           <span class="selection-count text-xs">
             {lineCountLabel(selectedChangeLines.length)} selected
           </span>
           <button
-            class="fab-btn primary"
+            class="fab-btn primary icon-only"
             disabled={!canApplySelection}
             onclick={unstageSelection}
+            title={isApplying ? "Applying…" : "Unstage selection"}
+            aria-label={isApplying ? "Applying…" : "Unstage selection"}
           >
-            {isApplying ? "Applying…" : "Unstage selection"}
+            <Icon name="minus" size={13} />
           </button>
         {/if}
 
@@ -1399,18 +1416,16 @@
   .expand-whole-btn {
     display: inline-flex;
     align-items: center;
-    gap: 5px;
+    justify-content: center;
+    width: 24px;
     height: 24px;
-    padding: 0 8px;
+    padding: 0;
     background-color: var(--bg-subtle);
     border: 1px solid var(--border-subtle);
     border-radius: var(--r-sm);
     color: var(--text-muted);
-    font-size: 11px;
-    font-weight: 500;
     cursor: pointer;
     transition: background-color 80ms linear, color 80ms linear;
-    white-space: nowrap;
   }
   .expand-whole-btn:hover {
     background-color: var(--bg-muted);
@@ -1496,15 +1511,16 @@
   }
   .hunk-btn {
     flex-shrink: 0;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 20px;
     height: 20px;
-    padding: 0 8px;
+    padding: 0;
     border: 1px solid var(--border);
     border-radius: var(--r-sm);
     background-color: var(--bg-subtle);
     color: var(--text);
-    font-family: var(--font-ui);
-    font-size: 10.5px;
-    font-weight: 500;
     cursor: pointer;
     line-height: 1;
   }
@@ -1792,6 +1808,13 @@
     font-size: 11px;
     font-weight: 500;
     cursor: pointer;
+  }
+  .fab-btn.icon-only {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 26px;
+    padding: 0;
   }
   .fab-btn:hover {
     background-color: var(--bg-muted);

@@ -7,7 +7,7 @@
   import * as settingsLib from "../../domain/settings";
   import type { Settings, BackupInfo, EnvInfo, GitIdentity } from "../../platform/types";
   import { formatRelativeTime, formatFullTimestamp } from "../../domain/format";
-  import { Modal, Button, Checkbox, Badge, Input } from "../common";
+  import { Modal, Button, Checkbox, Badge, Input, Icon } from "../common";
   import { checkForAppUpdates, downloadAndInstallUpdate } from "../../platform/updater";
   import type { Update } from "@tauri-apps/plugin-updater";
 
@@ -742,11 +742,13 @@
             <Button
               variant="default"
               size="sm"
+              class="icon-only"
               onclick={() => selectedRepoId && loadBackupsForRepo(selectedRepoId)}
               disabled={isLoadingBackups || !selectedRepoId}
               title="Refresh backup list"
+              ariaLabel="Refresh backup list"
             >
-              ↻ Refresh
+              <Icon name="refresh" size={13} />
             </Button>
           </div>
 

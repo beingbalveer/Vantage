@@ -86,10 +86,10 @@
           type="button"
           class="reset-auto-btn"
           onclick={handleResetAuto}
-          title="Remove custom icon and use auto-detection"
+          title="Reset to auto-detected icon"
+          aria-label="Reset to auto-detected icon"
         >
           <Icon name="refresh" size={13} />
-          Reset to Auto
         </button>
       {/if}
     </div>
@@ -185,16 +185,16 @@
   .reset-auto-btn {
     display: inline-flex;
     align-items: center;
-    gap: 5px;
-    font-size: 11px;
-    font-weight: 500;
-    padding: 5px 9px;
+    justify-content: center;
+    width: 26px;
+    height: 26px;
+    padding: 0;
     border-radius: var(--r-sm);
     border: 1px solid var(--border, #d1d5db);
     background: var(--bg);
     color: var(--text);
     cursor: pointer;
-    white-space: nowrap;
+    flex-shrink: 0;
     transition: background 120ms ease;
   }
   .reset-auto-btn:hover {

@@ -312,9 +312,6 @@
       title="Add repository (⌘O)"
     >
       <Icon name="plus" size={16} />
-      {#if !$sidebarCollapsed}
-        <span>Add repository</span>
-      {/if}
     </button>
   </div>
 </aside>
@@ -357,26 +354,20 @@
   .add-repo-btn {
     display: flex;
     align-items: center;
-    gap: 14px;
+    justify-content: center;
     width: 100%;
     height: 32px;
-    padding: 0 20px;
+    padding: 0;
     background: transparent;
     border: none;
     border-radius: 0;
     color: var(--text-muted);
-    font-size: 12px;
-    font-weight: 400;
     cursor: pointer;
     transition: background-color 80ms linear;
   }
   .add-repo-btn:hover {
     background-color: var(--bg-muted);
     color: var(--text);
-  }
-  .relay-sidebar.collapsed .add-repo-btn {
-    justify-content: center;
-    padding: 0;
   }
 
   .drop-overlay {

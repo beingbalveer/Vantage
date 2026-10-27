@@ -22,6 +22,7 @@ export type IconName =
   | "external-link"
   | "trash"
   | "plus"
+  | "minus"
   | "close"
   | "commit"
   | "message"

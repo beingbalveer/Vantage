@@ -254,10 +254,14 @@
             class="browse-btn"
             onclick={browse}
             disabled={isBusy}
-            title="Choose a folder"
+            title={isBrowsing ? "Browsing…" : "Choose a folder"}
+            aria-label={isBrowsing ? "Browsing…" : "Choose a folder"}
           >
-            <Icon name="folder" size={14} />
-            {isBrowsing ? "Browsing…" : "Browse"}
+            {#if isBrowsing}
+              <span class="browse-spinner" aria-hidden="true"></span>
+            {:else}
+              <Icon name="folder" size={14} />
+            {/if}
           </button>
         </div>
 
@@ -319,10 +323,14 @@
             class="browse-btn"
             onclick={browseDestination}
             disabled={isBusy}
-            title="Choose a destination folder"
+            title={isBrowsing ? "Browsing…" : "Choose a destination folder"}
+            aria-label={isBrowsing ? "Browsing…" : "Choose a destination folder"}
           >
-            <Icon name="folder" size={14} />
-            {isBrowsing ? "Browsing…" : "Browse"}
+            {#if isBrowsing}
+              <span class="browse-spinner" aria-hidden="true"></span>
+            {:else}
+              <Icon name="folder" size={14} />
+            {/if}
           </button>
         </div>
 
@@ -433,14 +441,15 @@
   }
 
   .browse-btn {
-    display: flex;
+    display: inline-flex;
     align-items: center;
-    gap: 7px;
-    padding: 5px 8px;
+    justify-content: center;
+    width: 27px;
+    height: 27px;
+    padding: 0;
     background: #f0f1f3;
     border: 0;
     border-radius: var(--r-sm);
-    font-size: 11px;
     color: #505963;
     cursor: pointer;
     flex-shrink: 0;
@@ -451,6 +460,14 @@
   .browse-btn:disabled {
     opacity: 0.6;
     cursor: default;
+  }
+  .browse-spinner {
+    width: 12px;
+    height: 12px;
+    border: 2px solid currentColor;
+    border-top-color: transparent;
+    border-radius: 50%;
+    animation: clone-spin 0.7s linear infinite;
   }
 
   .branch-input {

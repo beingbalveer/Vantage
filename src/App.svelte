@@ -53,6 +53,7 @@
   import TagDetailsDialog from "./lib/components/Dialogs/TagDetailsDialog.svelte";
 
   import ToastContainer from "./lib/components/common/ToastContainer.svelte";
+  import Icon from "./lib/components/common/Icon.svelte";
 
   let gitVersion = $state("");
   let statusText = $state("Ready");
@@ -453,7 +454,15 @@
     {#if envError && showEnvDetails}
       <div class="status-details">
         <span class="status-details-msg font-mono">{envError}</span>
-        <button type="button" class="status-retry" onclick={checkEnv}>Retry</button>
+        <button
+          type="button"
+          class="status-retry"
+          onclick={checkEnv}
+          title="Retry Git check"
+          aria-label="Retry Git check"
+        >
+          <Icon name="refresh" size={12} />
+        </button>
       </div>
     {/if}
   </footer>
@@ -604,14 +613,16 @@
   }
   .status-retry {
     align-self: flex-end;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 22px;
     height: 22px;
-    padding: 0 8px;
+    padding: 0;
     border: 1px solid var(--border);
     border-radius: var(--r-sm);
     background-color: var(--bg);
     color: var(--text);
-    font-size: 11px;
-    font-weight: 500;
     cursor: pointer;
   }
   .status-retry:hover {
