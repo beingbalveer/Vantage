@@ -8,6 +8,8 @@ import { writable } from "svelte/store";
 export interface FileTabsState {
   tabs: string[];
   active: string | null;
+  /** Set once any tab has been opened; lets "closed everything" stay closed. */
+  openedOnce?: boolean;
 }
 
 export type FileTabsMap = Record<string, FileTabsState>;
@@ -25,9 +27,11 @@ export function openFileTab(repoId: string, path: string): void {
   if (!repoId || !path) return;
   fileTabs.update((map) => {
     const current = map[repoId] ?? EMPTY;
-    if (current.active === path && current.tabs.includes(path)) return map;
+    if (current.active === path && current.tabs.includes(path)) {
+      return map[repoId]?.openedOnce ? map : { ...map, [repoId]: { ...current, openedOnce: true } };
+    }
     const tabs = current.tabs.includes(path) ? current.tabs : [...current.tabs, path];
-    return { ...map, [repoId]: { tabs, active: path } };
+    return { ...map, [repoId]: { tabs, active: path, openedOnce: true } };
   });
 }
 
@@ -53,7 +57,7 @@ export function closeFileTab(repoId: string, path: string): void {
       current.active === path
         ? tabs[Math.min(index, tabs.length - 1)] ?? null
         : current.active;
-    return { ...map, [repoId]: { tabs, active } };
+    return { ...map, [repoId]: { tabs, active, openedOnce: current.openedOnce } };
   });
 }
 
@@ -66,6 +70,6 @@ export function pruneFileTabs(repoId: string, existing: string[]): void {
     if (!current || current.tabs.every((tab) => alive.has(tab))) return map;
     const tabs = current.tabs.filter((tab) => alive.has(tab));
     const active = current.active && alive.has(current.active) ? current.active : tabs[0] ?? null;
-    return { ...map, [repoId]: { tabs, active } };
+    return { ...map, [repoId]: { tabs, active, openedOnce: current.openedOnce } };
   });
 }

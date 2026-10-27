@@ -74,8 +74,9 @@
       fileList = files;
       pruneFileTabs(repoId, files);
       // First visit to a repo opens its first file, like the old single-view
-      // behaviour; later visits restore whatever tabs were left open.
-      if (files.length > 0 && openTabs.length === 0) {
+      // behaviour; later visits restore whatever tabs were left open, and a
+      // deliberately emptied strip is not re-filled on the next refresh.
+      if (files.length > 0 && openTabs.length === 0 && !tabState.openedOnce) {
         openFileTab(repoId, files[0]);
       }
     } catch (e) {
@@ -292,7 +293,7 @@
         }}
         onclose={(path) => closeFileTab(repoId, path)}
       />
-      <div class="viewer-body">
+      <div class="viewer-body" id="file-viewer">
         <CodeViewer
           {repoId}
           path={activeFile}

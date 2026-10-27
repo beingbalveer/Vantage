@@ -26,7 +26,8 @@
       "icons-dev/128x128@2x.png",
       "icons-dev/icon.icns",
       "icons-dev/icon.ico"
-    ]
+    ],
+    "createUpdaterArtifacts": false
   },
   "build": {
     "beforeBuildCommand": "npm run build:dev"

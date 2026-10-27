@@ -31,13 +31,41 @@
     });
   });
 
+  // Arrow keys walk the strip, matching the tablist pattern (focus follows the
+  // newly selected tab, close buttons stay reachable with Tab).
+  function handleKeydown(e: KeyboardEvent) {
+    if (tabs.length < 2) return;
+    const index = active ? tabs.indexOf(active) : -1;
+    let next = -1;
+    if (e.key === "ArrowRight") next = (index + 1) % tabs.length;
+    else if (e.key === "ArrowLeft") next = (index - 1 + tabs.length) % tabs.length;
+    else if (e.key === "Home") next = 0;
+    else if (e.key === "End") next = tabs.length - 1;
+    else return;
+    e.preventDefault();
+    const path = tabs[next];
+    onactivate(path);
+    tick().then(() => {
+      stripEl
+        ?.querySelector<HTMLElement>(`[data-tab-path="${CSS.escape(path)}"] .file-tab-main`)
+        ?.focus();
+    });
+  }
+
   function basename(path: string): string {
     const parts = path.split("/");
     return parts[parts.length - 1] || path;
   }
 </script>
 
-<div class="file-tabs" role="tablist" aria-label="Open files" bind:this={stripEl}>
+<div
+  class="file-tabs"
+  role="tablist"
+  aria-label="Open files"
+  tabindex="-1"
+  bind:this={stripEl}
+  onkeydown={handleKeydown}
+>
   {#each tabs as path (path)}
     <div
       class="file-tab"
@@ -49,6 +77,8 @@
         type="button"
         role="tab"
         aria-selected={path === active}
+        aria-controls="file-viewer"
+        tabindex={path === active ? 0 : -1}
         class="file-tab-main"
         title={path}
         onclick={() => onactivate(path)}
