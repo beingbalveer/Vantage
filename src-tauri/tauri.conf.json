@@ -33,7 +33,7 @@
   "bundle": {
     "active": true,
     "targets": "all",
-    "copyright": "Copyright © 2026 Balveer Dhanoriya",
+    "copyright": "Copyright \u00a9 2026 Balveer Dhanoriya",
     "category": "DeveloperTool",
     "shortDescription": "Lightweight multi-repo Git client and code review deck",
     "longDescription": "A lightweight multi-repo Git desktop client, read-only code viewer, and terminal workspace.",
@@ -45,7 +45,8 @@
       "icons/icon.ico"
     ],
     "macOS": {
-      "infoPlist": "Info.plist"
+      "infoPlist": "Info.plist",
+      "signingIdentity": "-"
     },
     "createUpdaterArtifacts": true
   },
