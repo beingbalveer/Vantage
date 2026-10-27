@@ -1,6 +1,6 @@
 [package]
 name = "vantage"
-version = "0.3.1"
+version = "0.3.0"
 description = "A lightweight multi-repo Git desktop client, read-only code viewer, and terminal workspace"
 authors = ["Balveer Dhanoriya <https://github.com/beingbalveer>"]
 license = "MIT"

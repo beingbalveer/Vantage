@@ -74,9 +74,8 @@
       fileList = files;
       pruneFileTabs(repoId, files);
       // First visit to a repo opens its first file, like the old single-view
-      // behaviour; later visits restore whatever tabs were left open, and a
-      // deliberately emptied strip is not re-filled on the next refresh.
-      if (files.length > 0 && openTabs.length === 0 && !tabState.openedOnce) {
+      // behaviour; later visits restore whatever tabs were left open.
+      if (files.length > 0 && openTabs.length === 0) {
         openFileTab(repoId, files[0]);
       }
     } catch (e) {
@@ -293,7 +292,7 @@
         }}
         onclose={(path) => closeFileTab(repoId, path)}
       />
-      <div class="viewer-body" id="file-viewer">
+      <div class="viewer-body">
         <CodeViewer
           {repoId}
           path={activeFile}
@@ -365,9 +364,6 @@
     min-width: 0;
     min-height: 0;
     display: flex;
-    /* Column, so the viewer stretches to the full pane width even when the
-       file has only a few short lines. A row would size it to its content. */
-    flex-direction: column;
   }
 
   .viewer-pane {

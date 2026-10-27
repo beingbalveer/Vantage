@@ -84,19 +84,6 @@ describe("file tabs", () => {
     expect(getFileTabState(get(fileTabs), "r2").tabs).toEqual(["b"]);
   });
 
-  it("remembers that a repo has had tabs, even after closing them all", () => {
-    reset();
-    expect(getFileTabState(get(fileTabs), "r1").openedOnce).toBeFalsy();
-
-    openFileTab("r1", "a");
-    expect(getFileTabState(get(fileTabs), "r1").openedOnce).toBe(true);
-
-    closeFileTab("r1", "a");
-    const state = getFileTabState(get(fileTabs), "r1");
-    expect(state.tabs).toEqual([]);
-    expect(state.openedOnce).toBe(true);
-  });
-
   it("prunes tabs for files that disappeared", () => {
     reset();
     openFileTab("r1", "a");

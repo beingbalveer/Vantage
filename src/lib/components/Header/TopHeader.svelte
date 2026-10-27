@@ -17,11 +17,6 @@
   import { Modal } from "../common";
   import BranchDropdown from "../Pane/BranchDropdown.svelte";
 
-  // Dev runs (`npm run dev:app`, `npm run dev:bundle`) mark themselves so they
-  // are never mistaken for the release app.
-  const isDevBuild =
-    import.meta.env.DEV || import.meta.env.VITE_DEV_BUILD === "1";
-
   let currentPane = $derived($panes[$focusedPaneIndex]);
   let currentTab = $derived(currentPane?.tab || "history");
   let isTerminalOpen = $derived(currentPane?.terminalOpen || false);
@@ -226,10 +221,6 @@
   <div class="drag-spacer" data-tauri-drag-region></div>
 
   <div class="header-right">
-    {#if isDevBuild}
-      <span class="dev-badge text-xs" title="Development build" aria-label="Development build">DEV</span>
-    {/if}
-
     <button
       class="icon-button"
       onclick={handleToggleTerminal}
@@ -388,20 +379,6 @@
   .traffic-lights-spacer {
     width: 68px;
     flex-shrink: 0;
-  }
-
-  .dev-badge {
-    display: inline-flex;
-    align-items: center;
-    height: 16px;
-    padding: 0 5px;
-    background: var(--warning-bg);
-    color: var(--warning);
-    font-weight: 700;
-    letter-spacing: 0.06em;
-    border-radius: var(--r-sm);
-    flex-shrink: 0;
-    user-select: none;
   }
 
   .header-branch {

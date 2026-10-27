@@ -1,7 +1,7 @@
 {
   "name": "vantage",
   "private": true,
-  "version": "0.3.1",
+  "version": "0.3.0",
   "description": "A lightweight multi-repo Git desktop client, read-only code viewer, and terminal workspace",
   "author": "Balveer Dhanoriya <https://github.com/beingbalveer>",
   "license": "MIT",
@@ -16,10 +16,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "dev:app": "tauri dev --config src-tauri/tauri.dev.conf.json",
-    "dev:bundle": "tauri build --debug --config src-tauri/tauri.dev.conf.json",
     "build": "vite build",
-    "build:dev": "VITE_DEV_BUILD=1 vite build",
     "preview": "vite preview",
     "check": "svelte-check --tsconfig ./tsconfig.json",
     "test": "vitest run",
