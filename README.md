@@ -76,8 +76,11 @@ Press `?` inside Vantage at any time to open the interactive keyboard shortcut o
 | `Mod+O` | Add repository |
 | `Mod+1` / `Mod+2` / `Mod+3` | Focus pane 1, 2, or 3 |
 | `Mod+\` | Cycle pane count (1, 2, 3 columns) |
-| `Mod+W` | Close focused pane |
-| `Mod+B` | Toggle sidebar (full / collapsed icons) |
+| `Mod+W` | Close active file tab (Files tab); close focused pane elsewhere |
+| `Mod+Shift+W` | Close all file tabs (Files tab) |
+| `Ctrl+Tab` / `Ctrl+Shift+Tab` | Next / previous file tab (Files tab) |
+| `Mod+B` | Toggle sidebar; search files in the Files tab |
+| `Mod+Shift+E` | Search files (Files tab) |
 | `` Mod+` `` | Toggle terminal drawer in focused pane |
 | `Mod+[` / `Mod+]` | Switch to previous / next repository in focused pane |
 | `Mod+,` | Open Settings |
@@ -93,7 +96,7 @@ Press `?` inside Vantage at any time to open the interactive keyboard shortcut o
 | `n` / `p` | Jump to next / previous hunk |
 | `e` | Expand all context in current file |
 | `w` | Toggle ignore whitespace |
-| `/` | Filter the file list (Files tab) |
+| `/` | Search files (Files tab) |
 | `F12` | Peek symbol definition (code viewer; `Alt+Click` also works) |
 | `Mod+F` | Find in file (code viewer) |
 | `Mod+Enter` | Commit selected changes (when the commit box is open) |
@@ -102,6 +105,8 @@ Press `?` inside Vantage at any time to open the interactive keyboard shortcut o
 | `Esc` | Close dialog, palette, menu, or popover |
 
 *`Mod` corresponds to `Cmd` on macOS and `Ctrl` on Windows / Linux. Single-letter shortcuts never fire while typing in an input or the terminal; the terminal keeps only the modifier shortcuts it needs (`` Mod+` ``, `Mod+1/2/3`, `Mod+B`, `Mod+[` / `Mod+]`, and `Ctrl+Shift+P` on Windows / Linux).*
+
+Right-click a file tab (or press `Shift+F10`) for **Close**, **Close Others**, **Close to the Right**, **Close All**, **Copy Path**, **Reveal in File Manager**, and **Open in External Editor**. File search (`Mod+B`, `Mod+Shift+E`, or `/` in the Files tab) opens a centered quick-open overlay with fuzzy path matching, arrow-key navigation, and `Enter` to open.
 
 ---
 

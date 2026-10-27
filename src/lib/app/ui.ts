@@ -45,6 +45,15 @@ export const shortcutsHelpOpen = writable<boolean>(false);
 export const addRepoDialogOpen = writable<boolean>(false);
 export const scanFolderDialogOpen = writable<boolean>(false);
 export const stashDialogOpen = writable<boolean>(false);
+/**
+ * Centered file-search overlay. Carries the owning pane so only that pane's
+ * Files tab renders the dialog when several panes show the explorer.
+ */
+export interface FileSearchRequest {
+  paneIndex: number;
+  repoId: string;
+}
+export const fileSearchOpen = writable<FileSearchRequest | null>(null);
 
 // Dirty-tree branch switching: a single prompt that offers leave / bring / stash.
 export interface CheckoutRequest {

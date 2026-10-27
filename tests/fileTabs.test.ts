@@ -3,6 +3,7 @@ import { get } from "svelte/store";
 import {
   activateFileTab,
   closeFileTab,
+  closeFileTabs,
   fileTabs,
   getFileTabState,
   openFileTab,
@@ -106,5 +107,61 @@ describe("file tabs", () => {
     const state = getFileTabState(get(fileTabs), "r1");
     expect(state.tabs).toEqual(["b"]);
     expect(state.active).toBe("b");
+  });
+
+  it("closes several tabs and keeps a surviving active tab", () => {
+    reset();
+    openFileTab("r1", "a");
+    openFileTab("r1", "b");
+    openFileTab("r1", "c");
+    activateFileTab("r1", "a");
+
+    closeFileTabs("r1", ["b", "c"]);
+
+    const state = getFileTabState(get(fileTabs), "r1");
+    expect(state.tabs).toEqual(["a"]);
+    expect(state.active).toBe("a");
+  });
+
+  it("focuses the nearest surviving tab when the active tab is bulk-closed", () => {
+    reset();
+    openFileTab("r1", "a");
+    openFileTab("r1", "b");
+    openFileTab("r1", "c");
+    openFileTab("r1", "d");
+    activateFileTab("r1", "c");
+
+    // Closing "to the right" keeps the clicked tab active.
+    closeFileTabs("r1", ["d"]);
+    expect(getFileTabState(get(fileTabs), "r1").active).toBe("c");
+
+    // Closing the active tab plus its right neighbour falls back left.
+    closeFileTabs("r1", ["c", "d"]);
+    expect(getFileTabState(get(fileTabs), "r1").active).toBe("b");
+  });
+
+  it("closes all tabs without forgetting the strip was used", () => {
+    reset();
+    openFileTab("r1", "a");
+    openFileTab("r1", "b");
+
+    closeFileTabs("r1", ["a", "b"]);
+
+    const state = getFileTabState(get(fileTabs), "r1");
+    expect(state.tabs).toEqual([]);
+    expect(state.active).toBeNull();
+    expect(state.openedOnce).toBe(true);
+  });
+
+  it("ignores bulk closes for unknown repos or paths", () => {
+    reset();
+    openFileTab("r1", "a");
+
+    closeFileTabs("r2", ["a"]);
+    closeFileTabs("r1", ["missing"]);
+
+    const state = getFileTabState(get(fileTabs), "r1");
+    expect(state.tabs).toEqual(["a"]);
+    expect(state.active).toBe("a");
   });
 });

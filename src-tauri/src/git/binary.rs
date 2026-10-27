@@ -11,6 +11,7 @@
 //! reported by size only and never loaded (PRODUCT_SPEC.md §6.4).
 
 use crate::error::AppError;
+use crate::git::blob::get_blob_text;
 use crate::git::runner::GitRunner;
 use crate::state::DiffScope;
 use serde::{Deserialize, Serialize};
@@ -44,12 +45,69 @@ pub fn image_mime(path: &str) -> Option<&'static str> {
         "gif" => Some("image/gif"),
         "webp" => Some("image/webp"),
         "svg" => Some("image/svg+xml"),
+        "ico" => Some("image/x-icon"),
+        "bmp" => Some("image/bmp"),
+        "avif" => Some("image/avif"),
         _ => None,
     }
 }
 
 pub fn is_image_path(path: &str) -> bool {
     image_mime(path).is_some()
+}
+
+/// Extensions whose contents are never useful as text in the viewer. Git's
+/// null-byte heuristic usually catches these, but small PDFs/archives can slip
+/// through; classifying by extension keeps the fallback honest.
+pub fn is_opaque_binary_path(path: &str) -> bool {
+    let dot = match path.rfind('.') {
+        Some(dot) => dot,
+        None => return false,
+    };
+    let ext = &path[dot + 1..];
+    if ext.contains('/') || ext.contains('\\') {
+        return false;
+    }
+    matches!(
+        ext.to_ascii_lowercase().as_str(),
+        "pdf"
+            | "doc"
+            | "docx"
+            | "xls"
+            | "xlsx"
+            | "ppt"
+            | "pptx"
+            | "pages"
+            | "numbers"
+            | "key"
+            | "epub"
+            | "zip"
+            | "tar"
+            | "gz"
+            | "tgz"
+            | "bz2"
+            | "xz"
+            | "rar"
+            | "7z"
+            | "dmg"
+            | "iso"
+            | "mp4"
+            | "mov"
+            | "m4v"
+            | "webm"
+            | "mkv"
+            | "avi"
+            | "wmv"
+            | "flv"
+            | "mp3"
+            | "wav"
+            | "flac"
+            | "m4a"
+            | "aac"
+            | "ogg"
+            | "opus"
+            | "aiff"
+    )
 }
 
 /// Resolve a diff scope to the (old, new) revisions used for size/preview reads.
@@ -113,7 +171,7 @@ struct SideMeta {
 /// Resolve a repo-relative path to an on-disk worktree path. Absolute paths,
 /// `..` traversal and (checked by callers) symlinks are rejected so a crafted
 /// repository cannot make the preview read outside the working tree.
-fn worktree_path(repo_path: &Path, path: &str) -> Option<PathBuf> {
+pub(crate) fn worktree_path(repo_path: &Path, path: &str) -> Option<PathBuf> {
     let rel = Path::new(path);
     if rel.as_os_str().is_empty() || rel.is_absolute() {
         return None;
@@ -268,6 +326,110 @@ pub async fn get_file_diff_meta(
     })
 }
 
+/// Single-file preview for the Files viewer. Text is returned for ordinary
+/// files, a bounded data URL for images, and an honest binary/too-large state
+/// for everything else so the UI never renders an unexplained blank body.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BlobPreview {
+    pub size: u64,
+    pub binary: bool,
+    pub too_large: bool,
+    /// Image MIME type when the path is a recognised image.
+    pub mime: Option<String>,
+    /// `data:<mime>;base64,...` for images within the cap.
+    pub image: Option<String>,
+    /// Source text (ordinary files, and SVG so the viewer can toggle source).
+    pub text: String,
+}
+
+pub async fn get_blob_preview(
+    runner: &GitRunner,
+    repo_path: &Path,
+    rev: &str,
+    path: &str,
+) -> Result<BlobPreview, AppError> {
+    let size = rev_size(runner, repo_path, rev, path)
+        .await
+        .ok_or_else(|| AppError::not_found(format!("Blob not found for {}:{}", rev, path)))?;
+
+    if let Some(mime) = image_mime(path) {
+        if size > IMAGE_PREVIEW_CAP_BYTES {
+            return Ok(BlobPreview {
+                size,
+                binary: true,
+                too_large: true,
+                mime: Some(mime.to_string()),
+                image: None,
+                text: String::new(),
+            });
+        }
+
+        let bytes = if rev == WORKTREE_REV {
+            read_worktree_bounded(repo_path, path).await
+        } else {
+            let spec = format!("{}:{}", rev, path);
+            runner
+                .run_read(repo_path, &["show", &spec])
+                .await
+                .ok()
+                .and_then(|o| if o.success() { Some(o.stdout) } else { None })
+        };
+
+        // Defensive: enforce the cap even if the size probe was stale. A read
+        // failure is reported as an undecodable image, not as "too large".
+        let Some(bytes) = bytes.filter(|b| (b.len() as u64) <= IMAGE_PREVIEW_CAP_BYTES) else {
+            return Ok(BlobPreview {
+                size,
+                binary: true,
+                too_large: false,
+                mime: Some(mime.to_string()),
+                image: None,
+                text: String::new(),
+            });
+        };
+
+        // SVG is text underneath: keep the source so the viewer can offer a
+        // rendered/source toggle without a second blob read.
+        let text = if mime == "image/svg+xml" {
+            String::from_utf8_lossy(&bytes).to_string()
+        } else {
+            String::new()
+        };
+        let image = format!("data:{};base64,{}", mime, base64_encode(&bytes));
+
+        return Ok(BlobPreview {
+            size,
+            binary: true,
+            too_large: false,
+            mime: Some(mime.to_string()),
+            image: Some(image),
+            text,
+        });
+    }
+
+    if is_opaque_binary_path(path) {
+        return Ok(BlobPreview {
+            size,
+            binary: true,
+            too_large: false,
+            mime: None,
+            image: None,
+            text: String::new(),
+        });
+    }
+
+    let res = get_blob_text(runner, repo_path, rev, path).await?;
+    Ok(BlobPreview {
+        size,
+        binary: res.binary,
+        too_large: res.too_large,
+        mime: None,
+        image: None,
+        text: res.text,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -280,6 +442,20 @@ mod tests {
         assert_eq!(image_mime("anim.gif"), Some("image/gif"));
         assert_eq!(image_mime("next.webp"), Some("image/webp"));
         assert_eq!(image_mime("icon.svg"), Some("image/svg+xml"));
+        assert_eq!(image_mime("favicon.ico"), Some("image/x-icon"));
+        assert_eq!(image_mime("old.bmp"), Some("image/bmp"));
+        assert_eq!(image_mime("next.avif"), Some("image/avif"));
+    }
+
+    #[test]
+    fn opaque_binary_paths_are_recognized() {
+        assert!(is_opaque_binary_path("docs/manual.pdf"));
+        assert!(is_opaque_binary_path("clip.MP4"));
+        assert!(is_opaque_binary_path("bundle.zip"));
+        assert!(is_opaque_binary_path("track.flac"));
+        assert!(!is_opaque_binary_path("src/main.rs"));
+        assert!(!is_opaque_binary_path("logo.png"));
+        assert!(!is_opaque_binary_path("Makefile"));
     }
 
     #[test]
@@ -448,5 +624,77 @@ mod tests {
         assert!(huge_meta.new_too_large);
         assert_eq!(huge_meta.new_size, Some(IMAGE_PREVIEW_CAP_BYTES + 1));
         assert!(huge_meta.new_image.is_none());
+    }
+
+    #[tokio::test]
+    async fn blob_preview_returns_text_images_and_binary_states() {
+        let runner = GitRunner::new();
+        let repo = TempRepo::new(&runner).await;
+
+        std::fs::write(repo.path.join("notes.txt"), b"hello\nworld\n").unwrap();
+        std::fs::write(
+            repo.path.join("icon.svg"),
+            b"<svg xmlns=\"http://www.w3.org/2000/svg\"></svg>",
+        )
+        .unwrap();
+        std::fs::write(repo.path.join("data.bin"), [0u8, 1, 2, 3]).unwrap();
+        // A small PDF without null bytes still must not be decoded as text.
+        std::fs::write(repo.path.join("manual.pdf"), b"%PDF-1.4\nplain-ish").unwrap();
+        runner
+            .run_write(&repo.path, &["add", "."], 10)
+            .await
+            .unwrap();
+        runner
+            .run_write(&repo.path, &["commit", "-m", "add previews"], 10)
+            .await
+            .unwrap();
+
+        let text = get_blob_preview(&runner, &repo.path, "HEAD", "notes.txt")
+            .await
+            .unwrap();
+        assert!(!text.binary && !text.too_large);
+        assert_eq!(text.text, "hello\nworld\n");
+        assert_eq!(text.size, 12);
+        assert!(text.image.is_none());
+
+        let svg = get_blob_preview(&runner, &repo.path, "HEAD", "icon.svg")
+            .await
+            .unwrap();
+        assert!(svg.binary);
+        assert_eq!(svg.mime.as_deref(), Some("image/svg+xml"));
+        assert!(svg
+            .image
+            .as_deref()
+            .unwrap()
+            .starts_with("data:image/svg+xml;base64,"));
+        // SVG keeps its source for the rendered/source toggle.
+        assert!(svg.text.contains("<svg"));
+
+        let binary = get_blob_preview(&runner, &repo.path, "HEAD", "data.bin")
+            .await
+            .unwrap();
+        assert!(binary.binary);
+        assert!(binary.image.is_none());
+        assert!(binary.text.is_empty());
+        assert_eq!(binary.size, 4);
+
+        let pdf = get_blob_preview(&runner, &repo.path, "HEAD", "manual.pdf")
+            .await
+            .unwrap();
+        assert!(pdf.binary);
+        assert!(pdf.text.is_empty());
+
+        // Oversized images are described by size only and never loaded.
+        std::fs::write(
+            repo.path.join("huge.png"),
+            vec![0u8; (IMAGE_PREVIEW_CAP_BYTES + 1) as usize],
+        )
+        .unwrap();
+        let huge = get_blob_preview(&runner, &repo.path, WORKTREE_REV, "huge.png")
+            .await
+            .unwrap();
+        assert!(huge.too_large);
+        assert!(huge.image.is_none());
+        assert_eq!(huge.size, IMAGE_PREVIEW_CAP_BYTES + 1);
     }
 }

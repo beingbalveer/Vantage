@@ -13,6 +13,9 @@ const IMAGE_MIME: Record<string, string> = {
   gif: "image/gif",
   webp: "image/webp",
   svg: "image/svg+xml",
+  ico: "image/x-icon",
+  bmp: "image/bmp",
+  avif: "image/avif",
 };
 
 /** MIME type for a previewable image path, or `null`. Mirrors the Rust helper. */

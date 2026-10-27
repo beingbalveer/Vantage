@@ -118,6 +118,9 @@
   onfocusout={handleFocusOut}
 >
   {#each items as item (item.id)}
+    {#if item.separatorBefore}
+      <div class="menu-divider" role="separator"></div>
+    {/if}
     <button
       type="button"
       class="menu-item {item.danger ? 'danger' : ''}"
@@ -155,6 +158,12 @@
     flex-direction: column;
     gap: 2px;
     outline: none;
+  }
+
+  .menu-divider {
+    height: 1px;
+    margin: 4px 2px;
+    background-color: var(--border-subtle);
   }
 
   .menu-item {

@@ -523,11 +523,50 @@
   }
 
   .header-cb {
+    appearance: none;
+    -webkit-appearance: none;
     cursor: pointer;
     width: 14px;
     height: 14px;
     margin: 0;
     flex-shrink: 0;
+    border: 1px solid var(--border);
+    border-radius: 0;
+    background-color: var(--bg);
+    display: grid;
+    place-content: center;
+    transition: background-color 80ms ease, border-color 80ms ease;
+  }
+
+  .header-cb:hover:not(:disabled) {
+    border-color: var(--accent);
+  }
+
+  .header-cb:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 1px;
+  }
+
+  .header-cb:checked,
+  .header-cb:indeterminate {
+    background-color: var(--accent);
+    border-color: var(--accent);
+  }
+
+  .header-cb:checked::before {
+    content: "";
+    width: 8px;
+    height: 4px;
+    border-left: 2px solid var(--accent-fg);
+    border-bottom: 2px solid var(--accent-fg);
+    transform: rotate(-45deg) translate(0.5px, -0.5px);
+  }
+
+  .header-cb:indeterminate::before {
+    content: "";
+    width: 8px;
+    height: 2px;
+    background-color: var(--accent-fg);
   }
 
   .header-title {
@@ -688,12 +727,42 @@
   }
 
   .row-cb {
+    appearance: none;
+    -webkit-appearance: none;
     cursor: pointer;
     width: 14px;
     height: 14px;
     margin: 0;
     flex-shrink: 0;
-    accent-color: var(--accent);
+    border: 1px solid var(--border);
+    border-radius: 0;
+    background-color: var(--bg);
+    display: grid;
+    place-content: center;
+    transition: background-color 80ms ease, border-color 80ms ease;
+  }
+
+  .row-cb:hover:not(:disabled) {
+    border-color: var(--accent);
+  }
+
+  .row-cb:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 1px;
+  }
+
+  .row-cb:checked {
+    background-color: var(--accent);
+    border-color: var(--accent);
+  }
+
+  .row-cb:checked::before {
+    content: "";
+    width: 8px;
+    height: 4px;
+    border-left: 2px solid var(--accent-fg);
+    border-bottom: 2px solid var(--accent-fg);
+    transform: rotate(-45deg) translate(0.5px, -0.5px);
   }
 
   .path-wrap {

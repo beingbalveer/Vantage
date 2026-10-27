@@ -3,6 +3,7 @@ import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import type {
   BackupInfo,
   BlameInfo,
+  BlobPreview,
   BlobTextResult,
   BranchInfo,
   CheckoutResult,
@@ -231,6 +232,14 @@ export async function blobText(
   path: string
 ): Promise<BlobTextResult> {
   return invoke("blob_text", { id, rev, path });
+}
+
+export async function blobPreview(
+  id: string,
+  rev: string,
+  path: string
+): Promise<BlobPreview> {
+  return invoke("blob_preview", { id, rev, path });
 }
 
 export async function treeList(id: string, rev: string): Promise<string[]> {
@@ -494,6 +503,10 @@ export async function openExternalEditor(
   line?: number
 ): Promise<void> {
   return invoke("open_external_editor", { id, path, line });
+}
+
+export async function openWithDefaultApp(id: string, path: string): Promise<void> {
+  return invoke("open_with_default_app", { id, path });
 }
 
 export async function revealInFileManager(path: string): Promise<void> {

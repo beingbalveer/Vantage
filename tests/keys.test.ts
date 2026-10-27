@@ -269,6 +269,68 @@ describe("context resolution", () => {
   });
 });
 
+describe("file tab shortcuts", () => {
+  it("closes a file tab in Files and a pane elsewhere", () => {
+    const inFiles = resolveCommand(COMMANDS, fromShortcut("Mod+W", true), {
+      activeContexts: files,
+      mac: true,
+    });
+    expect(inFiles?.command.id).toBe("close_file");
+    expect(inFiles?.context).toBe("files");
+
+    const inHistory = resolveCommand(COMMANDS, fromShortcut("Mod+W", true), {
+      activeContexts: history,
+      mac: true,
+    });
+    expect(inHistory?.command.id).toBe("close_pane");
+    expect(inHistory?.context).toBe("global");
+  });
+
+  it("closes all tabs and walks the strip", () => {
+    const closeAll = resolveCommand(COMMANDS, fromShortcut("Mod+Shift+W", true), {
+      activeContexts: files,
+      mac: true,
+    });
+    expect(closeAll?.command.id).toBe("close_all_files");
+
+    const next = resolveCommand(COMMANDS, fromShortcut("Ctrl+Tab", true), {
+      activeContexts: files,
+      mac: true,
+    });
+    expect(next?.command.id).toBe("next_file_tab");
+
+    const prev = resolveCommand(COMMANDS, fromShortcut("Ctrl+Shift+Tab", true), {
+      activeContexts: files,
+      mac: true,
+    });
+    expect(prev?.command.id).toBe("prev_file_tab");
+  });
+
+  it("uses Mod+B for file search in Files and the sidebar elsewhere", () => {
+    const inFiles = resolveCommand(COMMANDS, fromShortcut("Mod+B", true), {
+      activeContexts: files,
+      mac: true,
+    });
+    expect(inFiles?.command.id).toBe("focus_file_search");
+    expect(inFiles?.context).toBe("files");
+
+    const inHistory = resolveCommand(COMMANDS, fromShortcut("Mod+B", true), {
+      activeContexts: history,
+      mac: true,
+    });
+    expect(inHistory?.command.id).toBe("toggle_sidebar");
+    expect(inHistory?.context).toBe("global");
+  });
+
+  it("supports the Mod+Shift+E explorer alias", () => {
+    const resolved = resolveCommand(COMMANDS, fromShortcut("Mod+Shift+E", true), {
+      activeContexts: files,
+      mac: true,
+    });
+    expect(resolved?.command.id).toBe("focus_file_search");
+  });
+});
+
 describe("flagged commit navigation", () => {
   const commits = [
     { sha: "a", flags: [] },

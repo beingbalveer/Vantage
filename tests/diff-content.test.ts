@@ -15,6 +15,9 @@ describe("diff content classification", () => {
     expect(imageMime("anim.gif")).toBe("image/gif");
     expect(imageMime("next.webp")).toBe("image/webp");
     expect(imageMime("icon.svg")).toBe("image/svg+xml");
+    expect(imageMime("favicon.ico")).toBe("image/x-icon");
+    expect(imageMime("old.bmp")).toBe("image/bmp");
+    expect(imageMime("next.avif")).toBe("image/avif");
     expect(isImagePath("docs/diagram.svg")).toBe(true);
   });
 

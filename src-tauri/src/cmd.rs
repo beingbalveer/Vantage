@@ -1,6 +1,6 @@
 use crate::detect::{detect_editors, detect_shells, system_editor_command, DetectedApp};
 use crate::error::AppError;
-use crate::git::binary::{get_file_diff_meta, FileDiffMeta};
+use crate::git::binary::{get_blob_preview, get_file_diff_meta, BlobPreview, FileDiffMeta};
 use crate::git::blob::{get_blob_lines, get_blob_text, get_tree_list, BlobTextResult};
 use crate::git::coauthors::{recent_contributors as git_recent_contributors, Contributor};
 use crate::git::diff::{
@@ -911,6 +911,28 @@ pub async fn blob_text(
     };
 
     get_blob_text(&state.runner, &repo_path, &rev, &path).await
+}
+
+/// Preview a single file for the Files viewer: text, a bounded image data URL,
+/// or an explicit binary/too-large state.
+#[tauri::command]
+pub async fn blob_preview(
+    state: State<'_, AppState>,
+    id: String,
+    rev: String,
+    path: String,
+) -> Result<BlobPreview, AppError> {
+    let repo_path = {
+        let data = state.data.lock().await;
+        let entry = data
+            .repos
+            .iter()
+            .find(|r| r.id == id)
+            .ok_or_else(|| AppError::not_found("Repository not found"))?;
+        PathBuf::from(&entry.path)
+    };
+
+    get_blob_preview(&state.runner, &repo_path, &rev, &path).await
 }
 
 #[tauri::command]
@@ -1932,6 +1954,57 @@ pub async fn open_external_editor(
             )
         })?;
 
+    Ok(())
+}
+
+/// Open a repository file in the OS default application (Preview, QuickTime,
+/// etc.). Used for binaries, media and documents the in-app viewer cannot show.
+#[tauri::command]
+pub async fn open_with_default_app(
+    state: State<'_, AppState>,
+    id: String,
+    path: String,
+) -> Result<(), AppError> {
+    let repo_path = {
+        let data = state.data.lock().await;
+        let entry = data
+            .repos
+            .iter()
+            .find(|r| r.id == id)
+            .ok_or_else(|| AppError::not_found("Repository not found"))?;
+        PathBuf::from(&entry.path)
+    };
+
+    let full_path = crate::git::binary::worktree_path(&repo_path, &path)
+        .ok_or_else(|| AppError::new("Validation", "Invalid file path"))?;
+    if !full_path.exists() {
+        return Err(AppError::not_found(
+            "This file is not present in the working tree. Check out its branch to open it.",
+        ));
+    }
+
+    #[cfg(target_os = "macos")]
+    {
+        tokio::process::Command::new("open")
+            .arg(&full_path)
+            .spawn()
+            .map_err(AppError::io)?;
+    }
+    #[cfg(target_os = "windows")]
+    {
+        tokio::process::Command::new("cmd")
+            .args(["/C", "start", ""])
+            .arg(&full_path)
+            .spawn()
+            .map_err(AppError::io)?;
+    }
+    #[cfg(target_os = "linux")]
+    {
+        tokio::process::Command::new("xdg-open")
+            .arg(&full_path)
+            .spawn()
+            .map_err(AppError::io)?;
+    }
     Ok(())
 }
 

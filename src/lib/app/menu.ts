@@ -28,6 +28,7 @@ import {
   shortcutsHelpOpen,
   sidebarCollapsed,
 } from "./ui";
+import { dismissTopmostOverlay, getActiveContexts, runCommand } from "./commands";
 
 export interface MenuItem {
   id: string;
@@ -35,6 +36,8 @@ export interface MenuItem {
   danger?: boolean;
   disabled?: boolean;
   shortcut?: string;
+  /** Draw a divider above this item. */
+  separatorBefore?: boolean;
   onselect: () => void;
 }
 
@@ -193,6 +196,17 @@ export async function dispatchMenuCommand(command: string): Promise<void> {
       return;
 
     case "view-close-pane": {
+      // ⌘W is a native menu accelerator, so macOS consumes the key before the
+      // webview keydown router runs. Delegate to the command router first so
+      // the Files tab closes its active file tab, then fall back to the pane.
+      const contexts = getActiveContexts();
+      // While an overlay (settings, file search, …) is open, ⌘W dismisses it
+      // instead of reaching through to the pane behind it.
+      if (contexts.includes("dialog-open")) {
+        dismissTopmostOverlay();
+        return;
+      }
+      if (!contexts.includes("terminal") && runCommand("close_file")) return;
       if (get(paneCount) <= 1) {
         addToast({ message: "Cannot close the only open pane", kind: "info" });
         return;
@@ -217,6 +231,10 @@ export async function dispatchMenuCommand(command: string): Promise<void> {
       return;
 
     case "view-toggle-sidebar":
+      // Same accelerator shadowing as ⌘W: in the Files tab ⌘B focuses the
+      // explorer's file search, matching the webview shortcut table.
+      if (getActiveContexts().includes("dialog-open")) return;
+      if (!getActiveContexts().includes("terminal") && runCommand("focus_file_search")) return;
       sidebarCollapsed.update((collapsed) => !collapsed);
       return;
 

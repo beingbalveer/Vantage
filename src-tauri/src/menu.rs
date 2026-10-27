@@ -97,7 +97,7 @@ impl MenuAction {
             MenuAction::Pull => "Pull",
             MenuAction::Push => "Push",
             MenuAction::SplitPane => "Split Pane (Cycle 1-3)",
-            MenuAction::ClosePane => "Close Pane",
+            MenuAction::ClosePane => "Close Tab or Pane",
             MenuAction::FocusPane1 => "Focus Pane 1",
             MenuAction::FocusPane2 => "Focus Pane 2",
             MenuAction::FocusPane3 => "Focus Pane 3",

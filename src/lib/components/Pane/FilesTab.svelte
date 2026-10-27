@@ -1,11 +1,12 @@
 <script lang="ts">
   import { untrack } from "svelte";
+  import { get } from "svelte/store";
   import {
     persistLeftColumnWidth,
     defaultLeftColumnWidth,
     LEFT_COLUMN_KEY,
   } from "../../app/layout";
-  import { setPaneTab } from "../../domain/stores/panes";
+  import { setPaneTab, closePane, paneCount } from "../../domain/stores/panes";
   import * as api from "../../platform/api";
   import { normalizeError, createDelayedToggle, type NormalizedError } from "../../domain/asyncState";
   import type { RepoEntry, RepoStatus } from "../../platform/types";
@@ -17,15 +18,17 @@
   import Skeleton from "../common/Skeleton.svelte";
   import Banner from "../common/Banner.svelte";
   import { navigationTarget } from "../../domain/stores/navigation";
-  import { addToast } from "../../app/ui";
+  import { addToast, fileSearchOpen } from "../../app/ui";
   import {
     closeFileTab,
+    closeFileTabs,
     fileTabs,
     getFileTabState,
     openFileTab,
     pruneFileTabs,
   } from "../../domain/stores/fileTabs";
   import FileTabs from "./FileTabs.svelte";
+  import FileSearchDialog from "./FileSearchDialog.svelte";
   import { matchShortcut } from "../../platform/keys";
 
   interface Props {
@@ -62,7 +65,8 @@
   let openTabs = $derived(tabState.tabs);
   let activeFile = $derived(tabState.active);
   let activeTargetLine = $state<number | null>(null);
-  let fileTreeRef = $state<any>(null);
+  // The search overlay lives above the pane; only the pane that opened it renders it.
+  let searchOpen = $derived($fileSearchOpen?.paneIndex === paneIndex);
 
   // Tree load state (ALPH-150): a failed tree request must be visible and
   // retryable rather than silently swallowed.
@@ -171,18 +175,103 @@
     }
   }
 
+  async function openPathInEditor(path: string) {
+    try {
+      await api.openExternalEditor(repoId, path);
+      addToast({ message: `Opened '${path}' in external editor`, kind: "info" });
+    } catch (e: any) {
+      console.error("Failed to open external editor:", e);
+      addToast({
+        message: e?.message || "Failed to open external editor. Ensure 'code' CLI is installed in PATH or configure in Settings.",
+        kind: "error",
+      });
+    }
+  }
+
+  // ---- File-tab commands ---------------------------------------------------
+  // These handlers are registered in the `files` context so ⌘W/⌘B keep their
+  // global meaning everywhere else.
+
+  function closeActiveFile(): boolean {
+    if (!ownsPaneKeyboard(paneIndex)) return false;
+    if (activeFile) {
+      closeFileTab(tabKey, activeFile);
+      return true;
+    }
+    // Preserve ⌘W's old meaning when the viewer has no open tab.
+    if (get(paneCount) <= 1) {
+      addToast({ message: "Cannot close the only open pane", kind: "info" });
+      return true;
+    }
+    closePane(paneIndex);
+    return true;
+  }
+
+  function closeAllFiles(): boolean {
+    if (!ownsPaneKeyboard(paneIndex)) return false;
+    closeFileTabs(tabKey, openTabs);
+    return true;
+  }
+
+  function stepFileTab(delta: 1 | -1): boolean {
+    if (!ownsPaneKeyboard(paneIndex) || openTabs.length < 2) return false;
+    const index = activeFile ? openTabs.indexOf(activeFile) : -1;
+    const next = (index + delta + openTabs.length) % openTabs.length;
+    activeTargetLine = null;
+    openFileTab(tabKey, openTabs[next]);
+    return true;
+  }
+
+  function openFileSearch(): boolean {
+    if (!ownsPaneKeyboard(paneIndex)) return false;
+    fileSearchOpen.set({ paneIndex, repoId });
+    return true;
+  }
+
+  function closeFileSearch() {
+    if ($fileSearchOpen?.paneIndex === paneIndex) fileSearchOpen.set(null);
+  }
+
+  function selectSearchResult(path: string) {
+    activeTargetLine = null;
+    openFileTab(tabKey, path);
+  }
+
+  function closeFilePaths(paths: string[]) {
+    closeFileTabs(tabKey, paths);
+  }
+
+  async function copyFilePath(path: string) {
+    try {
+      await navigator.clipboard.writeText(path);
+      addToast({ message: `Copied '${path}' to clipboard`, kind: "info" });
+    } catch {
+      addToast({ message: "Failed to copy path", kind: "error" });
+    }
+  }
+
+  async function revealFilePath(path: string) {
+    const fullPath = repo?.path ? `${repo.path}/${path}` : path;
+    try {
+      await api.revealInFileManager(fullPath);
+    } catch (e: any) {
+      addToast({ message: e?.message || "Failed to reveal in file manager", kind: "error" });
+    }
+  }
+
   function handleKeydown(e: KeyboardEvent) {
+    if (!ownsPaneKeyboard(paneIndex)) return;
+    if (searchOpen) return;
     const isInput =
       e.target instanceof HTMLInputElement ||
       e.target instanceof HTMLTextAreaElement ||
       (e.target as HTMLElement)?.isContentEditable;
+    if (isInput) return;
 
-    if (!isInput && e.key === "/") {
+    // Local Mod+P alias; `/` is a registered command handled by the router.
+    if (matchShortcut(e, "Mod+P")) {
       e.preventDefault();
-      fileTreeRef?.focusTree();
-    } else if (matchShortcut(e, "Mod+P")) {
-      e.preventDefault();
-      fileTreeRef?.focusTree();
+      openFileSearch();
     }
   }
 
@@ -203,19 +292,24 @@
 
   $effect(() => {
     const unregister = [
-      registerHandler(
-        "focus_files",
-        () => {
-          if (!ownsPaneKeyboard(paneIndex)) return false;
-          fileTreeRef?.focusTree?.();
-          return true;
-        },
-        "files"
-      ),
+      registerHandler("focus_files", openFileSearch, "files"),
+      registerHandler("focus_file_search", openFileSearch, "files"),
+      registerHandler("close_file", closeActiveFile, "files"),
+      registerHandler("close_all_files", closeAllFiles, "files"),
+      registerHandler("next_file_tab", () => stepFileTab(1), "files"),
+      registerHandler("prev_file_tab", () => stepFileTab(-1), "files"),
       registerHandler("list_down", () => moveFile(1), "files"),
       registerHandler("list_up", () => moveFile(-1), "files"),
     ];
     return () => unregister.forEach((off) => off());
+  });
+
+  // Never leave the app-wide overlay flag set if this pane unmounts while the
+  // search is open (e.g. the repo is removed from the native menu).
+  $effect(() => {
+    return () => {
+      if (get(fileSearchOpen)?.paneIndex === paneIndex) fileSearchOpen.set(null);
+    };
   });
 </script>
 
@@ -262,10 +356,10 @@
         </div>
       {:else}
         <FileTree
-          bind:this={fileTreeRef}
           files={fileList}
           selectedFile={activeFile}
           {repoId}
+          onsearch={openFileSearch}
           onselectfile={(path) => {
             activeTargetLine = null;
             openFileTab(tabKey, path);
@@ -306,6 +400,10 @@
           openFileTab(tabKey, path);
         }}
         onclose={(path) => closeFileTab(tabKey, path)}
+        onclosepaths={closeFilePaths}
+        oncopy={copyFilePath}
+        onreveal={revealFilePath}
+        onopenexternal={openPathInEditor}
       />
       <div class="viewer-body" id="file-viewer">
         <CodeViewer
@@ -334,6 +432,14 @@
     {/if}
   </div>
 </div>
+
+<FileSearchDialog
+  open={searchOpen}
+  files={fileList}
+  repoName={repo?.name ?? ""}
+  onselect={selectSearchResult}
+  onclose={closeFileSearch}
+/>
 
 <style>
   .files-tab-container {

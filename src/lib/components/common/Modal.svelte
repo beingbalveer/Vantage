@@ -11,6 +11,8 @@
     open?: boolean;
     title?: string;
     description?: string;
+    /** Accessible name when the dialog renders no visible title. */
+    ariaLabel?: string;
     width?: string | number;
     closeOnEsc?: boolean;
     closeOnEscape?: boolean;
@@ -27,6 +29,7 @@
     open = $bindable(false),
     title = "",
     description = "",
+    ariaLabel,
     width = 440,
     closeOnEsc,
     closeOnEscape,
@@ -232,7 +235,7 @@
       aria-modal="true"
       aria-labelledby={title ? titleId : undefined}
       aria-describedby={description ? descriptionId : undefined}
-      aria-label={title ? undefined : "Dialog"}
+      aria-label={title ? undefined : (ariaLabel ?? "Dialog")}
       tabindex="-1"
       onclick={(e) => e.stopPropagation()}
       onkeydown={handleCardKeydown}

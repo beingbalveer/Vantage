@@ -21,6 +21,7 @@ import {
   openDialog,
   openSettingsAt,
   addToast,
+  fileSearchOpen,
 } from "./ui";
 import {
   repos,
@@ -145,6 +146,7 @@ function overlayOpen(): boolean {
     get(shortcutsHelpOpen) ||
     get(addRepoDialogOpen) ||
     get(scanFolderDialogOpen) ||
+    get(fileSearchOpen) !== null ||
     get(activeDialog) !== null
   );
 }
@@ -182,6 +184,7 @@ function togglePalette(): boolean {
     get(shortcutsHelpOpen) ||
     get(addRepoDialogOpen) ||
     get(scanFolderDialogOpen) ||
+    get(fileSearchOpen) !== null ||
     get(activeDialog) !== null
   ) {
     return false;
@@ -431,7 +434,7 @@ function loadLayout() {
 }
 
 /** Close the topmost overlay or popover. Returns true when something closed. */
-function handleEscape(): boolean {
+export function dismissTopmostOverlay(): boolean {
   if (get(paletteOpen)) {
     paletteOpen.set(false);
     return true;
@@ -450,6 +453,10 @@ function handleEscape(): boolean {
   }
   if (get(scanFolderDialogOpen)) {
     scanFolderDialogOpen.set(false);
+    return true;
+  }
+  if (get(fileSearchOpen)) {
+    fileSearchOpen.set(null);
     return true;
   }
   if (get(activeDialog)) {
@@ -483,7 +490,7 @@ const GLOBAL_HANDLERS: Record<string, Handler> = {
     await refreshAllStatuses();
     addToast({ message: "Refreshed all repositories", kind: "info" });
   },
-  escape: handleEscape,
+  escape: dismissTopmostOverlay,
 
   focus_pane_1: () => focusPane(0),
   focus_pane_2: () => focusPane(1),

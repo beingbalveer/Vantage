@@ -4,17 +4,107 @@
   import { tick } from "svelte";
   import FileIcon from "../common/FileIcon.svelte";
   import Icon from "../common/Icon.svelte";
+  import ContextMenu from "../common/ContextMenu.svelte";
+  import { formatKey } from "../../platform/keys";
+  import type { MenuItem } from "../../app/menu";
 
   interface Props {
     tabs: string[];
     active: string | null;
     onactivate: (path: string) => void;
     onclose: (path: string) => void;
+    onclosepaths?: (paths: string[]) => void;
+    oncopy?: (path: string) => void;
+    onreveal?: (path: string) => void;
+    onopenexternal?: (path: string) => void;
   }
 
-  let { tabs, active, onactivate, onclose }: Props = $props();
+  let {
+    tabs,
+    active,
+    onactivate,
+    onclose,
+    onclosepaths,
+    oncopy,
+    onreveal,
+    onopenexternal,
+  }: Props = $props();
 
   let stripEl = $state<HTMLDivElement | null>(null);
+  let menu = $state<{ x: number; y: number; path: string } | null>(null);
+
+  function openTabMenu(e: MouseEvent, path: string) {
+    e.preventDefault();
+    e.stopPropagation();
+    menu = { x: e.clientX, y: e.clientY, path };
+  }
+
+  // Keyboard-accessible alternative to right-click (Shift+F10 / Menu key).
+  function openTabMenuFromKeyboard(e: KeyboardEvent, path: string) {
+    if (e.key !== "ContextMenu" && !(e.shiftKey && e.key === "F10")) return;
+    e.preventDefault();
+    e.stopPropagation();
+    const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
+    menu = { x: rect.left + 16, y: rect.top + 16, path };
+  }
+
+  let menuItems = $derived.by<MenuItem[]>(() => {
+    const target = menu;
+    if (!target) return [];
+
+    const index = tabs.indexOf(target.path);
+    const items: MenuItem[] = [
+      {
+        id: "close",
+        label: "Close",
+        shortcut: formatKey("Mod+W"),
+        onselect: () => onclose(target.path),
+      },
+      {
+        id: "close-others",
+        label: "Close Others",
+        disabled: !onclosepaths || tabs.length <= 1,
+        onselect: () => onclosepaths?.(tabs.filter((path) => path !== target.path)),
+      },
+      {
+        id: "close-right",
+        label: "Close to the Right",
+        disabled: !onclosepaths || index < 0 || index >= tabs.length - 1,
+        onselect: () => onclosepaths?.(tabs.slice(index + 1)),
+      },
+      {
+        id: "close-all",
+        label: "Close All",
+        shortcut: formatKey("Mod+Shift+W"),
+        disabled: !onclosepaths,
+        onselect: () => onclosepaths?.([...tabs]),
+      },
+    ];
+
+    if (oncopy) {
+      items.push({
+        id: "copy-path",
+        label: "Copy Path",
+        separatorBefore: true,
+        onselect: () => oncopy(target.path),
+      });
+    }
+    if (onreveal) {
+      items.push({
+        id: "reveal",
+        label: "Reveal in File Manager",
+        onselect: () => onreveal(target.path),
+      });
+    }
+    if (onopenexternal) {
+      items.push({
+        id: "open-external",
+        label: "Open in External Editor",
+        onselect: () => onopenexternal(target.path),
+      });
+    }
+    return items;
+  });
 
   // Keep the active tab in view when the strip is narrower than its tabs.
   $effect(() => {
@@ -72,16 +162,20 @@
       class:active={path === active}
       role="presentation"
       data-tab-path={path}
+      oncontextmenu={(e) => openTabMenu(e, path)}
     >
       <button
         type="button"
         role="tab"
         aria-selected={path === active}
         aria-controls="file-viewer"
+        aria-haspopup="menu"
+        aria-expanded={menu?.path === path}
         tabindex={path === active ? 0 : -1}
         class="file-tab-main"
         title={path}
         onclick={() => onactivate(path)}
+        onkeydown={(e) => openTabMenuFromKeyboard(e, path)}
       >
         <FileIcon filename={basename(path)} size={13} />
         <span class="file-tab-name text-xs">{basename(path)}</span>
@@ -101,6 +195,18 @@
     </div>
   {/each}
 </div>
+
+{#if menu}
+  {#key menu}
+    <ContextMenu
+      x={menu.x}
+      y={menu.y}
+      items={menuItems}
+      label="File tab actions"
+      onclose={() => (menu = null)}
+    />
+  {/key}
+{/if}
 
 <style>
   .file-tabs {

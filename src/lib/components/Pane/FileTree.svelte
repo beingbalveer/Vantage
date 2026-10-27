@@ -19,9 +19,11 @@
     selectedFile: string | null;
     repoId: string;
     onselectfile: (path: string) => void;
+    /** Open the centered file-search overlay. */
+    onsearch?: () => void;
   }
 
-  let { files, selectedFile, repoId, onselectfile }: Props = $props();
+  let { files, selectedFile, repoId, onselectfile, onsearch }: Props = $props();
 
   let repoEntry = $derived($repos.find((r) => r.id === repoId));
 
@@ -178,6 +180,17 @@
     </div>
 
     <div class="explorer-actions">
+      {#if onsearch}
+        <button
+          class="action-icon-btn"
+          onclick={onsearch}
+          title="Search files (⌘B)"
+          aria-label="Search files"
+        >
+          <Icon name="search" size={13} />
+        </button>
+      {/if}
+
       <button
         class="action-icon-btn"
         onclick={collapseAll}
@@ -203,7 +216,7 @@
           title="Reveal active file in tree"
           aria-label="Reveal active file in tree"
         >
-          <Icon name="search" size={12} />
+          <Icon name="eye" size={12} />
         </button>
       {/if}
 

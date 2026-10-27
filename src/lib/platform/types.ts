@@ -265,6 +265,19 @@ export interface BlobTextResult {
   binary: boolean;
 }
 
+/** Single-file preview for the Files viewer (text, image, or binary state). */
+export interface BlobPreview {
+  size: number;
+  binary: boolean;
+  tooLarge: boolean;
+  /** Image MIME type when the path is a recognised image. */
+  mime: string | null;
+  /** `data:<mime>;base64,...` for images within the preview cap. */
+  image: string | null;
+  /** Source text (ordinary files, and SVG so the viewer can toggle source). */
+  text: string;
+}
+
 /** Old/new metadata for a single changed file (sizes + bounded image previews). */
 export interface FileDiffMeta {
   oldSize: number | null;

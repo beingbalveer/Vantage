@@ -11,6 +11,8 @@
   import { registerHandler, registerDismiss, ownsPaneKeyboard } from "../../app/commands";
   import Icon from "../common/Icon.svelte";
   import FileIcon from "../common/FileIcon.svelte";
+  import FilePreviewFallback from "./FilePreviewFallback.svelte";
+  import { formatBytes } from "../../domain/diff-content";
 
   interface Props {
     repoId: string;
@@ -39,6 +41,35 @@
   let lines = $state<string[]>([]);
   let isLoading = $state(true);
   let isWrapped = $state(false);
+
+  // Single-file preview metadata. Text files use the existing line view;
+  // images render inline; binaries and oversized blobs get an honest fallback.
+  let fileSize = $state<number | null>(null);
+  let isBinary = $state(false);
+  let isTooLarge = $state(false);
+  let imageUrl = $state<string | null>(null);
+  let imageMime = $state<string | null>(null);
+  let imageBroken = $state(false);
+  let imageDims = $state<{ w: number; h: number } | null>(null);
+  let svgSourceMode = $state(false);
+
+  let isSvg = $derived(/\.svg$/i.test(path));
+  let showSvgSource = $derived(isSvg && svgSourceMode && !!codeText);
+  let showImage = $derived(!isLoading && !!imageUrl && !imageBroken && !showSvgSource);
+  let fallbackKind = $derived<"binary" | "too-large" | "image-error">(
+    imageBroken || (!!imageMime && !imageUrl && !isTooLarge)
+      ? "image-error"
+      : isTooLarge
+        ? "too-large"
+        : "binary"
+  );
+  let showFallback = $derived(
+    !isLoading &&
+      !showImage &&
+      !showSvgSource &&
+      (isBinary || isTooLarge || imageBroken)
+  );
+  let textVisible = $derived(!showImage && !showFallback);
 
   // Markdown opens rendered; the header toggle flips to the raw source.
   let isMarkdown = $derived(MARKDOWN_PATH.test(path));
@@ -249,19 +280,32 @@
     blameCache.clear();
     activeBlame = null;
     blameLineNo = null;
+    imageBroken = false;
+    imageDims = null;
+    svgSourceMode = false;
 
     try {
-      const res = await api.blobText(repoId, rev, path);
+      const res = await api.blobPreview(repoId, rev, path);
       if (!request.isCurrent()) return;
       codeText = res.text;
       rawLines = res.text.split("\n");
-      lines = highlightCodeLines(res.text, language);
+      lines = res.text ? highlightCodeLines(res.text, language) : [];
+      fileSize = res.size;
+      isBinary = res.binary;
+      isTooLarge = res.tooLarge;
+      imageUrl = res.image;
+      imageMime = res.mime;
     } catch (e) {
       if (!request.isCurrent()) return;
       console.error("Failed to load file:", e);
       codeText = "";
       rawLines = [];
       lines = [];
+      fileSize = null;
+      isBinary = false;
+      isTooLarge = false;
+      imageUrl = null;
+      imageMime = null;
     } finally {
       if (!request.isCurrent()) return;
       isLoading = false;
@@ -284,6 +328,32 @@
         highlightedLineNo = null;
       }
     }, 2000);
+  }
+
+  function handleImageLoad(e: Event) {
+    const img = e.currentTarget as HTMLImageElement;
+    if (img.naturalWidth && img.naturalHeight) {
+      imageDims = { w: img.naturalWidth, h: img.naturalHeight };
+    }
+  }
+
+  function handleImageError() {
+    imageBroken = true;
+  }
+
+  // Binaries, media and documents cannot be rendered in the webview; hand them
+  // to the OS default application instead.
+  async function openExternally() {
+    try {
+      await api.openWithDefaultApp(repoId, path);
+      addToast({ message: `Opened '${path}' in the default application`, kind: "info" });
+    } catch (e: any) {
+      console.error("Failed to open file externally:", e);
+      addToast({
+        message: e?.message || "Couldn't open this file externally.",
+        kind: "error",
+      });
+    }
   }
 
   // Blame-lite hover
@@ -535,7 +605,21 @@
         </button>
       {/if}
 
-      {#if !(isMarkdown && previewMode)}
+      {#if isSvg && imageUrl}
+        <button
+          type="button"
+          class="viewer-icon-btn"
+          class:active={svgSourceMode}
+          aria-pressed={svgSourceMode}
+          onclick={() => (svgSourceMode = !svgSourceMode)}
+          title={svgSourceMode ? "View rendered SVG" : "View SVG source"}
+          aria-label={svgSourceMode ? "View rendered SVG" : "View SVG source"}
+        >
+          <Icon name={svgSourceMode ? "eye" : "code"} size={15} />
+        </button>
+      {/if}
+
+      {#if textVisible && !(isMarkdown && previewMode)}
         <button
           type="button"
           class="viewer-icon-btn"
@@ -573,7 +657,7 @@
   </div>
 
   <!-- Find Bar (Floating Top-Right) -->
-  {#if findOpen}
+  {#if findOpen && textVisible}
     <div class="find-bar">
       <input
         bind:this={findInputEl}
@@ -611,6 +695,33 @@
   <div class="code-body" bind:this={viewerBodyEl}>
     {#if isLoading}
       <div class="loading-state text-sm text-muted" role="status">Loading file…</div>
+    {:else if showImage}
+      <div class="image-preview">
+        <div class="image-stage">
+          <img
+            src={imageUrl}
+            alt={path}
+            onload={handleImageLoad}
+            onerror={handleImageError}
+          />
+        </div>
+        <div class="image-caption text-xs">
+          <span class="text-muted">{imageMime}</span>
+          {#if imageDims}
+            <span class="text-faint">{imageDims.w} × {imageDims.h}</span>
+          {/if}
+          {#if fileSize != null}
+            <span class="text-faint">{formatBytes(fileSize)}</span>
+          {/if}
+        </div>
+      </div>
+    {:else if showFallback}
+      <FilePreviewFallback
+        {path}
+        size={fileSize}
+        kind={fallbackKind}
+        onopenexternal={openExternally}
+      />
     {:else if isMarkdown && previewMode}
       <!-- svelte-ignore a11y_click_events_have_key_events -->
       <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
@@ -875,6 +986,53 @@
   .loading-state {
     padding: 24px;
     text-align: center;
+  }
+
+  /* Image preview: a calm canvas with a subtle transparency checkerboard so
+     PNG/SVG transparency is visible without looking like a gradient. */
+  .image-preview {
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+    min-height: 0;
+    gap: var(--s-2);
+    padding: var(--s-4);
+    box-sizing: border-box;
+  }
+
+  .image-stage {
+    flex: 1;
+    min-height: 160px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: var(--s-4);
+    background-color: var(--bg);
+    background-image:
+      linear-gradient(45deg, var(--bg-muted) 25%, transparent 25%),
+      linear-gradient(-45deg, var(--bg-muted) 25%, transparent 25%),
+      linear-gradient(45deg, transparent 75%, var(--bg-muted) 75%),
+      linear-gradient(-45deg, transparent 75%, var(--bg-muted) 75%);
+    background-size: 16px 16px;
+    background-position: 0 0, 0 8px, 8px -8px, -8px 0;
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--r-md);
+    overflow: hidden;
+  }
+
+  .image-stage img {
+    display: block;
+    max-width: 100%;
+    max-height: 100%;
+    object-fit: contain;
+  }
+
+  .image-caption {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: var(--s-3);
+    flex-shrink: 0;
   }
 
   .lines-container {

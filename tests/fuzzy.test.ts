@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { fuzzyScore } from "../src/lib/util/fuzzy";
+import { fuzzyScore, rankPaths } from "../src/lib/util/fuzzy";
 
 describe("fuzzyScore", () => {
   it("matches empty query", () => {
@@ -28,5 +28,30 @@ describe("fuzzyScore", () => {
   it("returns null on non-matching string", () => {
     const res = fuzzyScore("xyz", "api-server");
     expect(res).toBeNull();
+  });
+});
+
+describe("rankPaths", () => {
+  const paths = [
+    "src/lib/components/Pane/FileTabs.svelte",
+    "src/lib/domain/stores/fileTabs.ts",
+    "README.md",
+    "docs/file-tabs.md",
+  ];
+
+  it("returns every path for an empty query", () => {
+    expect(rankPaths("  ", paths)).toEqual(paths);
+  });
+
+  it("keeps only fuzzy matches and ranks the best first", () => {
+    const ranked = rankPaths("fileTabs.svelte", paths);
+    expect(ranked).toEqual(["src/lib/components/Pane/FileTabs.svelte"]);
+
+    const stores = rankPaths("stores", paths);
+    expect(stores).toEqual(["src/lib/domain/stores/fileTabs.ts"]);
+  });
+
+  it("returns an empty list when nothing matches", () => {
+    expect(rankPaths("zzzz", paths)).toEqual([]);
   });
 });

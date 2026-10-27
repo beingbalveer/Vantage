@@ -55,3 +55,19 @@ export function fuzzyScore(pattern: string, text: string): FuzzyMatchResult | nu
 
   return null;
 }
+
+/**
+ * Rank file paths for the explorer's quick filter. Empty queries return the
+ * original list; otherwise only fuzzy matches survive, best score first.
+ */
+export function rankPaths(query: string, paths: string[]): string[] {
+  const trimmed = query.trim();
+  if (!trimmed) return [...paths];
+  return paths
+    .map((path) => ({ path, match: fuzzyScore(trimmed, path) }))
+    .filter(
+      (entry): entry is { path: string; match: FuzzyMatchResult } => entry.match !== null
+    )
+    .sort((a, b) => b.match.score - a.match.score || a.path.localeCompare(b.path))
+    .map((entry) => entry.path);
+}
