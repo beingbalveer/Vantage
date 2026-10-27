@@ -13,6 +13,7 @@ export type IconName =
   | "refresh"
   | "search"
   | "file-text"
+  | "image"
   | "terminal"
   | "gear"
   | "question"

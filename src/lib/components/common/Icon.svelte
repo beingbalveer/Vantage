@@ -235,6 +235,11 @@
     <path d="M4 6h16M4 12h12a3 3 0 0 1 3 3v0a3 3 0 0 1-3 3H11" />
     <path d="m14 15-3 3 3 3" />
     <path d="M4 18h3" />
+  {:else if name === "image"}
+    <!-- Picture: frame, sun, ridge -->
+    <rect x="3" y="3" width="18" height="18" rx="2" />
+    <circle cx="9" cy="9" r="1.6" />
+    <path d="m21 15-4.5-4.5a2 2 0 0 0-2.8 0L6 21" />
   {:else if name === "file"}
     <!-- Document -->
     <path d="M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z" />
