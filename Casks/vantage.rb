@@ -7,6 +7,13 @@ cask "vantage" do
   desc "Lightweight multi-repo Git client and code review deck"
   homepage "https://github.com/beingbalveer/Vantage"
 
+  livecheck do
+    url :url
+    strategy :github_latest
+  end
+
+  auto_updates true
+
   app "Vantage.app"
 
   postflight do
