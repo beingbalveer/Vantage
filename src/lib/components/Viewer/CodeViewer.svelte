@@ -939,7 +939,7 @@
         onopenexternal={openExternally}
       />
     {:else if editing}
-      <div class="edit-surface font-mono text-xs">
+      <div class="edit-surface font-mono">
         {#if editHighlighted}
           <pre class="edit-highlight" aria-hidden="true" bind:this={highlightEl}>{@html highlightedDraft}</pre>
         {/if}
@@ -981,7 +981,7 @@
           >
             <!-- Gutter / Line Number -->
             <div
-              class="line-num text-xs font-mono"
+              class="line-num font-mono"
               role="presentation"
               onmouseenter={(e) => handleLineHover(idx, e)}
               onmouseleave={handleLineLeave}
@@ -1187,6 +1187,8 @@
     position: absolute;
     inset: 0;
     overflow: hidden;
+    font-size: var(--code-font-size);
+    line-height: var(--code-line-height);
   }
 
   .edit-highlight,
@@ -1197,7 +1199,7 @@
     margin: 0;
     padding: 12px 16px;
     border: 0;
-    line-height: 20px;
+    line-height: inherit;
     tab-size: var(--code-tab-size, 4);
     white-space: pre;
     font-family: inherit;
@@ -1355,8 +1357,8 @@
 
   .lines-container {
     font-family: ui-monospace, "SF Mono", Menlo, Monaco, "Cascadia Code", "Roboto Mono", Consolas, monospace;
-    font-size: 12.5px;
-    line-height: 20px;
+    font-size: var(--code-font-size);
+    line-height: var(--code-line-height);
     tab-size: var(--code-tab-size, 4);
     min-width: 100%;
     width: max-content;
@@ -1372,18 +1374,18 @@
 
   .code-row {
     display: flex;
-    height: 20px;
+    height: var(--code-line-height);
     min-width: 100%;
     width: max-content;
     /* Skip layout/paint for rows outside the viewport; `auto` remembers the
        measured size after first render so the scrollbar stays stable. */
     content-visibility: auto;
-    contain-intrinsic-size: auto 20px;
+    contain-intrinsic-size: auto var(--code-line-height);
   }
   .lines-container.wrapped .code-row {
     width: 100%;
     height: auto;
-    min-height: 20px;
+    min-height: var(--code-line-height);
   }
 
   .code-row:hover {
@@ -1409,7 +1411,7 @@
     user-select: none;
     cursor: pointer;
     flex-shrink: 0;
-    font-size: 11.5px;
+    font-size: calc(var(--code-font-size) * 0.9);
     font-family: inherit;
     border-right: 1px solid var(--border);
     transition: color 100ms ease;

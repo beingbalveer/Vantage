@@ -17,6 +17,10 @@
   --font-ui: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", sans-serif;
   --font-mono: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
 
+  /* Files viewer typography; overridden at runtime by the code font setting. */
+  --code-font-size: 12px;
+  --code-line-height: 19px;
+
   /* Default Light Theme (final approved prototype values) */
   --bg: #ffffff;
   --bg-subtle: #f7f8fa;

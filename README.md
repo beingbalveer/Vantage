@@ -38,7 +38,7 @@ If you run agents across more than one repo and want to see what they actually d
 
 ### 1. Read code without editing it
 
-A syntax-highlighted, read-only viewer with blame, find-in-file, and heuristic definition peek (`F12` / `Alt+Click`). Files open in tabs with VS Code-style close shortcuts, a right-click tab menu, and a centered fuzzy file finder (`Mod+B`). Browsing is read-only on purpose: when you are auditing agent output, the last thing you want is a stray keystroke dirtying the working tree. When you do need to change something, the pencil icon opens an explicit edit mode with the same syntax colors — tick or `Mod+S` saves, `Esc` discards, and leaving with unsaved edits asks first. Saves always target the working-tree copy, never the revision you are viewing.
+A syntax-highlighted, read-only viewer with blame, find-in-file, and heuristic definition peek (`F12` / `Alt+Click`). Files open in tabs with VS Code-style close shortcuts, a right-click tab menu, and a centered fuzzy file finder (`Mod+B`). Browsing is read-only on purpose: when you are auditing agent output, the last thing you want is a stray keystroke dirtying the working tree. When you do need to change something, the pencil icon opens an explicit edit mode with the same syntax colors — tick or `Mod+S` saves, `Esc` discards, and leaving with unsaved edits asks first. Saves always target the working-tree copy, never the revision you are viewing. The code font size (10–20 px) lives in Settings → General.
 
 Ignored local config is still readable: `.env` and `.env.*` files appear in the explorer and the file finder even though Git never tracks them.
 

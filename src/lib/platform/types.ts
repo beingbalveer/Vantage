@@ -165,6 +165,7 @@ export interface Settings {
   externalEditorCmd: string | null;
   commitMessageCmd: string | null;
   terminalFontSize: number;
+  codeFontSize: number;
   uiScale: number;
   defaultBranch: string;
   tabSize: number;

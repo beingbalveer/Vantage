@@ -416,7 +416,28 @@
             </div>
           </div>
           <p class="setting-desc text-xs text-muted">
-            Indentation width used by the diff viewer and the read-only code viewer.
+            Indentation width used by the diff viewer and the code viewer.
+          </p>
+
+          <div class="setting-row">
+            <span class="setting-title text-strong">File font size</span>
+            <div class="setting-num-wrap">
+              <Input
+                type="number"
+                min="10"
+                max="20"
+                size="sm"
+                value={String(currentSettings.codeFontSize)}
+                onchange={(e: Event) =>
+                  handleSaveField(
+                    "codeFontSize",
+                    parseInt((e.target as HTMLInputElement).value, 10) || 12
+                  )}
+              />
+            </div>
+          </div>
+          <p class="setting-desc text-xs text-muted">
+            Text size for the Files viewer and editor, in pixels (10–20).
           </p>
         {:else if activeSection === "git"}
           <h3 class="text-strong">Git Preferences</h3>

@@ -260,6 +260,10 @@ fn default_terminal_font_size() -> u32 {
     13
 }
 
+fn default_code_font_size() -> u32 {
+    12
+}
+
 fn default_tab_size() -> u32 {
     4
 }
@@ -290,6 +294,8 @@ pub struct Settings {
     pub external_editor_cmd: Option<String>,
     pub commit_message_cmd: Option<String>,
     pub terminal_font_size: u32,
+    /// Text size (px) for the Files viewer and its editor.
+    pub code_font_size: u32,
     pub ui_scale: f32,
     /// Branch name used when opening a repository that has no commits yet.
     pub default_branch: String,
@@ -314,6 +320,7 @@ impl Default for Settings {
             external_editor_cmd: None,
             commit_message_cmd: None,
             terminal_font_size: default_terminal_font_size(),
+            code_font_size: default_code_font_size(),
             ui_scale: default_ui_scale(),
             default_branch: default_branch_name(),
             tab_size: default_tab_size(),
@@ -338,6 +345,11 @@ impl Settings {
             default_terminal_font_size()
         } else {
             self.terminal_font_size.clamp(10, 20)
+        };
+        self.code_font_size = if self.code_font_size == 0 {
+            default_code_font_size()
+        } else {
+            self.code_font_size.clamp(10, 20)
         };
         self.tab_size = if self.tab_size == 0 {
             default_tab_size()
@@ -534,6 +546,7 @@ mod tests {
         assert_eq!(s.default_branch, "main");
         assert_eq!(s.tab_size, 4);
         assert_eq!(s.terminal_font_size, 13);
+        assert_eq!(s.code_font_size, 12);
         assert!(s.confirm_terminal_restart);
     }
 
@@ -583,6 +596,7 @@ mod tests {
             context_lines: 999,
             auto_fetch_minutes: 999,
             terminal_font_size: 0,
+            code_font_size: 0,
             tab_size: 99,
             ui_scale: f32::NAN,
             default_branch: "  ".to_string(),
@@ -594,6 +608,7 @@ mod tests {
         assert_eq!(s.context_lines, 20);
         assert_eq!(s.auto_fetch_minutes, 60);
         assert_eq!(s.terminal_font_size, 13);
+        assert_eq!(s.code_font_size, 12);
         assert_eq!(s.tab_size, 8);
         assert_eq!(s.ui_scale, 1.0);
         assert_eq!(s.default_branch, "main");
