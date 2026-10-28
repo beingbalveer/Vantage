@@ -1,20 +1,108 @@
 <p align="center">
-  <img src="assets/vantage-logo-horizontal.png" alt="Vantage Logo" width="460" />
+  <img src="assets/vantage-logo-horizontal.png" alt="Vantage Logo" width="440" />
 </p>
 
+<h3 align="center">Read the code. Check the branch. Run the agent. One app.</h3>
+
 <p align="center">
-  <strong>Fast, local, multi-repo Git desktop client, read-only code viewer, and terminal workspace.</strong>
+  A fast, local, read-only review deck for AI-agent commits — across every repo you have open.
 </p>
 
 <p align="center">
   <a href="https://github.com/beingbalveer/Vantage/releases"><img src="https://img.shields.io/github/v/release/beingbalveer/Vantage?style=flat-square" alt="Latest Release" /></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue.svg?style=flat-square" alt="License: MIT" /></a>
   <img src="https://img.shields.io/badge/platform-macOS%20%7C%20Windows%20%7C%20Linux-lightgrey?style=flat-square" alt="Platform Support" />
+  <img src="https://img.shields.io/badge/telemetry-none-brightgreen?style=flat-square" alt="No telemetry" />
+  <img src="https://img.shields.io/badge/built%20with-Tauri%20%2B%20Rust-24C8DB?style=flat-square" alt="Built with Tauri and Rust" />
 </p>
 
 ---
 
-Vantage gives you instant visibility into unreviewed commits and diffs across all your projects without the overhead of opening multiple heavy IDE windows or navigating slow web interfaces.
+## Why this exists
+
+I work across several repositories at once, and most of my code is written by AI agents — in a terminal, or in the agent's own app.
+
+That left me with three windows open all day:
+
+- **VS Code** — not to edit, but to *read* what the agent wrote.
+- **GitHub Desktop** — to check which branch the agent was on and what it had committed.
+- **A terminal** — because that's where the agents run.
+
+Three apps, three memory footprints, and constant alt-tabbing. So I built the tool I wanted: one fast, local app for the review loop, and nothing else.
+
+If you run agents across more than one repo and want to see what they actually did before it ships, this is for you.
+
+---
+
+## The three things Vantage does
+
+### 1. Read code without editing it
+
+A syntax-highlighted, read-only viewer with blame, find-in-file, and heuristic definition peek (`F12` / `Alt+Click`). Files open in tabs with VS Code-style close shortcuts, a right-click tab menu, and a centered fuzzy file finder (`Mod+B`). It is read-only on purpose: when you are auditing agent output, the last thing you want is a stray keystroke dirtying the working tree. Writes are separate, explicit actions — never a side effect of browsing.
+
+### 2. See what changed across repos
+
+Open one to three repositories side by side. Each pane keeps its own active tab, selection, scroll position, and terminal state. A personal review marker — stored outside Git history — shows the net diff of everything that landed since you last looked, so you can review across commits instead of one commit at a time. Heuristic triage badges flag dependency changes, large deletions, secrets, config changes, and removed tests.
+
+Uncommitted work is shown as one working diff from `HEAD` to the worktree. There is no staging area to maintain: every changed file is visible at once, and line-level discard is there when you need to drop a specific selection.
+
+### 3. Run the agent where it lives
+
+Every repository gets a persistent PTY terminal at its root, with a 256 KB replay buffer. Switch repos or tabs and the session is still there. No second terminal app, no `cd` archaeology. The drawer hides instantly without killing the shell, shows which shell is running, and can be maximized or dragged to the height you want.
+
+---
+
+## Scope, on purpose
+
+| Vantage is | Vantage is not |
+|---|---|
+| A review deck for agent-written commits | An IDE or a code editor |
+| A read-only code browser with blame and peek | A place to write or refactor code |
+| A multi-repo branch and commit monitor | A GitHub PR / issue / CI client |
+| A per-repo terminal workspace | A terminal emulator replacement |
+| Local-first, zero telemetry, system Git | A cloud service or account system |
+
+Keeping the scope small is the feature. There is no PR integration, no AI chat, no plugin marketplace — and no plan to add them.
+
+---
+
+## The loop
+
+<!--
+  TODO(portfolio): record assets/demo.gif (45–60s) and replace this comment with:
+  <p align="center"><img src="assets/demo.gif" alt="Vantage demo" width="900" /></p>
+
+  Shot list:
+  1. Three panes, three repos, one keystroke between them.
+  2. Unreviewed diff across commits, then press `r` to mark reviewed.
+  3. Jump from a diff hunk into the read-only viewer; `F12` for definition peek.
+  4. `Mod+B` centered fuzzy file search, `Enter` to open.
+  5. Drop into the repo's terminal and start the next agent task.
+-->
+
+> **Open three repos → see what landed since you last looked → mark it reviewed → jump into the file and the diff → `Mod+B` to fuzzy-find a file → drop into that repo's terminal and run the next agent task.**
+
+Everything is reachable from the keyboard. `Mod+K` opens the command palette, `?` shows every binding, and `Mod+1/2/3` moves between panes.
+
+---
+
+## Built to stay small
+
+Vantage is a [Tauri](https://tauri.app/) app: a Rust backend around the system WebView. There is no bundled Chromium, and no second copy of your repository index.
+
+On my machine (macOS, debug build, no repositories open) it idles around **120 MB**. The VS Code + GitHub Desktop pair I used to keep open sat around **900 MB** before I opened a terminal. A release-build benchmark across one and three panes is the next number I want to publish.
+
+<!-- TODO: replace the paragraph above with a proper benchmark table (release build; idle / 1 repo / 3 panes + terminal). -->
+
+---
+
+## Safety by default
+
+- **System Git, invoked directly.** Your existing SSH keys, GPG signing config, credential helpers, and hooks just work. Git operations are executed as arguments, not through a shell.
+- **A commit dialog, not a commit hotkey.** Committing opens a centered dialog with the selected files, the author identity (repository, global, or a one-off custom author), and — when the GitHub CLI is signed in — the active account and its push permission on the remote. Nothing is written until you press Commit.
+- **Backups before destructive actions.** Discard and hard reset create a recoverable ref under `refs/vantage/backup/…`, with a restore UI in Settings.
+- **File-scoped writes.** Commits and discards use literal pathspecs and a temporary index for partial commits, so an unselected file cannot ride along.
+- **Zero telemetry.** Nothing leaves your machine. There is no account, no sync, and no analytics endpoint.
 
 ---
 
@@ -54,22 +142,6 @@ Download the `.deb` package or `.AppImage` from [GitHub Releases](https://github
 
 ---
 
-## Why Vantage?
-
-- **Multi-Repo Split Panes (1 to 3 Columns):** Review multiple repositories or branches side by side (`Mod+\` to cycle columns, `Mod+1`/`Mod+2`/`Mod+3` to switch focus). Each pane preserves its own active tab, selection, scroll position, and terminal state.
-- **Combined Unreviewed Diffs:** Track what you've personally reviewed with an internal marker that never pollutes your repository's Git history. View net unreviewed changes across commits in a single, unified view.
-- **Embedded Persistent Terminal:** Each repository gets a dedicated PTY terminal session at the repo root. Sessions persist when switching repos or tabs with a 256 KB replay buffer.
-- **Read-Only Code Viewer & Definition Peek:**
-  - Fast syntax highlighting across languages.
-  - Blame inspection with inline author and commit details.
-  - Heuristic symbol definition peek (`Alt+Click` / `F12`) across project files without opening an external editor.
-  - Safe by design: read-only viewing ensures you never accidentally edit files or dirty the working tree while browsing.
-- **Automated Triage Badges:** Immediate heuristic detection for commits touching dependencies, large file deletions, secrets/keys, config changes, or removed test suites.
-- **Safety by Default:** Every destructive action (discard, hard reset) creates an immediate recoverable backup ref (`refs/vantage/backup/...`) with a one-click restore UI in Settings.
-- **100% System Git Compatible & Zero Telemetry:** Vantage uses your existing system `git` CLI, inheriting your existing SSH keys, GPG signing configs, credential helpers, and Git hooks. No data ever leaves your computer.
-
----
-
 ## Keyboard Shortcuts
 
 Press `?` inside Vantage at any time to open the interactive keyboard shortcut overlay.
@@ -80,8 +152,11 @@ Press `?` inside Vantage at any time to open the interactive keyboard shortcut o
 | `Mod+O` | Add repository |
 | `Mod+1` / `Mod+2` / `Mod+3` | Focus pane 1, 2, or 3 |
 | `Mod+\` | Cycle pane count (1, 2, 3 columns) |
-| `Mod+W` | Close focused pane |
-| `Mod+B` | Toggle sidebar (full / collapsed icons) |
+| `Mod+W` | Close active file tab (Files tab); close focused pane elsewhere |
+| `Mod+Shift+W` | Close all file tabs (Files tab) |
+| `Ctrl+Tab` / `Ctrl+Shift+Tab` | Next / previous file tab (Files tab) |
+| `Mod+B` | Toggle sidebar; search files in the Files tab |
+| `Mod+Shift+E` | Search files (Files tab) |
 | `` Mod+` `` | Toggle terminal drawer in focused pane |
 | `Mod+[` / `Mod+]` | Switch to previous / next repository in focused pane |
 | `Mod+,` | Open Settings |
@@ -97,15 +172,27 @@ Press `?` inside Vantage at any time to open the interactive keyboard shortcut o
 | `n` / `p` | Jump to next / previous hunk |
 | `e` | Expand all context in current file |
 | `w` | Toggle ignore whitespace |
-| `/` | Filter the file list (Files tab) |
+| `/` | Search files (Files tab) |
 | `F12` | Peek symbol definition (code viewer; `Alt+Click` also works) |
 | `Mod+F` | Find in file (code viewer) |
-| `Mod+Enter` | Commit selected changes (when the commit box is open) |
+| `Mod+Enter` | Commit selected changes (when the commit dialog is open) |
 | `t` | Switch between History and Files tabs |
 | `?` | Keyboard shortcuts help |
 | `Esc` | Close dialog, palette, menu, or popover |
 
 *`Mod` corresponds to `Cmd` on macOS and `Ctrl` on Windows / Linux. Single-letter shortcuts never fire while typing in an input or the terminal; the terminal keeps only the modifier shortcuts it needs (`` Mod+` ``, `Mod+1/2/3`, `Mod+B`, `Mod+[` / `Mod+]`, and `Ctrl+Shift+P` on Windows / Linux).*
+
+Right-click a file tab (or press `Shift+F10`) for **Close**, **Close Others**, **Close to the Right**, **Close All**, **Copy Path**, **Reveal in File Manager**, and **Open in External Editor**. File search (`Mod+B`, `Mod+Shift+E`, or `/` in the Files tab) opens a centered quick-open overlay with fuzzy path matching, arrow-key navigation, and `Enter` to open.
+
+---
+
+## Under the hood
+
+- **Tauri 2 + Svelte 5 + Rust.** The UI is Svelte; Git, diffing, the PTY, and file previews live in Rust.
+- **Typed IPC end to end.** Every backend command has a typed wrapper on both sides of the bridge.
+- **Tested and gated.** 270+ frontend tests and 160+ Rust tests, plus `svelte-check`, `clippy`, `rustfmt`, and a design-token ratchet, run on macOS and Linux in CI.
+- **Decisions are written down.** Stack, scope, and platform choices live in [`docs/decisions.md`](docs/decisions.md) and [`docs/adr/`](docs/adr/).
+- **Cross-platform releases.** macOS (universal), Windows, and Linux builds are produced by the release workflow, with auto-update and a Homebrew cask.
 
 ---
 
