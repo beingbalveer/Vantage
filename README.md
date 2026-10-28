@@ -40,6 +40,8 @@ If you run agents across more than one repo and want to see what they actually d
 
 A syntax-highlighted, read-only viewer with blame, find-in-file, and heuristic definition peek (`F12` / `Alt+Click`). Files open in tabs with VS Code-style close shortcuts, a right-click tab menu, and a centered fuzzy file finder (`Mod+B`). It is read-only on purpose: when you are auditing agent output, the last thing you want is a stray keystroke dirtying the working tree. Writes are separate, explicit actions — never a side effect of browsing.
 
+Ignored local config is still readable: `.env` and `.env.*` files appear in the explorer and the file finder even though Git never tracks them.
+
 ### 2. See what changed across repos
 
 Open one to three repositories side by side. Each pane keeps its own active tab, selection, scroll position, and terminal state. A personal review marker — stored outside Git history — shows the net diff of everything that landed since you last looked, so you can review across commits instead of one commit at a time. Heuristic triage badges flag dependency changes, large deletions, secrets, config changes, and removed tests.

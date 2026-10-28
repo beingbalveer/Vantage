@@ -349,9 +349,16 @@ pub async fn get_blob_preview(
     rev: &str,
     path: &str,
 ) -> Result<BlobPreview, AppError> {
-    let size = rev_size(runner, repo_path, rev, path)
-        .await
-        .ok_or_else(|| AppError::not_found(format!("Blob not found for {}:{}", rev, path)))?;
+    // Ignored files (dotenv, local overrides) have no blob at any revision;
+    // fall back to the working-tree copy so the Files tree can open them.
+    let mut size = rev_size(runner, repo_path, rev, path).await;
+    let mut effective_rev = rev;
+    if size.is_none() && rev != WORKTREE_REV {
+        size = rev_size(runner, repo_path, WORKTREE_REV, path).await;
+        effective_rev = WORKTREE_REV;
+    }
+    let size =
+        size.ok_or_else(|| AppError::not_found(format!("Blob not found for {}:{}", rev, path)))?;
 
     if let Some(mime) = image_mime(path) {
         if size > IMAGE_PREVIEW_CAP_BYTES {
@@ -365,10 +372,10 @@ pub async fn get_blob_preview(
             });
         }
 
-        let bytes = if rev == WORKTREE_REV {
+        let bytes = if effective_rev == WORKTREE_REV {
             read_worktree_bounded(repo_path, path).await
         } else {
-            let spec = format!("{}:{}", rev, path);
+            let spec = format!("{}:{}", effective_rev, path);
             runner
                 .run_read(repo_path, &["show", &spec])
                 .await
@@ -419,7 +426,7 @@ pub async fn get_blob_preview(
         });
     }
 
-    let res = get_blob_text(runner, repo_path, rev, path).await?;
+    let res = get_blob_text(runner, repo_path, effective_rev, path).await?;
     Ok(BlobPreview {
         size,
         binary: res.binary,
@@ -696,5 +703,32 @@ mod tests {
         assert!(huge.too_large);
         assert!(huge.image.is_none());
         assert_eq!(huge.size, IMAGE_PREVIEW_CAP_BYTES + 1);
+    }
+
+    #[tokio::test]
+    async fn blob_preview_falls_back_to_worktree_for_ignored_files() {
+        let runner = GitRunner::new();
+        let repo = TempRepo::new(&runner).await;
+
+        std::fs::write(repo.path.join(".gitignore"), ".env\n").unwrap();
+        std::fs::write(repo.path.join("README.md"), b"# repo\n").unwrap();
+        runner
+            .run_write(&repo.path, &["add", "."], 10)
+            .await
+            .unwrap();
+        runner
+            .run_write(&repo.path, &["commit", "-m", "init"], 10)
+            .await
+            .unwrap();
+
+        // Ignored after the commit: only the worktree copy exists.
+        std::fs::write(repo.path.join(".env"), b"SECRET=1\n").unwrap();
+
+        let preview = get_blob_preview(&runner, &repo.path, "HEAD", ".env")
+            .await
+            .unwrap();
+        assert!(!preview.binary && !preview.too_large);
+        assert_eq!(preview.text, "SECRET=1\n");
+        assert_eq!(preview.size, 9);
     }
 }

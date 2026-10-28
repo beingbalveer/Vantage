@@ -203,7 +203,9 @@
     flex-direction: column;
     min-height: 0;
     width: 100%;
-    max-height: 70vh;
+    /* Fixed height: the overlay must not resize (and drift toward the center)
+       as the result count changes. */
+    height: min(70vh, 560px);
   }
 
   .search-field {
@@ -269,7 +271,6 @@
   .results {
     flex: 1 1 auto;
     min-height: 0;
-    max-height: min(52vh, 420px);
     overflow-y: auto;
     padding: 6px;
   }
