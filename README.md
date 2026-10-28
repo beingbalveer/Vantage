@@ -38,15 +38,17 @@ If you run agents across more than one repo and want to see what they actually d
 
 ### 1. Read code without editing it
 
-A syntax-highlighted, read-only viewer with blame, find-in-file, and heuristic definition peek (`F12` / `Alt+Click`). It is read-only on purpose: when you are auditing agent output, the last thing you want is a stray keystroke dirtying the working tree. Writes are separate, explicit actions — never a side effect of browsing.
+A syntax-highlighted, read-only viewer with blame, find-in-file, and heuristic definition peek (`F12` / `Alt+Click`). Files open in tabs with VS Code-style close shortcuts, a right-click tab menu, and a centered fuzzy file finder (`Mod+B`). It is read-only on purpose: when you are auditing agent output, the last thing you want is a stray keystroke dirtying the working tree. Writes are separate, explicit actions — never a side effect of browsing.
 
 ### 2. See what changed across repos
 
 Open one to three repositories side by side. Each pane keeps its own active tab, selection, scroll position, and terminal state. A personal review marker — stored outside Git history — shows the net diff of everything that landed since you last looked, so you can review across commits instead of one commit at a time. Heuristic triage badges flag dependency changes, large deletions, secrets, config changes, and removed tests.
 
+Uncommitted work is shown as one working diff from `HEAD` to the worktree. There is no staging area to maintain: every changed file is visible at once, and line-level discard is there when you need to drop a specific selection.
+
 ### 3. Run the agent where it lives
 
-Every repository gets a persistent PTY terminal at its root, with a 256 KB replay buffer. Switch repos or tabs and the session is still there. No second terminal app, no `cd` archaeology.
+Every repository gets a persistent PTY terminal at its root, with a 256 KB replay buffer. Switch repos or tabs and the session is still there. No second terminal app, no `cd` archaeology. The drawer hides instantly without killing the shell, shows which shell is running, and can be maximized or dragged to the height you want.
 
 ---
 
