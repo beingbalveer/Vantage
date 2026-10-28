@@ -1,5 +1,5 @@
 use crate::error::AppError;
-use crate::git::identity::ensure_commit_identity;
+use crate::git::identity::{ensure_commit_identity, CommitAuthor};
 use crate::git::patch::{synthesize, PatchTarget, SelectedLine, Synthesized};
 use crate::git::runner::GitRunner;
 use crate::git::status::{detect_operation, parse_unmerged_ls_files};
@@ -241,6 +241,7 @@ async fn commit_using_temp_index(
     summary: &str,
     body: Option<&str>,
     trailer_block: Option<&str>,
+    author_args: &[String],
 ) -> Result<CommitSummary, AppError> {
     let temp_index = git_dir.join(format!("vantage-index-{}", uuid::Uuid::new_v4().simple()));
     let temp_index_str = temp_index.to_string_lossy().to_string();
@@ -329,7 +330,8 @@ async fn commit_using_temp_index(
         }
     }
 
-    let mut commit_args = vec!["commit", "-m", summary];
+    let mut commit_args: Vec<&str> = author_args.iter().map(String::as_str).collect();
+    commit_args.extend_from_slice(&["commit", "-m", summary]);
     let body_str;
     if let Some(b) = body {
         if !b.trim().is_empty() {
@@ -375,6 +377,7 @@ async fn commit_using_temp_index(
     latest_head_summary(runner, repo_path).await
 }
 
+/// Commit with the repository's configured identity.
 pub async fn commit(
     runner: &GitRunner,
     repo_path: &Path,
@@ -383,6 +386,19 @@ pub async fn commit(
     body: Option<&str>,
     co_authors: &[String],
 ) -> Result<CommitSummary, AppError> {
+    commit_with_author(runner, repo_path, paths, summary, body, co_authors, None).await
+}
+
+/// Commit with an optional one-off author that applies to this commit only.
+pub async fn commit_with_author(
+    runner: &GitRunner,
+    repo_path: &Path,
+    paths: &[String],
+    summary: &str,
+    body: Option<&str>,
+    co_authors: &[String],
+    author: Option<&CommitAuthor>,
+) -> Result<CommitSummary, AppError> {
     if summary.trim().is_empty() {
         return Err(AppError::other("Commit summary cannot be empty"));
     }
@@ -390,6 +406,17 @@ pub async fn commit(
     if paths.is_empty() {
         return Err(AppError::other("No files selected for commit"));
     }
+
+    // Validate the optional one-off author before touching the index so a typo
+    // never leaves a half-staged tree behind.
+    let author = match author {
+        Some(author) => Some(author.validated()?),
+        None => None,
+    };
+    let author_args = author
+        .as_ref()
+        .map(CommitAuthor::config_args)
+        .unwrap_or_default();
 
     // Validate the co-author selection and compute the trailer paragraph BEFORE
     // touching the index, so an invalid entry never stages anything.
@@ -410,8 +437,11 @@ pub async fn commit(
     let _repo_guard = repo_lock.lock().await;
 
     // Fail with an actionable message instead of git's raw "Author identity
-    // unknown" error, and do it before staging anything.
-    ensure_commit_identity(runner, repo_path).await?;
+    // unknown" error, and do it before staging anything. A one-off author
+    // overrides the config, so the check is unnecessary in that case.
+    if author.is_none() {
+        ensure_commit_identity(runner, repo_path).await?;
+    }
 
     // Never let an unresolved conflict reach git as a raw "unmerged" error.
     let conflicts = unmerged_paths(runner, repo_path).await?;
@@ -514,6 +544,7 @@ pub async fn commit(
                 summary,
                 body,
                 trailer_block.as_deref(),
+                &author_args,
             )
             .await;
         }
@@ -531,7 +562,8 @@ pub async fn commit(
         }
 
         // Commit using --only -- <paths_to_commit> with literal pathspecs
-        let mut commit_args = vec!["commit", "-m", summary];
+        let mut commit_args: Vec<&str> = author_args.iter().map(String::as_str).collect();
+        commit_args.extend_from_slice(&["commit", "-m", summary]);
         let body_str;
         if let Some(b) = body {
             if !b.trim().is_empty() {
@@ -630,7 +662,8 @@ pub async fn commit(
         let tree_sha = write_tree_out.stdout_string().trim().to_string();
 
         // Commit tree directly
-        let mut commit_tree_args = vec!["commit-tree", &tree_sha, "-m", summary];
+        let mut commit_tree_args: Vec<&str> = author_args.iter().map(String::as_str).collect();
+        commit_tree_args.extend_from_slice(&["commit-tree", tree_sha.as_str(), "-m", summary]);
         let body_str;
         if let Some(b) = body {
             if !b.trim().is_empty() {
@@ -708,14 +741,43 @@ pub async fn amend_commit(
     summary: &str,
     body: Option<&str>,
 ) -> Result<CommitSummary, AppError> {
+    amend_commit_with_author(runner, repo_path, paths, summary, body, None).await
+}
+
+/// Amend with an optional one-off author, applied to this rewrite only.
+pub async fn amend_commit_with_author(
+    runner: &GitRunner,
+    repo_path: &Path,
+    paths: &[String],
+    summary: &str,
+    body: Option<&str>,
+    author: Option<&CommitAuthor>,
+) -> Result<CommitSummary, AppError> {
     if summary.trim().is_empty() {
         return Err(AppError::other("Commit summary cannot be empty"));
     }
+
+    let author = match author {
+        Some(author) => Some(author.validated()?),
+        None => None,
+    };
+    let author_args = author
+        .as_ref()
+        .map(CommitAuthor::config_args)
+        .unwrap_or_default();
+    // `git commit --amend` keeps the original author even when `-c user.name`
+    // changes. An explicit override therefore needs `--author`, while the
+    // committer identity still comes from the `-c` args above.
+    let amend_author = author.as_ref().map(|a| format!("{} <{}>", a.name, a.email));
 
     let repo_lock = runner.get_repo_lock(repo_path).await;
     let _repo_guard = repo_lock.lock().await;
 
     ensure_no_operation_in_progress(runner, repo_path).await?;
+
+    if author.is_none() {
+        ensure_commit_identity(runner, repo_path).await?;
+    }
 
     let head_out = runner
         .run_read(repo_path, &["rev-parse", "--verify", "HEAD"])
@@ -798,7 +860,12 @@ pub async fn amend_commit(
         }
     }
 
-    let mut commit_args = vec!["commit", "--amend", "-m", summary];
+    let mut commit_args: Vec<&str> = author_args.iter().map(String::as_str).collect();
+    commit_args.extend_from_slice(&["commit", "--amend", "-m", summary]);
+    if let Some(spec) = &amend_author {
+        commit_args.push("--author");
+        commit_args.push(spec);
+    }
     let body_str;
     if let Some(b) = body {
         if !b.trim().is_empty() {
@@ -3853,6 +3920,93 @@ mod tests {
             .unwrap()
             .stdout_string();
         assert_eq!(subject.trim(), "base two");
+    }
+
+    #[tokio::test]
+    async fn test_commit_and_amend_accept_one_off_author() {
+        let runner = GitRunner::new();
+        let repo = TempTestRepo::new(&runner).await;
+        fs::write(repo.path.join("f.txt"), "one\n").unwrap();
+
+        let author = CommitAuthor {
+            name: "Ada Lovelace".to_string(),
+            email: "ada@example.com".to_string(),
+        };
+        commit_with_author(
+            &runner,
+            &repo.path,
+            &["f.txt".to_string()],
+            "authored",
+            None,
+            &[],
+            Some(&author),
+        )
+        .await
+        .unwrap();
+
+        let log = runner
+            .run_read(&repo.path, &["log", "-1", "--format=%an%x1f%ae"])
+            .await
+            .unwrap()
+            .stdout_string();
+        assert_eq!(log.trim(), "Ada Lovelace\u{1f}ada@example.com");
+
+        // The override is per-command: the repository config is untouched.
+        let configured = runner
+            .run_read(&repo.path, &["config", "user.name"])
+            .await
+            .unwrap()
+            .stdout_string();
+        assert_eq!(configured.trim(), "Vantage Test");
+
+        let amended_author = CommitAuthor {
+            name: "Grace Hopper".to_string(),
+            email: "grace@example.com".to_string(),
+        };
+        amend_commit_with_author(
+            &runner,
+            &repo.path,
+            &[],
+            "authored again",
+            None,
+            Some(&amended_author),
+        )
+        .await
+        .unwrap();
+
+        let amended = runner
+            .run_read(&repo.path, &["log", "-1", "--format=%an%x1f%ae%x1f%s"])
+            .await
+            .unwrap()
+            .stdout_string();
+        assert_eq!(
+            amended.trim(),
+            "Grace Hopper\u{1f}grace@example.com\u{1f}authored again"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_commit_rejects_invalid_one_off_author() {
+        let runner = GitRunner::new();
+        let repo = TempTestRepo::new(&runner).await;
+        fs::write(repo.path.join("f.txt"), "one\n").unwrap();
+
+        let author = CommitAuthor {
+            name: "Ada".to_string(),
+            email: "not-an-email".to_string(),
+        };
+        let err = commit_with_author(
+            &runner,
+            &repo.path,
+            &["f.txt".to_string()],
+            "nope",
+            None,
+            &[],
+            Some(&author),
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(err.code, "Validation");
     }
 
     #[tokio::test]

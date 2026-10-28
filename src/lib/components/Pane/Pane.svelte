@@ -10,8 +10,6 @@
     DiffFile,
     DiffScope,
     TriageFlag,
-    WorkingPart,
-    WorkingPartCounts,
   } from "../../platform/types";
   import * as api from "../../platform/api";
   import { RequestTracker } from "../../platform/request";
@@ -36,7 +34,7 @@
   import CommitRow from "./CommitRow.svelte";
   import CommitHeader from "./CommitHeader.svelte";
   import FileList from "./FileList.svelte";
-  import CommitBox from "./CommitBox.svelte";
+  import CommitDialog from "./CommitDialog.svelte";
   import ConflictBanner from "./ConflictBanner.svelte";
   import DiffView from "../Diff/DiffView.svelte";
   import FilesTab from "./FilesTab.svelte";
@@ -116,17 +114,42 @@
   });
 
   let terminalHeight = $state(savedPaneWidth("vantage_terminal_height", 240));
+  let terminalMaximized = $state(false);
+  let restoreTerminalHeight = 240;
+
+  function applyTerminalHeight(h: number) {
+    terminalHeight = h;
+    panes.update((list) => {
+      if (list[paneIndex]) {
+        list[paneIndex] = { ...list[paneIndex], terminalHeight: h };
+      }
+      return list;
+    });
+    try {
+      localStorage.setItem("vantage_terminal_height", String(h));
+    } catch {}
+  }
+
+  function toggleTerminalMaximize() {
+    if (terminalMaximized) {
+      applyTerminalHeight(restoreTerminalHeight);
+      terminalMaximized = false;
+      return;
+    }
+    // Leave a slice of the diff visible so the terminal never swallows the pane.
+    const paneHeight = paneEl?.clientHeight ?? window.innerHeight;
+    const max = Math.max(160, Math.floor(paneHeight * 0.7));
+    if (terminalHeight >= max - 8) return;
+    restoreTerminalHeight = terminalHeight;
+    applyTerminalHeight(max);
+    terminalMaximized = true;
+  }
 
   const startTerminalResize = createVerticalBottomResizer({
     getHeight: () => terminalHeight,
     setHeight: (h) => {
-      terminalHeight = h;
-      panes.update((list) => {
-        if (list[paneIndex]) {
-          list[paneIndex] = { ...list[paneIndex], terminalHeight: h };
-        }
-        return list;
-      });
+      terminalMaximized = false;
+      applyTerminalHeight(h);
     },
     minHeight: 80,
     maxHeight: 1200,
@@ -136,13 +159,8 @@
   const nudgeTerminalResize = createVerticalBottomResizerKeyboard({
     getHeight: () => terminalHeight,
     setHeight: (h) => {
-      terminalHeight = h;
-      panes.update((list) => {
-        if (list[paneIndex]) {
-          list[paneIndex] = { ...list[paneIndex], terminalHeight: h };
-        }
-        return list;
-      });
+      terminalMaximized = false;
+      applyTerminalHeight(h);
     },
     minHeight: 80,
     maxHeight: 1200,
@@ -241,8 +259,6 @@
       ? (scopeFilesList.find((f) => f.path === selectedFilePath) ?? null)
       : null
   );
-  let workingPart = $state<WorkingPart>("unstaged");
-  let workingCounts = $state<WorkingPartCounts | null>(null);
 
   // Registry navigation state (ALPH-161)
   let paneEl = $state<HTMLElement | null>(null);
@@ -255,13 +271,11 @@
   const historyRequests = new RequestTracker();
   const scopeRequests = new RequestTracker();
   const diffRequests = new RequestTracker();
-  const countsRequests = new RequestTracker();
 
   onDestroy(() => {
     historyRequests.dispose();
     scopeRequests.dispose();
     diffRequests.dispose();
-    countsRequests.dispose();
   });
 
   let lastLoadedRepoId = "";
@@ -307,7 +321,6 @@
       historyRequests.cancel();
       scopeRequests.cancel();
       diffRequests.cancel();
-      countsRequests.cancel();
       historyLoading = false;
       historyLoadingMore = false;
       flagsBySha = {};
@@ -329,7 +342,6 @@
           historyTotal = 0;
           historyCapped = false;
           isRangeSelected = false;
-          workingCounts = null;
         }
         lastLoadedScope = null;
         scopeLoading = false;
@@ -701,7 +713,6 @@
     isUncommittedSelected = true;
     selectedCommitSha = null;
     currentScope = { type: "working" };
-    workingPart = "unstaged";
     commitMode = false;
     showCommitDetails = false;
     loadScopeFiles(currentScope);
@@ -731,17 +742,6 @@
     loadScopeFiles(currentScope);
   }
 
-  async function loadWorkingCounts() {
-    if (!repo) return;
-    const request = countsRequests.begin();
-    try {
-      const counts = await api.workingPartCounts(repo.id);
-      if (!request.isCurrent()) return;
-      workingCounts = counts;
-    } catch (e) {
-      console.warn("Failed to load staged/unstaged counts:", e);
-    }
-  }
   /** Two scopes describe the same file list when their kind and range match. */
   function sameScope(a: DiffScope, b: DiffScope | null): boolean {
     if (!b || a.type !== b.type) return false;
@@ -778,11 +778,7 @@
     }
 
     try {
-      const isWorking = scope.type === "working";
       const files = await api.scopeFiles(repo.id, scope, $settings.ignoreWhitespace);
-      if (isWorking) {
-        loadWorkingCounts();
-      }
       if (!request.isCurrent()) return;
 
       scopeFilesList = files;
@@ -823,27 +819,15 @@
     const activeScope = scope || currentScope;
 
     try {
-      const diff =
-        isFeatureEnabled("ALPH_160_LINE_PARTIAL_COMMIT") &&
-        isUncommittedSelected &&
-        activeScope.type === "working"
-          ? await api.workingFileDiff(
-              repo.id,
-              path,
-              workingPart,
-              $settings.contextLines,
-              $settings.ignoreWhitespace,
-              force
-            )
-          : await api.scopeFileDiff(
-              repo.id,
-              activeScope,
-              path,
-              $settings.contextLines,
-              $settings.ignoreWhitespace,
-              force,
-              fullContext
-            );
+      const diff = await api.scopeFileDiff(
+        repo.id,
+        activeScope,
+        path,
+        $settings.contextLines,
+        $settings.ignoreWhitespace,
+        force,
+        fullContext
+      );
       if (!request.isCurrent()) return;
       currentDiffFile = diff;
     } catch (e: any) {
@@ -865,17 +849,10 @@
     if (target) selectFile(target, undefined, { fullContext: false });
   }
 
-  function changeWorkingPart(part: WorkingPart) {
-    if (part === workingPart) return;
-    workingPart = part;
-    if (selectedFilePath) selectFile(selectedFilePath);
-  }
-
   async function handlePartialRefresh() {
     if (!repo) return;
     await loadScopeFiles(currentScope, true);
     await refreshSingleStatus(repo.id);
-    await loadWorkingCounts();
   }
 
   function toggleCheckedPath(path: string) {
@@ -1491,22 +1468,6 @@
                 onfilemenu={openFileMenu}
                 onbrowseall={() => ($panes[paneIndex].tab = "files")}
               />
-
-              <!-- Commit Box revealed on demand when uncommitted changes are selected -->
-              {#if isUncommittedSelected && commitMode}
-                <CommitBox
-                  repoId={repo.id}
-                  branch={status?.branch || "main"}
-                  selectedPaths={checkedPaths}
-                  conflictedPaths={status?.conflictedPaths ?? []}
-                  amendToken={amendRequestToken}
-                  oncommit={(preserve = false) => {
-                    refreshSingleStatus(repo.id).then(() => {
-                      loadHistory(preserve);
-                    });
-                  }}
-                />
-              {/if}
             </div>
 
             <!-- svelte-ignore a11y_no_noninteractive_tabindex -->
@@ -1541,9 +1502,6 @@
                 onexpandwholefile={() => expandWholeFile()}
                 oncollapsecontext={() => collapseContext()}
                 scopeType={currentScope.type}
-                {workingPart}
-                {workingCounts}
-                onchangepart={changeWorkingPart}
                 onrefresh={handlePartialRefresh}
                 {paneIndex}
                 onviewfile={(path: string) => {
@@ -1583,12 +1541,8 @@
       onpointerdown={startTerminalResize}
       onkeydown={nudgeTerminalResize}
       ondblclick={() => {
-        terminalHeight = 240;
-        panes.update((list) => {
-          if (list[paneIndex]) list[paneIndex] = { ...list[paneIndex], terminalHeight: 240 };
-          return list;
-        });
-        try { localStorage.setItem("vantage_terminal_height", "240"); } catch {}
+        terminalMaximized = false;
+        applyTerminalHeight(240);
       }}
     ></div>
 
@@ -1600,6 +1554,8 @@
           repoName={repo.name}
           repoPath={repo.path}
           height={terminalHeight}
+          maximized={terminalMaximized}
+          onmaximize={toggleTerminalMaximize}
           onclose={() => {
             panes.update((list) => {
               if (list[paneIndex]) {
@@ -1628,6 +1584,25 @@
         {/if}
       </div>
     {/if}
+  {/if}
+
+  <!-- Centered commit dialog. Mounted only while commit mode is active so a
+       closed dialog never keeps a stale draft or GitHub snapshot around. -->
+  {#if isUncommittedSelected && commitMode && repo}
+    <CommitDialog
+      repoId={repo.id}
+      repoName={repo.name}
+      branch={status?.branch || repo.branch || "main"}
+      selectedPaths={checkedPaths}
+      conflictedPaths={status?.conflictedPaths ?? []}
+      amendToken={amendRequestToken}
+      onclose={() => (commitMode = false)}
+      oncommit={(preserve = false) => {
+        refreshSingleStatus(repo.id).then(() => {
+          loadHistory(preserve);
+        });
+      }}
+    />
   {/if}
 
   <!-- Row context menu (commit / changed file). Recreated per open so it

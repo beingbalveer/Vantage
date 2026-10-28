@@ -7,12 +7,15 @@ use crate::git::diff::{
     get_scope_file_diff, get_scope_files, get_working_file_diff, get_working_part_counts,
     WorkingPartCounts,
 };
+use crate::git::github::{inspect as inspect_github, GitHubStatus};
 use crate::git::grep::{blame_line as git_blame_line, grep_definitions};
-use crate::git::identity::{read_identity, write_identity, GitIdentity, IdentityScope};
+use crate::git::identity::{
+    read_identity, write_identity, CommitAuthor, GitIdentity, IdentityScope,
+};
 use crate::git::log::{get_history_page, get_log_page};
 use crate::git::ops::{
-    abort_operation as git_abort_operation, amend_commit as git_amend_commit,
-    check_pushed as git_check_pushed, commit as git_commit,
+    abort_operation as git_abort_operation, amend_commit_with_author as git_amend_commit,
+    check_pushed as git_check_pushed, commit_with_author as git_commit,
     continue_operation as git_continue_operation, discard as git_discard, get_real_git_dir,
     head_commit_info as git_head_commit_info, list_backups, partial_lines,
     reset_to as git_reset_to, restore_backup, revert as git_revert,
@@ -1069,6 +1072,7 @@ pub async fn commit(
     summary: String,
     body: Option<String>,
     co_authors: Option<Vec<String>>,
+    author: Option<CommitAuthor>,
 ) -> Result<CommitSummary, AppError> {
     let (repo_path, branch) = {
         let data = state.data.lock().await;
@@ -1088,6 +1092,7 @@ pub async fn commit(
         &summary,
         body.as_deref(),
         co_authors.as_deref().unwrap_or(&[]),
+        author.as_ref(),
     )
     .await
 }
@@ -1136,6 +1141,7 @@ pub async fn amend_commit(
     paths: Vec<String>,
     summary: String,
     body: Option<String>,
+    author: Option<CommitAuthor>,
 ) -> Result<CommitSummary, AppError> {
     let (repo_path, branch) = {
         let data = state.data.lock().await;
@@ -1148,7 +1154,15 @@ pub async fn amend_commit(
     };
 
     verify_branch_checked_out(&state.runner, &repo_path, branch.as_deref()).await?;
-    git_amend_commit(&state.runner, &repo_path, &paths, &summary, body.as_deref()).await
+    git_amend_commit(
+        &state.runner,
+        &repo_path,
+        &paths,
+        &summary,
+        body.as_deref(),
+        author.as_ref(),
+    )
+    .await
 }
 
 #[tauri::command]
@@ -1594,6 +1608,26 @@ pub async fn remote_url(
     };
 
     get_remote_url(&state.runner, &repo_path).await
+}
+
+/// Read-only view of the GitHub CLI accounts and this repo's push permission.
+#[tauri::command]
+pub async fn github_status(
+    state: State<'_, AppState>,
+    id: String,
+) -> Result<GitHubStatus, AppError> {
+    let repo_path = {
+        let data = state.data.lock().await;
+        let entry = data
+            .repos
+            .iter()
+            .find(|r| r.id == id)
+            .ok_or_else(|| AppError::not_found("Repository not found"))?;
+        PathBuf::from(&entry.path)
+    };
+
+    let remote_url = get_remote_url(&state.runner, &repo_path).await?;
+    Ok(inspect_github(remote_url).await)
 }
 
 #[tauri::command]

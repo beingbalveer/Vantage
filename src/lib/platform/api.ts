@@ -1,4 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
+import { getVersion } from "@tauri-apps/api/app";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import type {
   BackupInfo,
@@ -7,6 +8,7 @@ import type {
   BlobTextResult,
   BranchInfo,
   CheckoutResult,
+  CommitAuthor,
   CommitMsgResult,
   CommitSummary,
   DefHit,
@@ -15,6 +17,7 @@ import type {
   DirtyAction,
   EnvInfo,
   FileChange,
+  GitHubStatus,
   HeadCommitInfo,
   HistoryPage,
   FileDiffMeta,
@@ -31,8 +34,6 @@ import type {
   TriageFlag,
   RecentContributor,
   UndoCommitResult,
-  WorkingPart,
-  WorkingPartCounts,
 } from "./types";
 
 // Repos
@@ -167,46 +168,6 @@ export async function scopeFileDiff(
   return invoke("scope_file_diff", { id, scope, path, ctxLines, ignoreWs, force, fullContext });
 }
 
-export async function workingFileDiff(
-  id: string,
-  path: string,
-  part: WorkingPart,
-  ctxLines: number,
-  ignoreWs: boolean,
-  force: boolean
-): Promise<DiffFile> {
-  return invoke("working_file_diff", {
-    id,
-    path,
-    part,
-    ctxLines,
-    ignoreWs,
-    force,
-  });
-}
-
-export async function workingPartCounts(id: string): Promise<WorkingPartCounts> {
-  return invoke("working_part_counts", { id });
-}
-
-export async function stageLines(
-  id: string,
-  path: string,
-  selection: LineSelection[],
-  ignoreWs: boolean
-): Promise<void> {
-  return invoke("stage_lines", { id, path, selection, ignoreWs });
-}
-
-export async function unstageLines(
-  id: string,
-  path: string,
-  selection: LineSelection[],
-  ignoreWs: boolean
-): Promise<void> {
-  return invoke("unstage_lines", { id, path, selection, ignoreWs });
-}
-
 export async function discardLines(
   id: string,
   path: string,
@@ -279,9 +240,10 @@ export async function commit(
   paths: string[],
   summary: string,
   body?: string,
-  coAuthors?: string[]
+  coAuthors?: string[],
+  author?: CommitAuthor
 ): Promise<CommitSummary> {
-  return invoke("commit", { id, paths, summary, body, coAuthors });
+  return invoke("commit", { id, paths, summary, body, coAuthors, author });
 }
 
 export async function recentContributors(
@@ -299,9 +261,10 @@ export async function amendCommit(
   id: string,
   paths: string[],
   summary: string,
-  body?: string
+  body?: string,
+  author?: CommitAuthor
 ): Promise<CommitSummary> {
-  return invoke("amend_commit", { id, paths, summary, body });
+  return invoke("amend_commit", { id, paths, summary, body, author });
 }
 
 export async function undoLastCommit(id: string): Promise<UndoCommitResult> {
@@ -438,6 +401,11 @@ export async function remoteUrl(id: string): Promise<string | null> {
   return invoke("remote_url", { id });
 }
 
+/** Read-only GitHub CLI account / push-permission snapshot for a repository. */
+export async function githubStatus(id: string): Promise<GitHubStatus> {
+  return invoke("github_status", { id });
+}
+
 export async function checkPushed(id: string, sha: string): Promise<boolean> {
   return invoke("check_pushed", { id, sha });
 }
@@ -456,7 +424,7 @@ export async function termOpen(
   id: string,
   cols: number,
   rows: number
-): Promise<{ replay: string }> {
+): Promise<{ replay: string; shell: string }> {
   return invoke("term_open", { id, cols, rows });
 }
 
@@ -468,7 +436,7 @@ export async function termResize(id: string, cols: number, rows: number): Promis
   return invoke("term_resize", { id, cols, rows });
 }
 
-export async function termRestart(id: string): Promise<{ replay: string }> {
+export async function termRestart(id: string): Promise<{ replay: string; shell: string }> {
   return invoke("term_restart", { id });
 }
 
@@ -585,4 +553,9 @@ export function onCloneProgress(
 // Native menu dispatch (see src-tauri/src/menu.rs and src/lib/menu.ts)
 export function onMenuCommand(cb: (command: string) => void): Promise<UnlistenFn> {
   return listen<string>("menu://command", (event) => cb(event.payload));
+}
+
+/** App version from the bundle (tauri.conf.json / Cargo.toml). */
+export async function appVersion(): Promise<string> {
+  return getVersion();
 }

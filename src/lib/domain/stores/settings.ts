@@ -16,7 +16,6 @@ export const settings = writable<Settings>({
   uiScale: 1.0,
   defaultBranch: "main",
   tabSize: 4,
-  confirmTerminalClose: true,
   confirmTerminalRestart: true,
 });
 

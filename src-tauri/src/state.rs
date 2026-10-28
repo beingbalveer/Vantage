@@ -295,8 +295,6 @@ pub struct Settings {
     pub default_branch: String,
     /// Indentation width used by the diff and code viewer.
     pub tab_size: u32,
-    /// Ask before hiding a terminal whose shell is still running.
-    pub confirm_terminal_close: bool,
     /// Ask before restarting a terminal whose shell is still running.
     pub confirm_terminal_restart: bool,
     /// Unknown keys from newer versions, preserved across saves.
@@ -319,7 +317,6 @@ impl Default for Settings {
             ui_scale: default_ui_scale(),
             default_branch: default_branch_name(),
             tab_size: default_tab_size(),
-            confirm_terminal_close: default_true_bool(),
             confirm_terminal_restart: default_true_bool(),
             extra: HashMap::new(),
         }
@@ -537,7 +534,6 @@ mod tests {
         assert_eq!(s.default_branch, "main");
         assert_eq!(s.tab_size, 4);
         assert_eq!(s.terminal_font_size, 13);
-        assert!(s.confirm_terminal_close);
         assert!(s.confirm_terminal_restart);
     }
 
@@ -560,7 +556,7 @@ mod tests {
         assert_eq!(s.terminal_font_size, 15);
         assert_eq!(s.default_branch, "main");
         assert_eq!(s.tab_size, 4);
-        assert!(s.confirm_terminal_close);
+        assert!(s.confirm_terminal_restart);
     }
 
     #[test]

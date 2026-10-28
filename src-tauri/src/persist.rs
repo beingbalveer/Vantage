@@ -218,7 +218,7 @@ mod tests {
         assert_eq!(state.settings.theme, crate::state::Theme::Dark);
         assert_eq!(state.settings.default_branch, "main");
         assert_eq!(state.settings.tab_size, 4);
-        assert!(state.settings.confirm_terminal_close);
+        assert!(state.settings.confirm_terminal_restart);
         let _ = fs::remove_file(path);
     }
 

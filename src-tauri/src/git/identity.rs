@@ -269,6 +269,38 @@ pub async fn ensure_commit_identity(runner: &GitRunner, repo_path: &Path) -> Res
     Ok(())
 }
 
+/// A one-off author for a single commit.
+///
+/// The dialog lets the user pick the repository identity, the global identity,
+/// or type a custom name/email. "Repository" needs no override because Git
+/// already resolves that itself; the other two are applied with `-c` for this
+/// invocation only, so no config is ever rewritten.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CommitAuthor {
+    pub name: String,
+    pub email: String,
+}
+
+impl CommitAuthor {
+    pub fn validated(&self) -> Result<Self, AppError> {
+        Ok(Self {
+            name: validate_name(&self.name).map_err(|e| AppError::new("Validation", e))?,
+            email: validate_email(&self.email).map_err(|e| AppError::new("Validation", e))?,
+        })
+    }
+
+    /// `git -c user.name=… -c user.email=…` for this command only.
+    pub fn config_args(&self) -> Vec<String> {
+        vec![
+            "-c".to_string(),
+            format!("user.name={}", self.name),
+            "-c".to_string(),
+            format!("user.email={}", self.email),
+        ]
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

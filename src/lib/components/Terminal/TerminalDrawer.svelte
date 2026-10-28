@@ -13,10 +13,13 @@
     repoName: string;
     repoPath: string;
     height: number;
+    maximized?: boolean;
+    onmaximize?: () => void;
     onclose?: () => void;
   }
 
-  let { repoId, repoName, repoPath, height, onclose }: Props = $props();
+  let { repoId, repoName, repoPath, height, maximized = false, onmaximize, onclose }: Props =
+    $props();
 
   let termContainer: HTMLDivElement;
   let term: Terminal | null = null;
@@ -27,7 +30,13 @@
   let themeObserver: MutationObserver | null = null;
   let isExited = $state(false);
   let isRestarting = $state(false);
-  let pendingAction = $state<"hide" | "restart" | null>(null);
+  let pendingAction = $state<"restart" | null>(null);
+  let shellLabel = $state("shell");
+
+  function shellBasename(path: string): string {
+    const base = path.split(/[\\/]/).pop() || path;
+    return base.replace(/\.exe$/i, "") || "shell";
+  }
 
   let displayPath = $derived.by(() => {
     return repoPath.replace(/^\/Users\/[^/]+/, "~");
@@ -163,6 +172,9 @@
       if (res.replay) {
         term.write(res.replay);
       }
+      if (res.shell) {
+        shellLabel = shellBasename(res.shell);
+      }
     } catch (e) {
       console.error("Failed to open terminal session:", e);
     }
@@ -235,6 +247,9 @@
       if (res && res.replay) {
         term?.write(res.replay);
       }
+      if (res?.shell) {
+        shellLabel = shellBasename(res.shell);
+      }
       fitAddon?.fit();
       if (term) {
         await api.termResize(repoId, term.cols, term.rows);
@@ -252,10 +267,7 @@
       e.preventDefault();
       e.stopPropagation();
     }
-    if ($settings.confirmTerminalClose && !isExited) {
-      pendingAction = "hide";
-      return;
-    }
+    // Hiding keeps the PTY alive, so it is always safe and needs no prompt.
     onclose?.();
   }
 
@@ -272,10 +284,10 @@
   }
 
   function confirmPending() {
-    const action = pendingAction;
-    pendingAction = null;
-    if (action === "hide") onclose?.();
-    else if (action === "restart") handleRestart();
+    if (pendingAction === "restart") {
+      pendingAction = null;
+      handleRestart();
+    }
   }
 </script>
 
@@ -295,7 +307,7 @@
         <Icon name="terminal" size={13} />
       </span>
       <span class="term-title">{repoName}</span>
-      <span class="term-shell-badge">zsh</span>
+      <span class="term-shell-badge">{shellLabel}</span>
       <span class="term-cwd" title={repoPath}>{displayPath}</span>
     </div>
 
@@ -307,13 +319,15 @@
         </span>
       {/if}
       {#if pendingAction}
-        <span class="confirm-text">
-          {pendingAction === "hide" ? "Hide running terminal?" : "Restart the shell?"}
-        </span>
-        <button class="term-btn confirm" onclick={confirmPending} title="Confirm">
-          {pendingAction === "hide" ? "Hide" : "Restart"}
+        <span class="confirm-text">Restart the shell?</span>
+        <button class="term-btn confirm text-xs" onclick={confirmPending} title="Restart">
+          Restart
         </button>
-        <button class="term-btn" onclick={() => (pendingAction = null)} title="Cancel">
+        <button
+          class="term-btn text-xs"
+          onclick={() => (pendingAction = null)}
+          title="Cancel"
+        >
           Cancel
         </button>
       {:else}
@@ -337,6 +351,18 @@
         >
           <Icon name="refresh" size={14} class={isRestarting ? 'spin' : ''} />
         </button>
+        {#if onmaximize}
+          <button
+            type="button"
+            class="term-icon-btn"
+            onclick={onmaximize}
+            title={maximized ? "Restore terminal height" : "Maximize terminal"}
+            aria-label={maximized ? "Restore terminal height" : "Maximize terminal"}
+            aria-pressed={maximized}
+          >
+            <Icon name={maximized ? "chevrons-down-up" : "chevrons-up-down"} size={14} />
+          </button>
+        {/if}
         <button
           type="button"
           class="term-icon-btn"
@@ -510,10 +536,37 @@
     to { transform: rotate(360deg); }
   }
 
+  .term-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    height: 22px;
+    padding: 0 8px;
+    border: 1px solid var(--border);
+    border-radius: var(--r-sm);
+    background-color: var(--bg);
+    color: var(--text);
+    font-family: var(--font-ui);
+    line-height: 1;
+    cursor: pointer;
+    user-select: none;
+    transition: background-color 100ms ease, border-color 100ms ease;
+  }
+  .term-btn:hover {
+    background-color: var(--bg-muted);
+  }
+  .term-btn:focus-visible {
+    outline: 1px solid var(--accent);
+    outline-offset: 1px;
+  }
+
   .term-btn.confirm {
     background-color: var(--accent);
     border-color: var(--accent);
     color: var(--accent-fg);
+  }
+  .term-btn.confirm:hover {
+    filter: brightness(0.94);
   }
 
   .confirm-text {

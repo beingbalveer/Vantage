@@ -69,8 +69,8 @@ export const FEATURE_METADATA: FeatureFlagMeta[] = [
   {
     key: "ALPH_160_LINE_PARTIAL_COMMIT",
     ticket: "ALPH-160",
-    name: "Line-Level Staging & Discard",
-    description: "Stage or discard individual lines and hunks directly from the diff view",
+    name: "Line-Level Discard",
+    description: "Select and discard individual lines directly from the working diff",
     defaultValue: true,
   },
   {

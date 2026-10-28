@@ -13,6 +13,14 @@
 
   let activeSection = $state<SettingsSection>("general");
   let flagsTick = $state(0);
+  let appVersion = $state("0.4.0");
+
+  $effect(() => {
+    api
+      .appVersion()
+      .then((version) => (appVersion = version))
+      .catch(() => {});
+  });
 
   let isCheckingUpdates = $state(false);
   let availableUpdate = $state<Update | null>(null);
@@ -643,13 +651,8 @@
           <div class="setting-row col">
             <span class="setting-title text-strong">Prompts</span>
             <span class="setting-desc text-sm text-muted">
-              Ask before closing or restarting a terminal whose shell is still running.
+              Hiding a terminal keeps its session alive. Ask before restarting a shell that is still running.
             </span>
-            <Checkbox
-              checked={currentSettings.confirmTerminalClose}
-              onchange={(checked: boolean) => handleSaveField("confirmTerminalClose", checked)}
-              label="Confirm before hiding a running terminal"
-            />
             <Checkbox
               checked={currentSettings.confirmTerminalRestart}
               onchange={(checked: boolean) => handleSaveField("confirmTerminalRestart", checked)}
@@ -804,7 +807,7 @@
             <img src="/favicon.png" alt="Vantage" width="36" height="36" />
             <div>
               <h3 class="text-strong" style="margin: 0;">Vantage</h3>
-              <p class="text-xs text-muted" style="margin: 0;">v0.3.0</p>
+              <p class="text-xs text-muted" style="margin: 0;">v{appVersion}</p>
             </div>
           </div>
           <p class="text-sm text-muted">A fast, local, multi-repo Git desktop client, read-only code viewer, and terminal workspace.</p>

@@ -96,13 +96,6 @@ export interface LineSelection {
   text: string;
 }
 
-export type WorkingPart = "unstaged" | "staged";
-
-export interface WorkingPartCounts {
-  unstaged: number;
-  staged: number;
-}
-
 export interface Hunk {
   oldStart: number;
   oldLines: number;
@@ -175,7 +168,6 @@ export interface Settings {
   uiScale: number;
   defaultBranch: string;
   tabSize: number;
-  confirmTerminalClose: boolean;
   confirmTerminalRestart: boolean;
 }
 
@@ -315,6 +307,38 @@ export interface GitIdentity {
   effectiveEmail: string | null;
   nameSource: "repo" | "global" | "system" | "unset";
   emailSource: "repo" | "global" | "system" | "unset";
+}
+
+/** A one-off author for a single commit. */
+export interface CommitAuthor {
+  name: string;
+  email: string;
+}
+
+export interface GitHubAccount {
+  host: string;
+  login: string;
+  state: string;
+  active: boolean;
+  tokenSource?: string | null;
+  scopes: string[];
+  gitProtocol?: string | null;
+}
+
+export interface GitHubStatus {
+  ghInstalled: boolean;
+  ghVersion: string | null;
+  remoteUrl: string | null;
+  host: string | null;
+  owner: string | null;
+  repo: string | null;
+  isGithub: boolean;
+  authenticated: boolean;
+  accounts: GitHubAccount[];
+  activeAccount: string | null;
+  canPush: boolean | null;
+  permission: string | null;
+  detail: string | null;
 }
 
 export interface HeadCommitInfo {

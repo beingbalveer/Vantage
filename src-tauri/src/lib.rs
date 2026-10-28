@@ -198,6 +198,7 @@ pub fn run() {
             sync_pull,
             sync_push,
             remote_url,
+            github_status,
             term_open,
             term_input,
             term_resize,

@@ -16,8 +16,6 @@
     DiffLine,
     NoteSide,
     LineSelection,
-    WorkingPart,
-    WorkingPartCounts,
   } from "../../platform/types";
   import { getLanguageFromPath, highlightCodeLines } from "../../design/highlight";
   import * as api from "../../platform/api";
@@ -47,9 +45,6 @@
     fileChange?: FileChange | null;
     fullContext?: boolean;
     scopeType?: "working" | "commit" | "range";
-    workingPart?: WorkingPart;
-    workingCounts?: WorkingPartCounts | null;
-    onchangepart?: (part: WorkingPart) => void;
     onrefresh?: () => void;
     paneIndex?: number;
     onexpandcontext?: (oldStart: number, count: number) => void;
@@ -73,9 +68,6 @@
     fileChange = null,
     fullContext = false,
     scopeType = "commit",
-    workingPart = "unstaged",
-    workingCounts = null,
-    onchangepart,
     onrefresh,
     paneIndex = 0,
     onexpandcontext,
@@ -276,14 +268,15 @@
     return num >= selectedRange.start && num <= selectedRange.end;
   }
 
-  let stagingEnabled = $derived(
+  // Line-level actions stay available in the working view: select a range to
+  // copy it or discard it. Staging is intentionally not part of the UI — the
+  // working diff always shows all uncommitted changes.
+  let lineActionsEnabled = $derived(
     isFeatureEnabled("ALPH_160_LINE_PARTIAL_COMMIT") && scopeType === "working"
   );
   let emptyMessage = $derived(
     scopeType === "working"
-      ? workingPart === "staged"
-        ? "No staged changes in this file"
-        : "No unstaged changes in this file"
+      ? "No uncommitted changes in this file"
       : "No changes in this file"
   );
 
@@ -310,68 +303,13 @@
     return out;
   }
 
-  function getHunkChangeLines(hunk: Hunk): LineSelection[] {
-    return hunk.lines
-      .filter((l) => l.kind === "add" || l.kind === "del")
-      .map((l) => ({
-        kind: l.kind,
-        oldNo: l.oldNo,
-        newNo: l.newNo,
-        text: l.text,
-      }));
-  }
-
   let selectedChangeLines = $derived(getSelectedChangeLines());
-  let canApplySelection = $derived(
-    stagingEnabled && selectedChangeLines.length > 0 && !isApplying
+  let canDiscardSelection = $derived(
+    lineActionsEnabled && selectedChangeLines.length > 0 && !isApplying
   );
 
   function lineCountLabel(count: number): string {
     return `${count} line${count === 1 ? "" : "s"}`;
-  }
-
-  async function runPartial(
-    action: "stage" | "unstage",
-    lines: LineSelection[]
-  ): Promise<void> {
-    if (!diffFile || !effectiveRepoId || lines.length === 0 || isApplying) return;
-    isApplying = true;
-    try {
-      if (action === "stage") {
-        await api.stageLines(effectiveRepoId, diffFile.change.path, lines, ignoreWhitespace);
-        addToast({
-          message: `Staged ${lineCountLabel(lines.length)} in ${diffFile.change.path}`,
-          kind: "success",
-        });
-      } else {
-        await api.unstageLines(effectiveRepoId, diffFile.change.path, lines, ignoreWhitespace);
-        addToast({
-          message: `Unstaged ${lineCountLabel(lines.length)} in ${diffFile.change.path}`,
-          kind: "success",
-        });
-      }
-      selectedRange = null;
-      onrefresh?.();
-    } catch (e: any) {
-      addToast({
-        message: e?.message || e?.toString?.() || "Could not apply the selected lines",
-        kind: "error",
-      });
-    } finally {
-      isApplying = false;
-    }
-  }
-
-  function stageSelection() {
-    runPartial("stage", selectedChangeLines);
-  }
-
-  function unstageSelection() {
-    runPartial("unstage", selectedChangeLines);
-  }
-
-  function stageHunk(hunk: Hunk) {
-    runPartial(workingPart === "staged" ? "unstage" : "stage", getHunkChangeLines(hunk));
   }
 
   function requestDiscardSelection() {
@@ -796,27 +734,6 @@
       </div>
 
       <div class="header-actions">
-        {#if stagingEnabled}
-          <div class="part-switch" role="group" aria-label="Working diff view">
-            <button
-              type="button"
-              class:active={workingPart === "unstaged"}
-              aria-pressed={workingPart === "unstaged"}
-              onclick={() => onchangepart?.("unstaged")}
-            >
-              Unstaged{workingCounts ? ` ${workingCounts.unstaged}` : ""}
-            </button>
-            <button
-              type="button"
-              class:active={workingPart === "staged"}
-              aria-pressed={workingPart === "staged"}
-              onclick={() => onchangepart?.("staged")}
-            >
-              Staged{workingCounts ? ` ${workingCounts.staged}` : ""}
-            </button>
-          </div>
-        {/if}
-
         {#if isFeatureEnabled("ALPH_159_EXPAND_WHOLE_FILE")}
           {#if fullContext}
             <span class="whole-file-chip text-xs" title="Showing the whole file">Whole file</span>
@@ -918,7 +835,7 @@
     <!-- Hunks Body -->
     <div class="diff-body" bind:this={textBodyEl} tabindex="-1">
         {#if localHunks.length === 0}
-          {#if stagingEnabled}
+          {#if scopeType === "working"}
             <div class="empty-diff">
               <span class="text-muted">{emptyMessage}</span>
             </div>
@@ -941,20 +858,6 @@
 
               <div class="hunk-header font-mono text-xs">
                 <span class="hunk-label">{hunkLabel(hunk)}</span>
-                {#if stagingEnabled}
-                  <button
-                    type="button"
-                    class="hunk-btn"
-                    disabled={isApplying || getHunkChangeLines(hunk).length === 0}
-                    title={workingPart === "staged"
-                      ? "Unstage every changed line in this hunk"
-                      : "Stage every changed line in this hunk"}
-                    aria-label={workingPart === "staged" ? "Unstage hunk" : "Stage hunk"}
-                    onclick={() => stageHunk(hunk)}
-                  >
-                    <Icon name={workingPart === "staged" ? "minus" : "plus"} size={12} />
-                  </button>
-                {/if}
               </div>
 
               {#each splitRowsByHunk[hIdx] ?? [] as row}
@@ -1037,20 +940,6 @@
             <!-- Hunk Header -->
             <div class="hunk-header font-mono text-xs" data-hunk-index={hIdx}>
               <span class="hunk-label">{hunkLabel(hunk)}</span>
-              {#if stagingEnabled}
-                <button
-                  type="button"
-                  class="hunk-btn"
-                  disabled={isApplying || getHunkChangeLines(hunk).length === 0}
-                  title={workingPart === "staged"
-                    ? "Unstage every changed line in this hunk"
-                    : "Stage every changed line in this hunk"}
-                  aria-label={workingPart === "staged" ? "Unstage hunk" : "Stage hunk"}
-                  onclick={() => stageHunk(hunk)}
-                >
-                  <Icon name={workingPart === "staged" ? "minus" : "plus"} size={12} />
-                </button>
-              {/if}
             </div>
 
             <!-- Hunk Lines: Unified -->
@@ -1151,40 +1040,18 @@
           <Icon name="code" size={13} />
         </button>
 
-        {#if stagingEnabled && workingPart === "unstaged"}
+        {#if lineActionsEnabled}
           <span class="selection-count text-xs">
             {lineCountLabel(selectedChangeLines.length)} selected
           </span>
           <button
-            class="fab-btn primary icon-only"
-            disabled={!canApplySelection}
-            onclick={stageSelection}
-            title={isApplying ? "Applying…" : "Stage selection"}
-            aria-label={isApplying ? "Applying…" : "Stage selection"}
-          >
-            <Icon name="plus" size={13} />
-          </button>
-          <button
             class="fab-btn danger icon-only"
-            disabled={!canApplySelection}
+            disabled={!canDiscardSelection}
             onclick={requestDiscardSelection}
             title="Discard selection"
             aria-label="Discard selection"
           >
             <Icon name="trash" size={13} />
-          </button>
-        {:else if stagingEnabled && workingPart === "staged"}
-          <span class="selection-count text-xs">
-            {lineCountLabel(selectedChangeLines.length)} selected
-          </span>
-          <button
-            class="fab-btn primary icon-only"
-            disabled={!canApplySelection}
-            onclick={unstageSelection}
-            title={isApplying ? "Applying…" : "Unstage selection"}
-            aria-label={isApplying ? "Applying…" : "Unstage selection"}
-          >
-            <Icon name="minus" size={13} />
           </button>
         {/if}
 
@@ -1356,42 +1223,6 @@
     outline-offset: -2px;
   }
 
-  .part-switch {
-    display: flex;
-    align-items: stretch;
-    gap: 0;
-    padding: 0;
-    border: 0;
-    border-radius: 0;
-    background-color: transparent;
-    flex-shrink: 0;
-  }
-  .part-switch button {
-    height: auto;
-    padding: 0 10px;
-    border: none;
-    border-radius: 0;
-    background: transparent;
-    color: var(--text-muted);
-    font-size: 11px;
-    font-weight: 500;
-    cursor: pointer;
-    transition: background-color 80ms linear, color 80ms linear;
-  }
-  .part-switch button:hover {
-    background-color: var(--bg-muted);
-    color: var(--text);
-  }
-  .part-switch button.active {
-    background-color: var(--bg-muted);
-    color: var(--text);
-  }
-  .part-switch button:focus-visible {
-    outline: 2px solid var(--accent);
-    outline-offset: -2px;
-  }
-
-
   .header-actions {
     display: flex;
     align-items: stretch;
@@ -1519,33 +1350,6 @@
     text-overflow: ellipsis;
     white-space: nowrap;
   }
-  .hunk-btn {
-    flex-shrink: 0;
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    width: 20px;
-    height: 20px;
-    padding: 0;
-    border: 1px solid var(--border);
-    border-radius: var(--r-sm);
-    background-color: var(--bg-subtle);
-    color: var(--text);
-    cursor: pointer;
-    line-height: 1;
-  }
-  .hunk-btn:hover:not(:disabled) {
-    background-color: var(--bg-muted);
-  }
-  .hunk-btn:focus-visible {
-    outline: 2px solid var(--accent);
-    outline-offset: 1px;
-  }
-  .hunk-btn:disabled {
-    opacity: 0.45;
-    cursor: not-allowed;
-  }
-
   .diff-body {
     user-select: text;
   }
@@ -1876,7 +1680,6 @@
   .header-actions > :first-child {
     border-left: 1px solid var(--border);
   }
-  .part-switch > button + button,
   .mode-toggle > .mode-btn + .mode-btn {
     border-left: 1px solid var(--border-subtle);
   }

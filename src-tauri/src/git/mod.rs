@@ -3,6 +3,7 @@ pub mod blob;
 pub mod clone;
 pub mod coauthors;
 pub mod diff;
+pub mod github;
 pub mod grep;
 pub mod identity;
 pub mod log;

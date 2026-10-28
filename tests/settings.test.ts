@@ -32,7 +32,6 @@ const base: Settings = {
   uiScale: 1,
   defaultBranch: "main",
   tabSize: 4,
-  confirmTerminalClose: true,
   confirmTerminalRestart: true,
 };
 

@@ -47,12 +47,15 @@ pub struct TerminalSession {
     killer: Box<dyn portable_pty::ChildKiller + Send + Sync>,
     ring_buffer: Arc<std::sync::Mutex<RingBuffer>>,
     pub repo_path: PathBuf,
+    /// Absolute path of the shell that owns this session, shown in the header.
+    pub shell: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct TermOpenResult {
     pub replay: String,
+    pub shell: String,
 }
 
 pub struct TerminalManager {
@@ -111,7 +114,10 @@ impl TerminalManager {
                 pixel_height: 0,
             });
             let replay = session.ring_buffer.lock().unwrap().to_string();
-            return Ok(TermOpenResult { replay });
+            return Ok(TermOpenResult {
+                replay,
+                shell: session.shell.clone(),
+            });
         }
 
         let pty_system = native_pty_system();
@@ -227,11 +233,13 @@ impl TerminalManager {
                 killer,
                 ring_buffer: ring_buffer.clone(),
                 repo_path,
+                shell: shell.clone(),
             },
         );
 
         Ok(TermOpenResult {
             replay: String::new(),
+            shell,
         })
     }
 
