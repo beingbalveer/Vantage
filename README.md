@@ -23,24 +23,28 @@ Vantage gives you instant visibility into unreviewed commits and diffs across al
 ### macOS
 
 #### Via Homebrew (Recommended)
-Installing via Homebrew provides seamless 1-click launching with no security prompts:
+The cask lives in this repository, so point Homebrew at it explicitly:
 
 ```bash
-brew tap beingbalveer/vantage
+brew tap beingbalveer/vantage https://github.com/beingbalveer/Vantage
+brew trust beingbalveer/vantage
 brew install --cask vantage
 ```
 
+`brew trust` is the Homebrew 7 confirmation for third-party taps; on older Homebrew the tap can be installed directly.
+
+If you previously installed Vantage from a DMG, quit the app and remove `/Applications/Vantage.app` first (or run `brew install --cask --force vantage`).
+
+The cask clears the download quarantine flag during install, so the app launches without a Gatekeeper prompt.
+
 #### Direct Download (.dmg)
-1. Download the latest `Vantage_universal.dmg` from [GitHub Releases](https://github.com/beingbalveer/Vantage/releases).
+1. Download the latest `Vantage_<version>_universal.dmg` from [GitHub Releases](https://github.com/beingbalveer/Vantage/releases).
 2. Open the DMG and drag **Vantage** to your **Applications** folder.
 
-> **macOS Gatekeeper Note:**  
-> If macOS warns that *"Vantage cannot be opened because Apple cannot check it for malicious software"*, you can either:
-> - **Right-click** (or `Control` + Click) `Vantage.app` in `/Applications` and select **Open**, then click **Open** in the dialog.
-> - Or run this one-line command in your Terminal:
->   ```bash
->   xattr -cr /Applications/Vantage.app
->   ```
+> **macOS Gatekeeper Note:**
+> The current build is ad-hoc signed, not notarized. If macOS warns that *"Vantage cannot be opened because Apple cannot check it for malicious software"*, either:
+> - **Right-click** (or `Control` + Click) **Vantage.app** in `/Applications`, choose **Open**, then click **Open**; or
+> - run `xattr -cr /Applications/Vantage.app` in Terminal.
 
 ### Windows
 Download and run the `.msi` or `.exe` installer from [GitHub Releases](https://github.com/beingbalveer/Vantage/releases).
