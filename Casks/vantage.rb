@@ -1,6 +1,6 @@
 cask "vantage" do
-  version "0.4.0"
-  sha256 "682399576b5c2485eea77ead8414d899ad12782082d533b4bd8065952d145133"
+  version "0.5.0"
+  sha256 "a33b5cae69c751bb9eaa32f064e5e98cd87e1093364d2489d584379be19c391a"
 
   url "https://github.com/beingbalveer/Vantage/releases/download/v#{version}/Vantage_#{version}_universal.dmg"
   name "Vantage"
