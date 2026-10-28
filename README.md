@@ -109,15 +109,22 @@ On my machine (macOS, debug build, no repositories open) it idles around **120 M
 ### macOS
 
 #### Via Homebrew (Recommended)
-Installing via Homebrew provides seamless 1-click launching with no security prompts:
+The cask lives in this repository, so point Homebrew at it explicitly:
 
 ```bash
-brew tap beingbalveer/vantage
+brew tap beingbalveer/vantage https://github.com/beingbalveer/Vantage
+brew trust beingbalveer/vantage
 brew install --cask vantage
 ```
 
+`brew trust` is the Homebrew 7 confirmation for third-party taps; on older Homebrew the tap can be installed directly.
+
+If you previously installed Vantage from a DMG, quit the app and remove `/Applications/Vantage.app` first (or run `brew install --cask --force vantage`).
+
+The cask clears the download quarantine flag during install, so the app launches without a Gatekeeper prompt.
+
 #### Direct Download (.dmg)
-1. Download the latest `Vantage_universal.dmg` from [GitHub Releases](https://github.com/beingbalveer/Vantage/releases).
+1. Download the latest `Vantage_<version>_universal.dmg` from [GitHub Releases](https://github.com/beingbalveer/Vantage/releases).
 2. Open the DMG and drag **Vantage** to your **Applications** folder.
 
 > **macOS Gatekeeper Note:**
