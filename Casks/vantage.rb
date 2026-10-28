@@ -9,6 +9,12 @@ cask "vantage" do
 
   app "Vantage.app"
 
+  postflight do
+    system_command "/usr/bin/xattr",
+                   args: ["-dr", "com.apple.quarantine", "#{appdir}/Vantage.app"],
+                   sudo: false
+  end
+
   zap trash: [
     "~/Library/Application Support/vantage",
     "~/Library/Caches/vantage",
