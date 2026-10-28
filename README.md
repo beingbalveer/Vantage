@@ -38,7 +38,7 @@ If you run agents across more than one repo and want to see what they actually d
 
 ### 1. Read code without editing it
 
-A syntax-highlighted, read-only viewer with blame, find-in-file, and heuristic definition peek (`F12` / `Alt+Click`). Files open in tabs with VS Code-style close shortcuts, a right-click tab menu, and a centered fuzzy file finder (`Mod+B`). It is read-only on purpose: when you are auditing agent output, the last thing you want is a stray keystroke dirtying the working tree. Writes are separate, explicit actions — never a side effect of browsing.
+A syntax-highlighted, read-only viewer with blame, find-in-file, and heuristic definition peek (`F12` / `Alt+Click`). Files open in tabs with VS Code-style close shortcuts, a right-click tab menu, and a centered fuzzy file finder (`Mod+B`). Browsing is read-only on purpose: when you are auditing agent output, the last thing you want is a stray keystroke dirtying the working tree. When you do need to change something, the pencil icon opens an explicit edit mode — tick or `Mod+S` saves, `Esc` discards, and leaving with unsaved edits asks first. Saves always target the working-tree copy, never the revision you are viewing.
 
 Ignored local config is still readable: `.env` and `.env.*` files appear in the explorer and the file finder even though Git never tracks them.
 
@@ -59,7 +59,7 @@ Every repository gets a persistent PTY terminal at its root, with a 256 KB repla
 | Vantage is | Vantage is not |
 |---|---|
 | A review deck for agent-written commits | An IDE or a code editor |
-| A read-only code browser with blame and peek | A place to write or refactor code |
+| A read-only-by-default browser with an explicit edit mode | An IDE or a multi-file refactor tool |
 | A multi-repo branch and commit monitor | A GitHub PR / issue / CI client |
 | A per-repo terminal workspace | A terminal emulator replacement |
 | Local-first, zero telemetry, system Git | A cloud service or account system |
@@ -159,6 +159,7 @@ Press `?` inside Vantage at any time to open the interactive keyboard shortcut o
 | `Ctrl+Tab` / `Ctrl+Shift+Tab` | Next / previous file tab (Files tab) |
 | `Mod+B` | Toggle sidebar; search files in the Files tab |
 | `Mod+Shift+E` | Search files (Files tab) |
+| `Mod+S` | Save the file being edited (Files tab) |
 | `` Mod+` `` | Toggle terminal drawer in focused pane |
 | `Mod+[` / `Mod+]` | Switch to previous / next repository in focused pane |
 | `Mod+,` | Open Settings |

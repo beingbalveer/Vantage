@@ -44,6 +44,7 @@ import {
   setPaneTab,
 } from "../domain/stores/panes";
 import { settings, updateSettings } from "../domain/stores/settings";
+import { confirmLeaveEditor } from "./editorGuard";
 import * as api from "../platform/api";
 import {
   COMMANDS,
@@ -198,23 +199,26 @@ function focusPane(index: number) {
   focusedPaneIndex.set(index);
 }
 
-function closeFocusedPane() {
+async function closeFocusedPane() {
   const count = get(paneCount);
   if (count <= 1) {
     addToast({ message: "Cannot close the only open pane", kind: "info" });
     return;
   }
   const idx = get(focusedPaneIndex);
+  if (!(await confirmLeaveEditor(idx))) return;
   closePane(idx);
 }
 
-function moveRepo(direction: 1 | -1) {
+async function moveRepo(direction: 1 | -1) {
   const list = get(sortedRepos);
   if (list.length === 0) return;
   const currentId = focusedRepoId();
   const idx = list.findIndex((r) => r.id === currentId);
   const nextIdx = ((idx < 0 ? 0 : idx) + direction + list.length) % list.length;
   const next = list[nextIdx];
+  const paneIdx = get(focusedPaneIndex);
+  if (next.id !== currentId && !(await confirmLeaveEditor(paneIdx))) return;
   activeRepoId.set(next.id);
   openRepoInFocusedPane(next.id);
 }

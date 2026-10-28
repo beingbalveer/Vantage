@@ -11,6 +11,7 @@
   import { repos, loadRepos, activeRepoId, removeRepo } from "../../domain/stores/repos";
   import { addToast, sidebarCollapsed, openDialog } from "../../app/ui";
   import { registerDismiss } from "../../app/commands";
+  import { confirmLeaveEditor } from "../../app/editorGuard";
   import * as api from "../../platform/api";
   import { get } from "svelte/store";
   import Icon from "../common/Icon.svelte";
@@ -202,11 +203,17 @@
     showMenu = !showMenu;
   }
 
-  function handleClick(e?: MouseEvent) {
+  async function handleClick(e?: MouseEvent) {
     stopHover();
     if (e && (e.metaKey || e.ctrlKey || e.button === 1)) {
       openRepoInNextPane(repo.id);
     } else {
+      const focused = get(focusedPaneIndex);
+      // Replacing the pane's repo unmounts the file viewer, so make sure a
+      // dirty draft is saved or discarded first.
+      if (get(panes)[focused]?.repoId !== repo.id && !(await confirmLeaveEditor(focused))) {
+        return;
+      }
       activeRepoId.set(repo.id);
       openRepoInFocusedPane(repo.id);
     }

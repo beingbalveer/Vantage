@@ -207,6 +207,9 @@ export async function treeList(id: string, rev: string): Promise<string[]> {
   return invoke("tree_list", { id, rev });
 }
 
+/** Pseudo revision that addresses the working-tree copy of a file. */
+export const WORKTREE_REV = "WORKTREE";
+
 export async function fileDiffMeta(
   id: string,
   scope: DiffScope,
@@ -235,6 +238,14 @@ export async function grepDefs(
 }
 
 // Writes
+export async function writeFile(
+  id: string,
+  path: string,
+  text: string
+): Promise<number> {
+  return invoke("write_file", { id, path, text });
+}
+
 export async function commit(
   id: string,
   paths: string[],

@@ -30,6 +30,7 @@
   import FileTabs from "./FileTabs.svelte";
   import FileSearchDialog from "./FileSearchDialog.svelte";
   import { matchShortcut } from "../../platform/keys";
+  import { confirmLeaveEditor } from "../../app/editorGuard";
 
   interface Props {
     repoId: string;
@@ -125,7 +126,7 @@
   });
 
   $effect(() => {
-    if (targetFile) openFileTab(tabKey, targetFile);
+    if (targetFile) void activateFile(targetFile);
     if (initialTargetLine) activeTargetLine = initialTargetLine;
   });
 
@@ -151,9 +152,8 @@
     if ($navigationTarget) {
       if (!$navigationTarget.repoId || $navigationTarget.repoId === repoId) {
         if ($navigationTarget.path) {
-          openFileTab(tabKey, $navigationTarget.path);
-        }
-        if ($navigationTarget.line) {
+          void activateFile($navigationTarget.path, $navigationTarget.line ?? null);
+        } else if ($navigationTarget.line) {
           activeTargetLine = $navigationTarget.line;
         }
       }
@@ -195,7 +195,7 @@
   function closeActiveFile(): boolean {
     if (!ownsPaneKeyboard(paneIndex)) return false;
     if (activeFile) {
-      closeFileTab(tabKey, activeFile);
+      void closeFile(activeFile);
       return true;
     }
     // Preserve ⌘W's old meaning when the viewer has no open tab.
@@ -209,7 +209,9 @@
 
   function closeAllFiles(): boolean {
     if (!ownsPaneKeyboard(paneIndex)) return false;
-    closeFileTabs(tabKey, openTabs);
+    void (async () => {
+      if (await confirmLeaveEditor(paneIndex)) closeFileTabs(tabKey, openTabs);
+    })();
     return true;
   }
 
@@ -217,8 +219,7 @@
     if (!ownsPaneKeyboard(paneIndex) || openTabs.length < 2) return false;
     const index = activeFile ? openTabs.indexOf(activeFile) : -1;
     const next = (index + delta + openTabs.length) % openTabs.length;
-    activeTargetLine = null;
-    openFileTab(tabKey, openTabs[next]);
+    void activateFile(openTabs[next]);
     return true;
   }
 
@@ -233,11 +234,37 @@
   }
 
   function selectSearchResult(path: string) {
-    activeTargetLine = null;
+    void activateFile(path);
+  }
+
+  /**
+   * Every navigation surface opens files through here so a dirty draft is
+   * never discarded silently.
+   */
+  async function activateFile(path: string, line: number | null = null) {
+    if (path === activeFile) {
+      activeTargetLine = line;
+      return;
+    }
+    if (!(await confirmLeaveEditor(paneIndex))) return;
+    activeTargetLine = line;
     openFileTab(tabKey, path);
   }
 
-  function closeFilePaths(paths: string[]) {
+  async function closeFile(path: string) {
+    if (path === activeFile && !(await confirmLeaveEditor(paneIndex))) return;
+    closeFileTab(tabKey, path);
+  }
+
+  async function switchToHistory() {
+    if (!(await confirmLeaveEditor(paneIndex))) return;
+    setPaneTab(paneIndex, "history");
+  }
+
+  async function closeFilePaths(paths: string[]) {
+    if (activeFile && paths.includes(activeFile) && !(await confirmLeaveEditor(paneIndex))) {
+      return;
+    }
     closeFileTabs(tabKey, paths);
   }
 
@@ -278,8 +305,7 @@
   function selectFileAt(index: number) {
     const file = fileList[index];
     if (!file) return;
-    activeTargetLine = null;
-    openFileTab(tabKey, file);
+    void activateFile(file);
   }
 
   function moveFile(delta: 1 | -1): boolean {
@@ -327,7 +353,7 @@
           aria-selected="false"
           class="pane-tab"
           title="Switch to Commits & History"
-          onclick={() => setPaneTab(paneIndex, "history")}
+          onclick={() => void switchToHistory()}
         >
           <Icon name="commit" size={14} />
           <span>Commits</span>
@@ -361,8 +387,7 @@
           {repoId}
           onsearch={openFileSearch}
           onselectfile={(path) => {
-            activeTargetLine = null;
-            openFileTab(tabKey, path);
+            void activateFile(path);
           }}
         />
       {/if}
@@ -396,10 +421,9 @@
         tabs={openTabs}
         active={activeFile}
         onactivate={(path) => {
-          activeTargetLine = null;
-          openFileTab(tabKey, path);
+          void activateFile(path);
         }}
-        onclose={(path) => closeFileTab(tabKey, path)}
+        onclose={(path) => void closeFile(path)}
         onclosepaths={closeFilePaths}
         oncopy={copyFilePath}
         onreveal={revealFilePath}
@@ -414,8 +438,7 @@
           {paneIndex}
           onopenineditor={openInEditor}
           onnavigatetofile={(filePath, line) => {
-            activeTargetLine = line || null;
-            openFileTab(tabKey, filePath);
+            void activateFile(filePath, line || null);
           }}
         />
       </div>

@@ -162,6 +162,7 @@ pub fn run() {
             blob_text,
             blob_preview,
             tree_list,
+            write_file,
             file_diff_meta,
             blame_line,
             grep_defs,

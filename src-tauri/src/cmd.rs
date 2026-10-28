@@ -1,7 +1,9 @@
 use crate::detect::{detect_editors, detect_shells, system_editor_command, DetectedApp};
 use crate::error::AppError;
 use crate::git::binary::{get_blob_preview, get_file_diff_meta, BlobPreview, FileDiffMeta};
-use crate::git::blob::{get_blob_lines, get_blob_text, get_tree_list, BlobTextResult};
+use crate::git::blob::{
+    get_blob_lines, get_blob_text, get_tree_list, write_worktree_text, BlobTextResult,
+};
 use crate::git::coauthors::{recent_contributors as git_recent_contributors, Contributor};
 use crate::git::diff::{
     get_scope_file_diff, get_scope_files, get_working_file_diff, get_working_part_counts,
@@ -955,6 +957,27 @@ pub async fn tree_list(
     };
 
     get_tree_list(&state.runner, &repo_path, &rev).await
+}
+
+/// Save the viewer's edit back to the working-tree file.
+#[tauri::command]
+pub async fn write_file(
+    state: State<'_, AppState>,
+    id: String,
+    path: String,
+    text: String,
+) -> Result<u64, AppError> {
+    let repo_path = {
+        let data = state.data.lock().await;
+        let entry = data
+            .repos
+            .iter()
+            .find(|r| r.id == id)
+            .ok_or_else(|| AppError::not_found("Repository not found"))?;
+        PathBuf::from(&entry.path)
+    };
+
+    write_worktree_text(&repo_path, &path, &text).await
 }
 
 /// Old/new sizes (and bounded image previews) for one changed file. Lets the

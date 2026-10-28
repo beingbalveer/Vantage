@@ -12,6 +12,9 @@
   import Icon from "../common/Icon.svelte";
   import FileIcon from "../common/FileIcon.svelte";
   import FilePreviewFallback from "./FilePreviewFallback.svelte";
+  import Modal from "../common/Modal.svelte";
+  import Button from "../common/Button.svelte";
+  import { setEditorGuard } from "../../app/editorGuard";
   import { formatBytes } from "../../domain/diff-content";
 
   interface Props {
@@ -41,6 +44,19 @@
   let lines = $state<string[]>([]);
   let isLoading = $state(true);
   let isWrapped = $state(false);
+
+  // Explicit edit mode. Browsing stays read-only; the pencil is the only way
+  // in, and saving is an explicit action (tick or Mod+S).
+  let editing = $state(false);
+  let draft = $state("");
+  let editBase = $state("");
+  let saving = $state(false);
+  let showingWorktree = $state(false);
+  let editEl = $state<HTMLTextAreaElement | null>(null);
+  let leavePromptOpen = $state(false);
+  let leaveResolve: ((ok: boolean) => void) | null = null;
+
+  let dirty = $derived(editing && draft !== editBase);
 
   // Single-file preview metadata. Text files use the existing line view;
   // images render inline; binaries and oversized blobs get an honest fallback.
@@ -316,6 +332,129 @@
     }
   }
 
+  // ---- Edit mode -----------------------------------------------------------
+
+  /**
+   * Reset the editor when the viewer is pointed at another file. Navigation
+   * surfaces ask the guard first, so this normally runs on an explicit leave.
+   */
+  let editTarget = $state("");
+  $effect(() => {
+    const key = `${repoId}\u0000${rev}\u0000${path}`;
+    if (key === editTarget) return;
+    editTarget = key;
+    leaveResolve?.(false);
+    leaveResolve = null;
+    leavePromptOpen = false;
+    editing = false;
+    draft = "";
+    editBase = "";
+    showingWorktree = false;
+  });
+
+  async function startEditing() {
+    if (editing || isLoading || !textVisible) return;
+    try {
+      // Edit the working-tree copy, never the branch blob: saving the viewed
+      // revision would silently overwrite uncommitted work.
+      const res = await api.blobPreview(repoId, api.WORKTREE_REV, path);
+      if (res.binary || res.tooLarge) {
+        addToast({ message: "This file can't be edited as text", kind: "info" });
+        return;
+      }
+      editBase = res.text;
+      draft = res.text;
+      showingWorktree = true;
+      editing = true;
+      await tick();
+      editEl?.focus();
+    } catch (e: any) {
+      addToast({
+        message: e?.message || `Couldn't read ${path} from the working tree`,
+        kind: "error",
+      });
+    }
+  }
+
+  async function saveEdit(): Promise<boolean> {
+    if (!editing) return true;
+    if (!dirty) {
+      editing = false;
+      return true;
+    }
+    saving = true;
+    try {
+      const size = await api.writeFile(repoId, path, draft);
+      codeText = draft;
+      rawLines = draft.split("\n");
+      lines = draft ? highlightCodeLines(draft, language) : [];
+      fileSize = size;
+      isBinary = false;
+      isTooLarge = false;
+      imageUrl = null;
+      imageMime = null;
+      editBase = draft;
+      editing = false;
+      addToast({ message: `Saved ${path}`, kind: "success" });
+      return true;
+    } catch (e: any) {
+      addToast({ message: e?.message || `Couldn't save ${path}`, kind: "error" });
+      return false;
+    } finally {
+      saving = false;
+    }
+  }
+
+  function discardEdit() {
+    draft = editBase;
+    editing = false;
+    showingWorktree = false;
+  }
+
+  function resolveLeave(ok: boolean) {
+    leavePromptOpen = false;
+    const resolve = leaveResolve;
+    leaveResolve = null;
+    resolve?.(ok);
+  }
+
+  /** Navigation calls this before replacing the viewer. */
+  function confirmLeave(): Promise<boolean> {
+    if (!editing) return Promise.resolve(true);
+    if (!dirty) {
+      discardEdit();
+      return Promise.resolve(true);
+    }
+    return new Promise((resolve) => {
+      leaveResolve?.(false);
+      leaveResolve = resolve;
+      leavePromptOpen = true;
+    });
+  }
+
+  function requestCancel(): boolean {
+    if (!editing) return false;
+    void confirmLeave();
+    return true;
+  }
+
+  async function saveFromPrompt() {
+    const ok = await saveEdit();
+    resolveLeave(ok);
+  }
+
+  function discardFromPrompt() {
+    discardEdit();
+    resolveLeave(true);
+  }
+
+  // The pane's navigation surfaces consult this guard (file tabs, pane view
+  // switch, repo switch) before they unmount or replace the viewer.
+  $effect(() => {
+    setEditorGuard(paneIndex, editing ? { path, dirty, confirmLeave } : null);
+    return () => setEditorGuard(paneIndex, null);
+  });
+
   function navigateToLine(lineNo: number) {
     highlightedLineNo = lineNo;
     const lineIdx = lineNo - 1;
@@ -559,8 +698,22 @@
         () => (ownsPaneKeyboard(paneIndex) ? peekFromSelection() : false),
         "files"
       ),
+      registerHandler(
+        "save_file",
+        () => {
+          if (!ownsPaneKeyboard(paneIndex) || !editing) return false;
+          void saveEdit();
+          return true;
+        },
+        "files"
+      ),
       registerDismiss(() => {
         if (!ownsPaneKeyboard(paneIndex)) return false;
+        if (leavePromptOpen) {
+          resolveLeave(false);
+          return true;
+        }
+        if (editing) return requestCancel();
         let closed = false;
         if (findOpen) {
           findOpen = false;
@@ -589,70 +742,108 @@
     <div class="header-left">
       <FileIcon filename={path} size={15} />
       <div class="path-chip font-mono text-xs" title={path}>{path}</div>
-      <div class="rev-chip font-mono text-xs">{rev}</div>
+      <div class="rev-chip font-mono text-xs">{showingWorktree ? "working tree" : rev}</div>
     </div>
 
     <div class="actions">
-      {#if isMarkdown}
+      {#if editing}
+        {#if dirty}
+          <span class="dirty-chip text-xs">unsaved</span>
+        {/if}
         <button
           type="button"
           class="viewer-icon-btn"
-          onclick={() => (previewMode = !previewMode)}
-          title={previewMode ? "View raw markdown" : "View rendered markdown"}
-          aria-label={previewMode ? "View raw markdown" : "View rendered markdown"}
+          class:active={dirty}
+          disabled={!dirty || saving}
+          onclick={() => void saveEdit()}
+          title={`Save (${isMac() ? "⌘S" : "Ctrl+S"})`}
+          aria-label="Save file"
         >
-          <Icon name={previewMode ? "code" : "eye"} size={15} />
+          <Icon name="check" size={15} />
+        </button>
+        <button
+          type="button"
+          class="viewer-icon-btn"
+          onclick={() => requestCancel()}
+          title="Discard changes (Esc)"
+          aria-label="Discard changes"
+        >
+          <Icon name="close" size={14} />
+        </button>
+      {:else}
+        {#if isMarkdown}
+          <button
+            type="button"
+            class="viewer-icon-btn"
+            onclick={() => (previewMode = !previewMode)}
+            title={previewMode ? "View raw markdown" : "View rendered markdown"}
+            aria-label={previewMode ? "View raw markdown" : "View rendered markdown"}
+          >
+            <Icon name={previewMode ? "code" : "eye"} size={15} />
+          </button>
+        {/if}
+
+        {#if isSvg && imageUrl}
+          <button
+            type="button"
+            class="viewer-icon-btn"
+            class:active={svgSourceMode}
+            aria-pressed={svgSourceMode}
+            onclick={() => (svgSourceMode = !svgSourceMode)}
+            title={svgSourceMode ? "View rendered SVG" : "View SVG source"}
+            aria-label={svgSourceMode ? "View rendered SVG" : "View SVG source"}
+          >
+            <Icon name={svgSourceMode ? "eye" : "code"} size={15} />
+          </button>
+        {/if}
+
+        {#if textVisible && !(isMarkdown && previewMode)}
+          <button
+            type="button"
+            class="viewer-icon-btn"
+            class:active={isWrapped}
+            aria-pressed={isWrapped}
+            onclick={() => (isWrapped = !isWrapped)}
+            title="Toggle word wrap (Alt+Z) · Currently {isWrapped ? 'On' : 'Off'}"
+            aria-label="Toggle word wrap"
+          >
+            <Icon name="wrap" size={15} />
+          </button>
+
+          <button
+            type="button"
+            class="viewer-icon-btn"
+            class:active={findOpen}
+            onclick={toggleFindBar}
+            title="Find in file ({isMac() ? '⌘F' : 'Ctrl+F'})"
+            aria-label="Find in file"
+          >
+            <Icon name="search" size={14} />
+          </button>
+        {/if}
+
+        {#if textVisible && !isLoading}
+          <button
+            type="button"
+            class="viewer-icon-btn"
+            onclick={() => void startEditing()}
+            title="Edit file"
+            aria-label="Edit file"
+          >
+            <Icon name="pencil" size={14} />
+          </button>
+        {/if}
+
+        <button
+          type="button"
+          class="viewer-icon-btn"
+          onclick={onopenineditor}
+          title="Open in external editor (VS Code)"
+          aria-label="Open in external editor"
+        >
+          <Icon name="external-link" size={14} />
         </button>
       {/if}
-
-      {#if isSvg && imageUrl}
-        <button
-          type="button"
-          class="viewer-icon-btn"
-          class:active={svgSourceMode}
-          aria-pressed={svgSourceMode}
-          onclick={() => (svgSourceMode = !svgSourceMode)}
-          title={svgSourceMode ? "View rendered SVG" : "View SVG source"}
-          aria-label={svgSourceMode ? "View rendered SVG" : "View SVG source"}
-        >
-          <Icon name={svgSourceMode ? "eye" : "code"} size={15} />
-        </button>
-      {/if}
-
-      {#if textVisible && !(isMarkdown && previewMode)}
-        <button
-          type="button"
-          class="viewer-icon-btn"
-          class:active={isWrapped}
-          aria-pressed={isWrapped}
-          onclick={() => (isWrapped = !isWrapped)}
-          title="Toggle word wrap (Alt+Z) · Currently {isWrapped ? 'On' : 'Off'}"
-          aria-label="Toggle word wrap"
-        >
-          <Icon name="wrap" size={15} />
-        </button>
-
-        <button
-          type="button"
-          class="viewer-icon-btn"
-          class:active={findOpen}
-          onclick={toggleFindBar}
-          title="Find in file ({isMac() ? '⌘F' : 'Ctrl+F'})"
-          aria-label="Find in file"
-        >
-          <Icon name="search" size={14} />
-        </button>
-      {/if}
-
-      <button
-        type="button"
-        class="viewer-icon-btn"
-        onclick={onopenineditor}
-        title="Open in external editor (VS Code)"
-        aria-label="Open in external editor"
-      >
-        <Icon name="external-link" size={14} />
-      </button>
     </div>
   </div>
 
@@ -722,6 +913,17 @@
         kind={fallbackKind}
         onopenexternal={openExternally}
       />
+    {:else if editing}
+      <textarea
+        bind:this={editEl}
+        bind:value={draft}
+        class="edit-area font-mono text-xs"
+        wrap={isWrapped ? "soft" : "off"}
+        spellcheck="false"
+        autocomplete="off"
+        autocapitalize="off"
+        aria-label={`Edit ${path}`}
+      ></textarea>
     {:else if isMarkdown && previewMode}
       <!-- svelte-ignore a11y_click_events_have_key_events -->
       <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
@@ -827,6 +1029,23 @@
   {/if}
 </div>
 
+<Modal
+  bind:open={leavePromptOpen}
+  title="Unsaved changes"
+  description={`${path} has edits that are not saved.`}
+  width={420}
+  onclose={() => resolveLeave(false)}
+>
+  <p class="text-sm text-muted">Save before leaving, or discard the edits.</p>
+  {#snippet footer()}
+    <Button variant="ghost" onclick={() => resolveLeave(false)}>Cancel</Button>
+    <Button variant="danger" onclick={discardFromPrompt}>Discard</Button>
+    <Button variant="primary" loading={saving} onclick={() => void saveFromPrompt()}>
+      Save
+    </Button>
+  {/snippet}
+</Modal>
+
 <style>
   .code-viewer {
     display: flex;
@@ -900,6 +1119,14 @@
     background: rgba(125, 125, 125, 0.15);
     color: var(--text);
   }
+  .viewer-icon-btn:disabled {
+    opacity: 0.45;
+    cursor: default;
+  }
+  .viewer-icon-btn:disabled:hover {
+    background: transparent;
+    color: var(--text-muted);
+  }
   .viewer-icon-btn.active {
     background: rgba(59, 130, 246, 0.15);
     border-color: rgba(59, 130, 246, 0.35);
@@ -909,6 +1136,34 @@
     background: rgba(59, 130, 246, 0.25);
     border-color: rgba(59, 130, 246, 0.45);
     color: var(--accent);
+  }
+
+  .dirty-chip {
+    padding: 1px 6px;
+    border-radius: var(--r-sm);
+    background-color: var(--bg-muted);
+    color: var(--accent);
+    flex-shrink: 0;
+  }
+
+  /* Edit surface: raw text beats highlighting here, and the textarea owns the
+     whole body so the caret and scroll position stay predictable. */
+  .edit-area {
+    position: absolute;
+    inset: 0;
+    display: block;
+    width: 100%;
+    height: 100%;
+    padding: 12px 16px;
+    border: 0;
+    outline: none;
+    resize: none;
+    background-color: var(--bg);
+    color: var(--text);
+    line-height: 20px;
+    tab-size: var(--code-tab-size, 4);
+    white-space: pre;
+    overflow: auto;
   }
 
   /* Find Bar */

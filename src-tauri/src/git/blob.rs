@@ -216,6 +216,55 @@ async fn read_worktree_text(repo_path: &Path, path: &str) -> Result<BlobTextResu
     })
 }
 
+/// Overwrite an existing text file in the working tree.
+///
+/// The viewer edits real files, so this is deliberately narrow: the target
+/// must already exist as a regular file inside the repository, symlinks are
+/// rejected, and `.git` internals are off limits.
+pub async fn write_worktree_text(
+    repo_path: &Path,
+    path: &str,
+    text: &str,
+) -> Result<u64, AppError> {
+    if path
+        .split(|c| c == '/' || c == '\\')
+        .any(|part| part == ".git")
+    {
+        return Err(AppError::other("Refusing to edit inside .git"));
+    }
+
+    let full = worktree_path(repo_path, path)
+        .ok_or_else(|| AppError::other(format!("Invalid file path: {}", path)))?;
+
+    let meta = tokio::fs::symlink_metadata(&full)
+        .await
+        .map_err(|_| AppError::not_found(format!("File not found: {}", path)))?;
+    if !meta.file_type().is_file() {
+        return Err(AppError::other(format!("Not a regular file: {}", path)));
+    }
+
+    // Resolve the parent so a symlinked directory cannot redirect the write
+    // outside the repository.
+    let repo_root = tokio::fs::canonicalize(repo_path)
+        .await
+        .map_err(|e| AppError::other(e.to_string()))?;
+    let parent = full
+        .parent()
+        .ok_or_else(|| AppError::other(format!("Invalid file path: {}", path)))?;
+    let parent = tokio::fs::canonicalize(parent)
+        .await
+        .map_err(|e| AppError::other(e.to_string()))?;
+    if !parent.starts_with(&repo_root) {
+        return Err(AppError::other("Refusing to write outside the repository"));
+    }
+
+    tokio::fs::write(&full, text.as_bytes())
+        .await
+        .map_err(|e| AppError::other(e.to_string()))?;
+
+    Ok(text.len() as u64)
+}
+
 pub async fn get_blob_lines(
     runner: &GitRunner,
     repo_path: &Path,
@@ -349,5 +398,71 @@ mod tests {
 
         let err = get_blob_text(&runner, &repo.path, "HEAD", "nope.txt").await;
         assert!(err.is_err());
+    }
+
+    #[tokio::test]
+    async fn write_worktree_text_overwrites_the_working_copy() {
+        let runner = GitRunner::new();
+        let repo = TempRepo::new(&runner).await;
+
+        std::fs::write(repo.path.join("notes.txt"), "old\n").unwrap();
+        commit_all(&runner, &repo).await;
+
+        let written = write_worktree_text(&repo.path, "notes.txt", "new\nlines\n")
+            .await
+            .unwrap();
+        assert_eq!(written, 10);
+        assert_eq!(
+            std::fs::read_to_string(repo.path.join("notes.txt")).unwrap(),
+            "new\nlines\n"
+        );
+
+        // The committed blob is untouched: saving is a working-tree write.
+        let committed = get_blob_text(&runner, &repo.path, "HEAD", "notes.txt")
+            .await
+            .unwrap();
+        assert_eq!(committed.text, "old\n");
+    }
+
+    #[tokio::test]
+    async fn write_worktree_text_rejects_unsafe_paths() {
+        let runner = GitRunner::new();
+        let repo = TempRepo::new(&runner).await;
+
+        std::fs::write(repo.path.join("notes.txt"), "old\n").unwrap();
+        std::fs::create_dir_all(repo.path.join("dir")).unwrap();
+        commit_all(&runner, &repo).await;
+
+        for path in [
+            "../outside.txt",
+            "/etc/passwd",
+            ".git/config",
+            "missing.txt",
+            "dir",
+        ] {
+            assert!(
+                write_worktree_text(&repo.path, path, "x").await.is_err(),
+                "{path} should be rejected"
+            );
+        }
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn write_worktree_text_rejects_symlinks() {
+        let runner = GitRunner::new();
+        let repo = TempRepo::new(&runner).await;
+
+        let outside =
+            std::env::temp_dir().join(format!("vantage_write_test_{}", uuid::Uuid::new_v4()));
+        std::fs::write(&outside, "outside\n").unwrap();
+        std::os::unix::fs::symlink(&outside, repo.path.join("link.txt")).unwrap();
+
+        assert!(write_worktree_text(&repo.path, "link.txt", "x")
+            .await
+            .is_err());
+        assert_eq!(std::fs::read_to_string(&outside).unwrap(), "outside\n");
+
+        let _ = std::fs::remove_file(outside);
     }
 }

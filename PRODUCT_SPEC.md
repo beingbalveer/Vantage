@@ -7,7 +7,7 @@
 
 ## 1. Summary
 
-Vantage is a **lightweight, local, multi-repo Git client and read-only code viewer** for a solo developer who lets AI agents (Codex, Antigravity, etc.) write and commit the code. The human does not hand-edit code in this app. The human **reviews, understands, and steers**.
+Vantage is a **lightweight, local, multi-repo Git client with a read-only-by-default code viewer** for a solo developer who lets AI agents (Codex, Antigravity, etc.) write and commit the code. The human **reviews, understands, and steers**; browsing never writes. Hand edits happen only through an explicit edit mode in the file viewer.
 
 One line: *GitHub Desktop's calm simplicity, but multi-repo, history-first, with a "reviewed" marker, split panes, and a terminal per repo.*
 
@@ -419,10 +419,11 @@ Principle: **nothing destructive happens without a backup and a confirmation tha
 - **Discard changes…** dialog states file count; creates backup (section 6.2); toast with **Undo**.
 - Backup refs older than 30 days are pruned on app start (only `refs/relay/backup/*`).
 
-### F10. Code viewer (read-only)
+### F10. Code viewer (read-only by default)
 
-- **Files tab** in each pane: collapsible file tree at HEAD (from cached `ls-tree`) with filter input; selecting a file opens a read-only viewer to the right.
+- **Files tab** in each pane: collapsible file tree (tracked files at HEAD plus ignored dotenv files) with filter input; selecting a file opens a read-only viewer to the right.
 - Viewer: line numbers, syntax highlight, soft-wrap toggle, find-in-file (`Mod+F`, simple substring, highlight all, next/prev), **revision selector** chip ("HEAD", or a specific commit when opened from a diff), **Blame-lite:** hover a line gutter shows last-change commit via `git blame -L n,n --porcelain` (on demand, cached).
+- **Explicit edit mode:** a pencil icon switches a text file to a raw editor. The draft always comes from the working-tree copy (never the viewed revision), so saving cannot clobber uncommitted work. The tick icon or `Mod+S` saves; `Esc` or the ✕ cancels. Leaving the file, closing its tab, switching the pane view, or switching repositories while there are unsaved edits opens a Save / Discard / Cancel dialog. Writes are repo-relative, reject symlinks and `.git/`, and require the file to already exist. Binary and oversized files stay non-editable.
 - Opens at a given line (from diff "View file", terminal links, palette).
 - Large files (above 2 MB): show first 5,000 lines with notice and "Open in editor".
 - Always a button **Open in editor** using `external_editor_cmd` (hidden if unset).
