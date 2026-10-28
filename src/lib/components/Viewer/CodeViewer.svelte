@@ -53,10 +53,19 @@
   let saving = $state(false);
   let showingWorktree = $state(false);
   let editEl = $state<HTMLTextAreaElement | null>(null);
+  let highlightEl = $state<HTMLPreElement | null>(null);
   let leavePromptOpen = $state(false);
   let leaveResolve: ((ok: boolean) => void) | null = null;
+  let composing = $state(false);
 
   let dirty = $derived(editing && draft !== editBase);
+
+  /** Above this size, per-keystroke highlighting costs more than it is worth. */
+  const EDIT_HIGHLIGHT_LIMIT = 100_000;
+  let editHighlighted = $derived(editing && draft.length <= EDIT_HIGHLIGHT_LIMIT);
+  let highlightedDraft = $derived.by(() =>
+    editHighlighted ? highlightCodeLines(draft, language).join("\n") : ""
+  );
 
   // Single-file preview metadata. Text files use the existing line view;
   // images render inline; binaries and oversized blobs get an honest fallback.
@@ -367,7 +376,16 @@
       showingWorktree = true;
       editing = true;
       await tick();
+      // The read view may have been scrolled, and focusing the textarea can
+      // scroll its ancestors. Reset both layers after focus so the editor
+      // always opens at the top with the caret in the first line.
       editEl?.focus();
+      viewerBodyEl?.scrollTo({ top: 0, left: 0 });
+      if (editEl) {
+        editEl.scrollTop = 0;
+        editEl.scrollLeft = 0;
+        editEl.setSelectionRange(0, 0);
+      }
     } catch (e: any) {
       addToast({
         message: e?.message || `Couldn't read ${path} from the working tree`,
@@ -409,6 +427,13 @@
     draft = editBase;
     editing = false;
     showingWorktree = false;
+  }
+
+  /** Keep the highlight layer under the transparent textarea in sync. */
+  function syncEditScroll() {
+    if (!editEl || !highlightEl) return;
+    highlightEl.scrollTop = editEl.scrollTop;
+    highlightEl.scrollLeft = editEl.scrollLeft;
   }
 
   function resolveLeave(ok: boolean) {
@@ -883,7 +908,7 @@
   {/if}
 
   <!-- Code Body -->
-  <div class="code-body" bind:this={viewerBodyEl}>
+  <div class="code-body" class:edit-active={editing} bind:this={viewerBodyEl}>
     {#if isLoading}
       <div class="loading-state text-sm text-muted" role="status">Loading file…</div>
     {:else if showImage}
@@ -914,16 +939,25 @@
         onopenexternal={openExternally}
       />
     {:else if editing}
-      <textarea
-        bind:this={editEl}
-        bind:value={draft}
-        class="edit-area font-mono text-xs"
-        wrap={isWrapped ? "soft" : "off"}
-        spellcheck="false"
-        autocomplete="off"
-        autocapitalize="off"
-        aria-label={`Edit ${path}`}
-      ></textarea>
+      <div class="edit-surface font-mono text-xs">
+        {#if editHighlighted}
+          <pre class="edit-highlight" aria-hidden="true" bind:this={highlightEl}>{@html highlightedDraft}</pre>
+        {/if}
+        <textarea
+          bind:this={editEl}
+          bind:value={draft}
+          class="edit-area"
+          class:transparent={editHighlighted && !composing}
+          wrap="off"
+          spellcheck="false"
+          autocomplete="off"
+          autocapitalize="off"
+          aria-label={`Edit ${path}`}
+          onscroll={syncEditScroll}
+          oncompositionstart={() => (composing = true)}
+          oncompositionend={() => (composing = false)}
+        ></textarea>
+      </div>
     {:else if isMarkdown && previewMode}
       <!-- svelte-ignore a11y_click_events_have_key_events -->
       <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
@@ -1146,24 +1180,48 @@
     flex-shrink: 0;
   }
 
-  /* Edit surface: raw text beats highlighting here, and the textarea owns the
-     whole body so the caret and scroll position stay predictable. */
+  /* Edit surface: a transparent textarea sits over the same highlighter the
+     read view uses, so syntax colors survive while typing. Both layers share
+     every metric that affects layout. */
+  .edit-surface {
+    position: absolute;
+    inset: 0;
+    overflow: hidden;
+  }
+
+  .edit-highlight,
   .edit-area {
     position: absolute;
     inset: 0;
-    display: block;
-    width: 100%;
-    height: 100%;
+    box-sizing: border-box;
+    margin: 0;
     padding: 12px 16px;
     border: 0;
-    outline: none;
-    resize: none;
-    background-color: var(--bg);
-    color: var(--text);
     line-height: 20px;
     tab-size: var(--code-tab-size, 4);
     white-space: pre;
+    font-family: inherit;
+    font-size: inherit;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  .edit-highlight {
+    overflow: hidden;
+    pointer-events: none;
+    color: var(--text);
+    background-color: var(--bg);
+  }
+
+  .edit-area {
     overflow: auto;
+    resize: none;
+    outline: none;
+    color: var(--text);
+    background-color: transparent;
+  }
+  .edit-area.transparent {
+    color: transparent;
+    caret-color: var(--text);
   }
 
   /* Find Bar */
@@ -1236,6 +1294,11 @@
     flex: 1;
     overflow: auto;
     position: relative;
+  }
+  .code-body.edit-active {
+    /* The textarea owns scrolling while editing; the outer scroller would
+       otherwise offset the highlight layer. */
+    overflow: hidden;
   }
 
   .loading-state {
