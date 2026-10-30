@@ -34,7 +34,7 @@ pub async fn list_branches(
             repo_path,
             &[
                 "for-each-ref",
-                "--format=%(refname:short)\x1f%(upstream:short)\x1f%(HEAD)",
+                "--format=%(refname:short)\x1f%(upstream:short)\x1f%(HEAD)\x1f%(committerdate:iso-strict)",
                 "refs/heads",
             ],
         )
@@ -58,11 +58,17 @@ pub async fn list_branches(
             None
         };
         let is_head = parts.len() > 2 && parts[2].trim() == "*";
+        let updated_at = parts
+            .get(3)
+            .map(|s| s.trim())
+            .filter(|s| !s.is_empty())
+            .map(|s| s.to_string());
 
         branches.push(BranchInfo {
             name,
             upstream,
             is_head,
+            updated_at,
         });
     }
 
@@ -912,5 +918,30 @@ mod tests {
         let tags = list_tags(&runner, &repo.path).await.unwrap();
         assert_eq!(tags.len(), 1);
         assert_eq!(tags[0].target, first);
+    }
+
+    #[tokio::test]
+    async fn branch_list_includes_the_tip_commit_date() {
+        let runner = GitRunner::new();
+        let repo = TempTestRepo::new(&runner).await;
+        repo.commit(&runner, "a.txt", "one\n", "first").await;
+        runner
+            .run_write(&repo.path, &["branch", "feature"], 10)
+            .await
+            .unwrap();
+
+        let branches = list_branches(&runner, &repo.path).await.unwrap();
+        let head = branches.iter().find(|b| b.is_head).expect("HEAD branch");
+        let feature = branches
+            .iter()
+            .find(|b| b.name == "feature")
+            .expect("feature branch");
+
+        let updated = feature.updated_at.as_deref().expect("branch date");
+        assert_eq!(head.updated_at.as_deref(), Some(updated));
+        assert!(
+            chrono::DateTime::parse_from_rfc3339(updated).is_ok(),
+            "branch date must be ISO-8601, got {updated}"
+        );
     }
 }

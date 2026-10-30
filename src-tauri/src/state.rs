@@ -478,6 +478,8 @@ pub struct BranchInfo {
     pub name: String,
     pub upstream: Option<String>,
     pub is_head: bool,
+    /// Committer date of the branch tip, ISO-8601 (None for an unborn branch).
+    pub updated_at: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -378,7 +378,7 @@ Single scroll container for all files in scope, **virtualized by line**, with **
 
 ### F7. Branch & sync controls (GitHub Desktop style)
 
-- **Branch dropdown** in the pane header: searchable list of local branches, current checked; selecting checks it out. No create/delete/merge in v1 (a "Create branch…" entry is NOT included).
+- **Branch dropdown** in the pane header: searchable list of local branches, each showing the relative time of its tip commit, current checked; selecting checks it out. No create/delete/merge in v1 (a "Create branch…" entry is NOT included).
 - **One contextual Sync button** to the right, exactly one state at a time:
 
 | Condition | Label | Action |

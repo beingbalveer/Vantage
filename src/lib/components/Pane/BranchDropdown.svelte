@@ -5,6 +5,7 @@
   import * as api from "../../platform/api";
   import type { BranchInfo, RepoEntry, RepoStatus } from "../../platform/types";
   import Icon from "../common/Icon.svelte";
+  import { formatRelativeTime } from "../../domain/format";
 
   interface Props {
     repo: RepoEntry | null;
@@ -263,6 +264,14 @@
             {#if b.isHead}
               <span class="head-pill">HEAD</span>
             {/if}
+            {#if b.updatedAt}
+              <span
+                class="branch-option-time text-xs text-muted"
+                title={`Last updated ${new Date(b.updatedAt).toLocaleString()}`}
+              >
+                {formatRelativeTime(b.updatedAt)}
+              </span>
+            {/if}
             <span class="branch-check">{currentBranch === b.name ? "✓" : ""}</span>
           </button>
         {/each}
@@ -382,6 +391,9 @@
                 {b.name}
                 {#if b.isHead}
                   <span class="head-pill text-xs">HEAD</span>
+                {/if}
+                {#if b.updatedAt}
+                  <span class="picker-time text-muted">{formatRelativeTime(b.updatedAt)}</span>
                 {/if}
               </span>
               <button
@@ -609,6 +621,11 @@
     letter-spacing: -0.01em;
   }
 
+  .branch-option-time {
+    flex-shrink: 0;
+    white-space: nowrap;
+  }
+
   .head-pill {
     font-size: 9.5px;
     text-transform: uppercase;
@@ -770,6 +787,11 @@
     color: var(--text);
     font-family: var(--font-ui);
     letter-spacing: -0.01em;
+  }
+
+  .picker-time {
+    flex-shrink: 0;
+    white-space: nowrap;
   }
 
   .pick-btn {

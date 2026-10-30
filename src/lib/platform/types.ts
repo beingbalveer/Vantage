@@ -199,6 +199,8 @@ export interface BranchInfo {
   name: string;
   upstream: string | null;
   isHead: boolean;
+  /** Committer date of the branch tip (ISO-8601), or null for an unborn branch. */
+  updatedAt: string | null;
 }
 
 export interface StashEntry {
