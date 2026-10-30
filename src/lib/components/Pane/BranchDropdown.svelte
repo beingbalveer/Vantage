@@ -511,10 +511,10 @@
     top: calc(100% + 6px);
     left: 0;
     z-index: 101;
-    width: 280px;
-    min-width: 240px;
-    max-width: 360px;
-    max-height: 420px;
+    width: 330px;
+    min-width: 280px;
+    max-width: 400px;
+    max-height: min(560px, 70vh);
     display: flex;
     flex-direction: column;
     background-color: var(--bg);
@@ -529,7 +529,7 @@
   }
 
   .branch-menu-header {
-    padding: 6px 10px 6px;
+    padding: 8px 12px 4px;
   }
 
   .menu-title {
@@ -541,12 +541,12 @@
   }
 
   .menu-search {
-    padding: 4px 6px 6px;
+    padding: 6px 8px 8px;
   }
 
   .branch-filter-input {
     width: 100%;
-    height: 30px;
+    height: 32px;
     padding: 0 10px;
     font-size: 12.5px;
     background-color: var(--bg-subtle);
@@ -564,19 +564,20 @@
 
   .branch-list {
     flex: 1;
+    min-height: 0;
     overflow-y: auto;
-    max-height: 260px;
+    max-height: 340px;
     display: flex;
     flex-direction: column;
-    gap: 2px;
+    gap: 4px;
   }
 
   .branch-option {
     display: flex;
     align-items: center;
-    gap: 8px;
+    gap: 10px;
     width: 100%;
-    padding: 7px 10px;
+    padding: 9px 12px;
     border: none;
     background: transparent;
     color: var(--text);
@@ -623,7 +624,10 @@
 
   .branch-option-time {
     flex-shrink: 0;
+    min-width: 56px;
+    text-align: right;
     white-space: nowrap;
+    font-variant-numeric: tabular-nums;
   }
 
   .head-pill {
@@ -772,7 +776,7 @@
     display: flex;
     align-items: center;
     justify-content: space-between;
-    padding: 6px 8px;
+    padding: 8px 10px;
     border-radius: var(--r-sm);
   }
 
