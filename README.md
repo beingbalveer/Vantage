@@ -157,7 +157,7 @@ Press `?` inside Vantage at any time to open the interactive keyboard shortcut o
 | `Mod+W` | Close active file tab (Files tab); close focused pane elsewhere |
 | `Mod+Shift+W` | Close all file tabs (Files tab) |
 | `Ctrl+Tab` / `Ctrl+Shift+Tab` | Next / previous file tab (Files tab) |
-| `Mod+B` | Toggle sidebar; search files in the Files tab |
+| `Mod+B` | Search files (Files tab) |
 | `Mod+Shift+E` | Search files (Files tab) |
 | `Mod+S` | Save the file being edited (Files tab) |
 | `` Mod+` `` | Toggle terminal drawer in focused pane |

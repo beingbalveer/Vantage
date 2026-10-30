@@ -28,7 +28,7 @@ const ALLOWLIST: Array<{ pattern: RegExp; reason: string }> = [
   {
     pattern: /\brelay_[a-z0-9_]+/gi,
     reason:
-      "legacy persisted storage key read as a fallback (relay_sidebar_collapsed, …) — renaming breaks saved user state",
+      "legacy persisted storage key read as a fallback (relay_saved_layouts, …) — renaming breaks saved user state",
   },
   {
     pattern: /\bRELAY-UI\b/gi,

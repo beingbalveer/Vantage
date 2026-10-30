@@ -6,7 +6,6 @@
     addRepoDialogOpen,
     settingsOpen,
     shortcutsHelpOpen,
-    sidebarCollapsed,
     openDialog,
     openTagCreateDialog,
     addRepoInitialTab,
@@ -260,15 +259,6 @@
         },
       },
       {
-        id: "cmd_toggle_sidebar",
-        title: "Toggle sidebar",
-        shortcut: "Mod+B",
-        action: () => {
-          $paletteOpen = false;
-          $sidebarCollapsed = !$sidebarCollapsed;
-        },
-      },
-      {
         id: "cmd_toggle_whitespace",
         title: "Toggle ignore whitespace",
         shortcut: "w",
@@ -506,7 +496,6 @@
       "cmd_browse_repo",
       "cmd_switch_tab",
       "cmd_toggle_terminal",
-      "cmd_toggle_sidebar",
       "cmd_toggle_whitespace",
       "cmd_sync",
       "cmd_open_editor",

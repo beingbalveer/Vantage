@@ -26,7 +26,6 @@ import {
   paletteOpen,
   settingsOpen,
   shortcutsHelpOpen,
-  sidebarCollapsed,
 } from "./ui";
 import { dismissTopmostOverlay, getActiveContexts, runCommand } from "./commands";
 
@@ -66,7 +65,7 @@ export function clampMenuPosition(
   };
 }
 
-/** Event listened to by `BranchDropdown.svelte` or `TopHeader.svelte` to open branch selection. */
+/** Event reserved for the branch selection surface. */
 export const OPEN_BRANCH_MENU_EVENT = "vantage:open-branch-menu";
 
 function focusedRepoId(): string | null {
@@ -228,14 +227,6 @@ export async function dispatchMenuCommand(command: string): Promise<void> {
 
     case "view-toggle-terminal":
       toggleTerminalInPane(get(focusedPaneIndex));
-      return;
-
-    case "view-toggle-sidebar":
-      // Same accelerator shadowing as ⌘W: in the Files tab ⌘B focuses the
-      // explorer's file search, matching the webview shortcut table.
-      if (getActiveContexts().includes("dialog-open")) return;
-      if (!getActiveContexts().includes("terminal") && runCommand("focus_file_search")) return;
-      sidebarCollapsed.update((collapsed) => !collapsed);
       return;
 
     case "help-shortcuts":

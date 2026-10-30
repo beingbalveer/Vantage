@@ -205,7 +205,7 @@ mod tests {
             r#"{
                 "version": 1,
                 "repos": [],
-                "layout": { "paneCount": 1, "panes": [{ "repoId": null, "tab": "history", "widths": null }], "sidebarWidth": 232, "sidebarCollapsed": false, "terminalHeight": 240, "terminalOpen": false, "windowBounds": null },
+                "layout": { "paneCount": 1, "panes": [{ "repoId": null, "tab": "history", "widths": null }], "terminalHeight": 240, "terminalOpen": false, "windowBounds": null },
                 "settings": { "theme": "dark", "diffMode": "unified", "ignoreWhitespace": false, "contextLines": 3, "autoFetchMinutes": 5, "shell": null, "externalEditorCmd": null, "commitMessageCmd": null, "terminalFontSize": 13, "uiScale": 1.0 },
                 "windowBounds": null
             }"#,

@@ -428,9 +428,10 @@
     position: relative;
     display: flex;
     align-items: center;
-    height: 24px;
+    height: var(--tree-row-height);
     cursor: pointer;
-    font-size: 12.5px;
+    font-size: var(--tree-font-size);
+    line-height: 1.2;
     transition: background 80ms ease;
   }
   .tree-row:hover {
@@ -440,13 +441,8 @@
     background: rgba(255, 255, 255, 0.05);
   }
   .tree-row.selected {
-    background: rgba(59, 130, 246, 0.15) !important;
-    color: #2563eb;
-    font-weight: 500;
-  }
-  :global([data-theme="dark"]) .tree-row.selected {
-    background: rgba(59, 130, 246, 0.25) !important;
-    color: #60a5fa;
+    background-color: var(--bg-muted);
+    color: var(--text);
   }
   .tree-row.focused:not(.selected) {
     outline: 1px dotted var(--text-muted);

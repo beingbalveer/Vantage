@@ -18,13 +18,11 @@
     addRepoDialogOpen,
     settingsOpen,
     shortcutsHelpOpen,
-    sidebarCollapsed,
     addToast,
   } from "./lib/app/ui";
   import { operationStatus } from "./lib/domain/stores/operation";
   import { isFeatureEnabled } from "./lib/config/featureFlags.svelte";
   import { matchShortcut } from "./lib/platform/keys";
-  import { viewportPaneWidths, savedPaneWidth } from "./lib/app/layout";
   import { dispatchKeyboard } from "./lib/app/commands";
   import * as api from "./lib/platform/api";
   import type { Layout, RepoEntry, RepoStatus } from "./lib/platform/types";
@@ -88,25 +86,6 @@
     if (!repoId) return null;
     return statusMap[repoId] || null;
   }
-
-  // Slidable Sidebar Width
-  let sidebarWidth = $state(savedPaneWidth("vantage_sidebar_width", viewportPaneWidths().sidebar));
-
-  const startSidebarResize = createHorizontalResizer({
-    getWidth: () => sidebarWidth,
-    setWidth: (w) => (sidebarWidth = w),
-    minWidth: 160,
-    maxWidth: 450,
-    storageKey: "vantage_sidebar_width",
-  });
-
-  const nudgeSidebarResize = createHorizontalResizerKeyboard({
-    getWidth: () => sidebarWidth,
-    setWidth: (w) => (sidebarWidth = w),
-    minWidth: 160,
-    maxWidth: 450,
-    storageKey: "vantage_sidebar_width",
-  });
 
   async function checkEnv() {
     try {
@@ -204,8 +183,6 @@
         // layout survives a restart instead of always re-splitting equally.
         widths: paneWidths[i] ? [paneWidths[i]] : null,
       })),
-      sidebarWidth,
-      sidebarCollapsed: $sidebarCollapsed,
       terminalHeight: $panes[0]?.terminalHeight ?? 240,
       terminalOpen: $panes.slice(0, count).some((p) => p.terminalOpen),
       windowBounds: null,
@@ -218,7 +195,7 @@
     // re-runs for values it actually tracks. Keeping the signature explicit
     // (rather than calling persistLayout directly) also debounces drags.
     const signature =
-      `${$paneCount}|${sidebarWidth}|${$sidebarCollapsed}|${paneWidths.join(",")}|` +
+      `${$paneCount}|${paneWidths.join(",")}|` +
       $panes
         .slice(0, $paneCount)
         .map((p) => `${p.id}:${p.repoId}:${p.tab}:${p.terminalOpen}:${p.terminalHeight}`)
@@ -320,12 +297,6 @@
       return;
     }
 
-    if (matchShortcut(e, "Mod+B")) {
-      e.preventDefault();
-      $sidebarCollapsed = !$sidebarCollapsed;
-      return;
-    }
-
     // Panes: cycle 1→2→3→1, focus 1/2/3, close the focused pane.
     if (matchShortcut(e, "Mod+\\")) {
       e.preventDefault();
@@ -378,33 +349,11 @@
 
 <div class="app-layout">
   <!-- Single window header; height is owned by TopHeader. -->
-  <TopHeader />
+  <TopHeader {hostWidth} />
 
   <!-- Workspace: Resizable Sidebar + 1-3 side-by-side panes -->
   <div class="workspace">
-    <Sidebar width={sidebarWidth} />
-
-    {#if !$sidebarCollapsed}
-      <!-- svelte-ignore a11y_no_noninteractive_tabindex -->
-      <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
-      <div
-        class="split-handle"
-        role="separator"
-        aria-orientation="vertical"
-        aria-label="Resize repositories pane"
-        aria-valuemin={160}
-        aria-valuemax={450}
-        aria-valuenow={Math.round(sidebarWidth)}
-        tabindex="0"
-        title="Drag to resize sidebar (Double-click to reset, Arrow keys to nudge)"
-        onpointerdown={startSidebarResize}
-        onkeydown={nudgeSidebarResize}
-        ondblclick={() => {
-          sidebarWidth = viewportPaneWidths().sidebar;
-          try { localStorage.setItem("vantage_sidebar_width", String(sidebarWidth)); } catch {}
-        }}
-      ></div>
-    {/if}
+    <Sidebar />
 
     <main class="panes-host" bind:clientWidth={hostWidth}>
       {#each visiblePanes as pane, i (pane.id)}
@@ -504,33 +453,6 @@
     flex: 1;
     display: flex;
     overflow: hidden;
-  }
-
-  .split-handle {
-    width: 8px;
-    margin: 0 -4px;
-    height: 100%;
-    position: relative;
-    cursor: col-resize;
-    z-index: 50;
-    flex-shrink: 0;
-    user-select: none;
-    background: transparent;
-  }
-  .split-handle::after {
-    content: "";
-    position: absolute;
-    top: 0;
-    bottom: 0;
-    left: 3.5px;
-    width: 1px;
-    background-color: var(--border-subtle);
-    transition: background-color 100ms ease;
-  }
-  .split-handle:hover::after,
-  .split-handle:active::after,
-  .split-handle:focus-visible::after {
-    background-color: var(--accent);
   }
 
   .panes-host {

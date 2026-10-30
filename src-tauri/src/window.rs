@@ -371,8 +371,6 @@ mod tests {
                 tab: "files".into(),
                 widths: None,
             }],
-            sidebar_width: 300.0,
-            sidebar_collapsed: true,
             terminal_height: 200.0,
             terminal_open: true,
             window_bounds: None,
@@ -381,7 +379,6 @@ mod tests {
         let merged = apply_layout_window_bounds(&layout, incoming);
         assert_eq!(merged.window_bounds, Some(stored));
         assert_eq!(merged.pane_count, 2);
-        assert_eq!(merged.sidebar_width, 300.0);
     }
 
     #[test]

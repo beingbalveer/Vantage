@@ -1,16 +1,11 @@
 <script lang="ts">
   import { onDestroy } from "svelte";
   import { sortedRepos, statuses, loadRepos, reorderRepos } from "../../domain/stores/repos";
-  import { sidebarCollapsed, addRepoDialogOpen, addToast } from "../../app/ui";
+  import { addRepoDialogOpen, addToast } from "../../app/ui";
   import * as api from "../../platform/api";
   import { moveItem, findDropTarget, type DropPosition } from "../../domain/reorder";
   import RepoRow from "./RepoRow.svelte";
   import Icon from "../common/Icon.svelte";
-
-  interface Props {
-    width?: number;
-  }
-  let { width = 232 }: Props = $props();
 
   let repoList = $derived($sortedRepos);
   let statusMap = $derived($statuses);
@@ -274,8 +269,7 @@
 </script>
 
 <aside
-  class="relay-sidebar {$sidebarCollapsed ? 'collapsed' : ''}"
-  style={$sidebarCollapsed ? "" : `width: ${width}px;`}
+  class="relay-sidebar"
   ondragover={handleDragOver}
   ondragleave={handleDragLeave}
   ondrop={handleDrop}
@@ -318,6 +312,7 @@
 
 <style>
   .relay-sidebar {
+    width: 60px;
     height: 100%;
     background: var(--bg-subtle);
     border-right: 1px solid var(--border);
@@ -329,15 +324,11 @@
     z-index: 25;
   }
 
-  .relay-sidebar.collapsed {
-    width: 60px;
-  }
-
   .repo-list {
     flex: 1;
     overflow-y: auto;
     overflow-x: hidden;
-    padding: 5px 0 0;
+    padding: 8px 0 0;
   }
 
   .repo-list-end {

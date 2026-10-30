@@ -183,6 +183,7 @@ pub async fn query_repo_status(
             new_commit_count: 0,
             marker_state: MarkerState::None,
             last_activity_at: None,
+            last_fetched_at: None,
             is_checked_out: target_branch.is_none(),
             error: Some("Repository path does not exist".to_string()),
         };
@@ -218,6 +219,7 @@ pub async fn query_repo_status(
                     new_commit_count: 0,
                     marker_state: MarkerState::None,
                     last_activity_at: None,
+                    last_fetched_at: None,
                     is_checked_out: target_branch.is_none(),
                     error: Some(out.stderr),
                 };
@@ -239,6 +241,7 @@ pub async fn query_repo_status(
                 new_commit_count: 0,
                 marker_state: MarkerState::None,
                 last_activity_at: None,
+                last_fetched_at: None,
                 is_checked_out: target_branch.is_none(),
                 error: Some(e.message),
             };
@@ -294,6 +297,7 @@ pub async fn query_repo_status(
 
     // Determine last_activity_at
     let last_activity_at = get_last_activity(runner, repo_path, target_branch).await;
+    let last_fetched_at = get_last_fetch_at(runner, repo_path).await;
 
     let git_dir = crate::git::ops::get_real_git_dir(runner, repo_path)
         .await
@@ -372,9 +376,35 @@ pub async fn query_repo_status(
         new_commit_count,
         marker_state,
         last_activity_at,
+        last_fetched_at,
         is_checked_out,
         error: None,
     }
+}
+
+/// Timestamp of the last fetch/pull, from `FETCH_HEAD`'s mtime. This also
+/// covers fetches run by the terminal or an agent, not just this app.
+async fn get_last_fetch_at(runner: &GitRunner, repo_path: &Path) -> Option<String> {
+    let out = runner
+        .run_read(repo_path, &["rev-parse", "--git-path", "FETCH_HEAD"])
+        .await
+        .ok()?;
+    if !out.success() {
+        return None;
+    }
+    let rel = out.stdout_string().trim().to_string();
+    if rel.is_empty() {
+        return None;
+    }
+    let rel_path = Path::new(&rel);
+    let full = if rel_path.is_absolute() {
+        rel_path.to_path_buf()
+    } else {
+        repo_path.join(rel_path)
+    };
+    let modified = tokio::fs::metadata(&full).await.ok()?.modified().ok()?;
+    let when: chrono::DateTime<chrono::Utc> = modified.into();
+    Some(when.to_rfc3339())
 }
 
 async fn get_last_activity(
@@ -524,5 +554,28 @@ mod tests {
         assert_eq!(detect_operation(&git_dir), Some(OperationKind::Rebase));
 
         let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[tokio::test]
+    async fn last_fetch_at_reads_fetch_head_mtime() {
+        let runner = GitRunner::new();
+        let repo =
+            std::env::temp_dir().join(format!("vantage_fetch_head_{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&repo).unwrap();
+        runner.run_write(&repo, &["init"], 10).await.unwrap();
+
+        assert_eq!(get_last_fetch_at(&runner, &repo).await, None);
+
+        std::fs::write(
+            repo.join(".git/FETCH_HEAD"),
+            "abc123\t\tbranch 'main' of https://example.com/repo\n",
+        )
+        .unwrap();
+        let stamp = get_last_fetch_at(&runner, &repo)
+            .await
+            .expect("FETCH_HEAD should produce a timestamp");
+        assert!(chrono::DateTime::parse_from_rfc3339(&stamp).is_ok());
+
+        let _ = std::fs::remove_dir_all(&repo);
     }
 }

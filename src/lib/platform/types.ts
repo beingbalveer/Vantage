@@ -36,6 +36,7 @@ export interface RepoStatus {
   newCommitCount: number;
   markerState: MarkerState;
   lastActivityAt: string | null;
+  lastFetchedAt: string | null;
   error: string | null;
   isCheckedOut?: boolean;
 }
@@ -166,6 +167,7 @@ export interface Settings {
   commitMessageCmd: string | null;
   terminalFontSize: number;
   codeFontSize: number;
+  treeFontSize: number;
   uiScale: number;
   defaultBranch: string;
   tabSize: number;
@@ -188,8 +190,6 @@ export interface WindowBounds {
 export interface Layout {
   paneCount: number;
   panes: PaneLayout[];
-  sidebarWidth: number;
-  sidebarCollapsed: boolean;
   terminalHeight: number;
   terminalOpen: boolean;
   windowBounds: WindowBounds | null;

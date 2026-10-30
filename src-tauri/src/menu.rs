@@ -37,7 +37,6 @@ pub enum MenuAction {
     FocusPane2,
     FocusPane3,
     ToggleTerminal,
-    ToggleSidebar,
     HelpShortcuts,
 }
 
@@ -58,7 +57,6 @@ impl MenuAction {
         MenuAction::FocusPane2,
         MenuAction::FocusPane3,
         MenuAction::ToggleTerminal,
-        MenuAction::ToggleSidebar,
         MenuAction::HelpShortcuts,
     ];
 
@@ -80,7 +78,6 @@ impl MenuAction {
             MenuAction::FocusPane2 => "view-focus-pane-2",
             MenuAction::FocusPane3 => "view-focus-pane-3",
             MenuAction::ToggleTerminal => "view-toggle-terminal",
-            MenuAction::ToggleSidebar => "view-toggle-sidebar",
             MenuAction::HelpShortcuts => "help-shortcuts",
         }
     }
@@ -102,7 +99,6 @@ impl MenuAction {
             MenuAction::FocusPane2 => "Focus Pane 2",
             MenuAction::FocusPane3 => "Focus Pane 3",
             MenuAction::ToggleTerminal => "Toggle Terminal",
-            MenuAction::ToggleSidebar => "Toggle Sidebar",
             MenuAction::HelpShortcuts => "Keyboard Shortcuts",
         }
     }
@@ -151,7 +147,6 @@ pub fn build<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<Menu<R>> {
     let focus_pane_2 = item(app, MenuAction::FocusPane2, Some("CmdOrCtrl+2"))?;
     let focus_pane_3 = item(app, MenuAction::FocusPane3, Some("CmdOrCtrl+3"))?;
     let toggle_terminal = item(app, MenuAction::ToggleTerminal, Some("CmdOrCtrl+`"))?;
-    let toggle_sidebar = item(app, MenuAction::ToggleSidebar, Some("CmdOrCtrl+B"))?;
 
     let help_shortcuts = item(app, MenuAction::HelpShortcuts, None)?;
 
@@ -259,7 +254,6 @@ pub fn build<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<Menu<R>> {
             &focus_pane_3,
             &PredefinedMenuItem::separator(app)?,
             &toggle_terminal,
-            &toggle_sidebar,
         ],
     )?;
 

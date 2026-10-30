@@ -1,8 +1,13 @@
 /** Approved prototype defaults; saved user dimensions take precedence. */
+import { writable } from "svelte/store";
+
+/** Per-pane leading column width, published by each Pane for the header. */
+export const paneLeftColumnWidths = writable<Record<number, number>>({});
+
 export function defaultPaneWidths(viewport: number) {
-  if (viewport >= 1750) return { sidebar: 268, commits: 292, files: 300 };
-  if (viewport <= 1400) return { sidebar: 222, commits: 244, files: 235 };
-  return { sidebar: 246, commits: 274, files: 260 };
+  if (viewport >= 1750) return { commits: 292, files: 300 };
+  if (viewport <= 1400) return { commits: 244, files: 235 };
+  return { commits: 274, files: 260 };
 }
 export function viewportPaneWidths() {
   return defaultPaneWidths(typeof window === "undefined" ? 1600 : window.innerWidth);

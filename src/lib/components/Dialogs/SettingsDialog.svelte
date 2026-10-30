@@ -439,6 +439,27 @@
           <p class="setting-desc text-xs text-muted">
             Text size for the Files viewer and editor, in pixels (10–20).
           </p>
+
+          <div class="setting-row">
+            <span class="setting-title text-strong">Explorer font size</span>
+            <div class="setting-num-wrap">
+              <Input
+                type="number"
+                min="10"
+                max="18"
+                size="sm"
+                value={String(currentSettings.treeFontSize)}
+                onchange={(e: Event) =>
+                  handleSaveField(
+                    "treeFontSize",
+                    parseInt((e.target as HTMLInputElement).value, 10) || 13
+                  )}
+              />
+            </div>
+          </div>
+          <p class="setting-desc text-xs text-muted">
+            Text size for the file tree, in pixels (10–18).
+          </p>
         {:else if activeSection === "git"}
           <h3 class="text-strong">Git Preferences</h3>
 

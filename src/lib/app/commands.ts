@@ -15,7 +15,6 @@ import {
   shortcutsHelpOpen,
   addRepoDialogOpen,
   scanFolderDialogOpen,
-  sidebarCollapsed,
   activeDialog,
   closeDialog,
   openDialog,
@@ -479,9 +478,6 @@ const GLOBAL_HANDLERS: Record<string, Handler> = {
     addRepoDialogOpen.set(true);
   },
   browse_repo: browseRepo,
-  toggle_sidebar: () => {
-    sidebarCollapsed.update((v) => !v);
-  },
   prev_repo: () => moveRepo(-1),
   next_repo: () => moveRepo(1),
   settings: () => {

@@ -4,18 +4,26 @@
   import { repos, statuses, loadRepos, refreshSingleStatus } from "../../domain/stores/repos";
   import {
     panes,
+    paneCount,
     focusedPaneIndex,
     toggleTerminalInPane,
     setPaneTab,
   } from "../../domain/stores/panes";
-  import { paletteOpen, settingsOpen, shortcutsHelpOpen, sidebarCollapsed, addToast } from "../../app/ui";
+  import { paneLeftColumnWidths, defaultLeftColumnWidth } from "../../app/layout";
+  import BranchMenu from "./BranchMenu.svelte";
+  import { paletteOpen, settingsOpen, shortcutsHelpOpen, addToast } from "../../app/ui";
   import { setOperationRunning, setOperationSuccess, setOperationError } from "../../domain/stores/operation";
-  import { formatRelativeTime } from "../../domain/format";
+  import { formatRelativeTimeLong } from "../../domain/format";
   import { registerDismiss } from "../../app/commands";
   import * as api from "../../platform/api";
   import Icon from "../common/Icon.svelte";
   import { Modal } from "../common";
-  import BranchDropdown from "../Pane/BranchDropdown.svelte";
+
+  interface Props {
+    hostWidth?: number;
+  }
+
+  let { hostWidth = 0 }: Props = $props();
 
   // Dev runs (`npm run dev:app`, `npm run dev:bundle`) mark themselves so they
   // are never mistaken for the release app.
@@ -37,8 +45,6 @@
   let busyOp = $state<null | "fetch" | "pull" | "push">(null);
   let isSyncing = $derived(busyOp !== null);
 
-  // Timestamps of last successful fetch per repo ID
-  let lastFetchedMap = $state<Record<string, number>>({});
   let clockNow = $state(Date.now());
 
   $effect(() => {
@@ -48,77 +54,47 @@
     return () => clearInterval(timer);
   });
 
-  // Calculate the primary action according to git state (GitHub Desktop style)
-  let actionType = $derived.by<"pull" | "push" | "fetch">(() => {
-    if (!activeStatus) return "fetch";
-    if (activeStatus.behind > 0) return "pull";
-    if (activeStatus.ahead > 0 || !activeStatus.upstream) return "push";
-    return "fetch";
-  });
-
   let hasUpstream = $derived(!!activeStatus?.upstream);
 
-  let syncLabel = $derived.by(() => {
-    if (busyOp === "fetch") return "Fetching…";
-    if (busyOp === "pull") return "Pulling…";
-    if (busyOp === "push") return hasUpstream ? "Pushing…" : "Publishing…";
-
-    if (actionType === "pull") return "Pull";
-    if (actionType === "push") return hasUpstream ? "Push" : "Publish";
-    return "Fetch";
+  // The header sits above the workspace, so place the Fetch control exactly on
+  // the leading column's right edge (sidebar + focused pane + pane left col).
+  const SIDEBAR_COLLAPSED_WIDTH = 60;
+  const PANE_HANDLE_WIDTH = 4;
+  let sidebarSlot = SIDEBAR_COLLAPSED_WIDTH;
+  let singlePaneWidth = $derived.by(() => {
+    const count = $paneCount;
+    return count > 1 ? Math.max(0, (hostWidth - (count - 1) * PANE_HANDLE_WIDTH) / count) : 0;
   });
+  let focusedIndex = $derived(Math.min($focusedPaneIndex, $paneCount - 1));
+  let paneOffset = $derived(focusedIndex * (singlePaneWidth + PANE_HANDLE_WIDTH));
+  let focusedLeftCol = $derived(
+    $paneLeftColumnWidths[focusedIndex] ?? defaultLeftColumnWidth()
+  );
+  const HEADER_SAFE_LEFT = 84;
+  let paneStart = $derived(sidebarSlot + paneOffset);
+  let branchLeft = $derived(Math.max(paneStart, HEADER_SAFE_LEFT));
+  let branchWidth = $derived(Math.max(0, focusedLeftCol - (branchLeft - paneStart)));
+  let fetchLeft = $derived(paneStart + focusedLeftCol);
 
-  let syncIconName = $derived.by<"refresh" | "arrow-down" | "arrow-up">(() => {
-    if (busyOp || actionType === "fetch") return "refresh";
-    if (actionType === "pull") return "arrow-down";
-    return "arrow-up";
-  });
-
-  let syncCount = $derived.by(() => {
-    if (busyOp) return 0;
-    if (actionType === "pull") return activeStatus?.behind || 0;
-    if (actionType === "push" && hasUpstream) return activeStatus?.ahead || 0;
-    return 0;
+  /** Relative time of the last fetch/pull, read from FETCH_HEAD. */
+  let lastFetchedLabel = $derived.by(() => {
+    void clockNow;
+    const at = activeStatus?.lastFetchedAt;
+    return at ? formatRelativeTimeLong(at) : "not fetched yet";
   });
 
   let syncTooltip = $derived.by(() => {
     void clockNow;
     if (busyOp === "fetch") return "Fetching from origin…";
-    if (busyOp === "pull") return "Pulling from origin…";
-    if (busyOp === "push") return hasUpstream ? "Pushing to origin…" : "Publishing branch to origin…";
-
-    if (actionType === "pull") {
-      const behind = activeStatus?.behind || 0;
-      const ahead = activeStatus?.ahead || 0;
-      if (ahead > 0) {
-        return `Pull ${behind} commit${behind === 1 ? "" : "s"}, push ${ahead} commit${ahead === 1 ? "" : "s"}`;
-      }
-      return `Pull ${behind} commit${behind === 1 ? "" : "s"} from origin`;
-    }
-
-    if (actionType === "push") {
-      if (!hasUpstream) return "Publish this branch to origin";
-      const ahead = activeStatus?.ahead || 0;
-      return `Push ${ahead} commit${ahead === 1 ? "" : "s"} to origin`;
-    }
-
-    const lastTime = activeRepo ? lastFetchedMap[activeRepo.id] : null;
-    if (lastTime) {
-      const rel = formatRelativeTime(new Date(lastTime).toISOString());
-      return rel === "just now" ? "Fetch from origin · Last fetched just now" : `Fetch from origin · Last fetched ${rel}`;
-    }
-    if (activeStatus?.lastActivityAt) {
-      return `Fetch from origin · Active ${formatRelativeTime(activeStatus.lastActivityAt)}`;
-    }
-    return "Fetch from origin";
+    if (busyOp) return "Another remote operation is running…";
+    const last = activeStatus?.lastFetchedAt;
+    return last
+      ? `Fetch · Last fetched ${formatRelativeTimeLong(last)}`
+      : "Fetch";
   });
 
   function handleToggleTerminal() {
     toggleTerminalInPane($focusedPaneIndex);
-  }
-
-  function handleToggleSidebar() {
-    $sidebarCollapsed = !$sidebarCollapsed;
   }
 
   async function runGit(operation: "fetch" | "pull" | "push") {
@@ -137,15 +113,12 @@
     try {
       if (operation === "fetch") {
         await api.syncFetch(target.id);
-        lastFetchedMap[target.id] = Date.now();
         setOperationSuccess(`Fetched ${target.name}`);
       } else if (operation === "pull") {
         await api.syncPull(target.id);
-        lastFetchedMap[target.id] = Date.now();
         setOperationSuccess(`Pulled ${target.name}`);
       } else {
         await api.syncPush(target.id, !target.hasUpstream);
-        lastFetchedMap[target.id] = Date.now();
         setOperationSuccess(target.hasUpstream ? `Pushed ${target.name}` : `Published ${target.branch}`);
       }
       await refreshSingleStatus(target.id);
@@ -185,40 +158,35 @@
   <div class="header-left">
     <div class="traffic-lights-spacer" data-tauri-drag-region></div>
 
-    <button
-      class="icon-button"
-      onclick={handleToggleSidebar}
-      title="Toggle repositories (⌘B)"
-      aria-label="Toggle repositories"
-      aria-expanded={!$sidebarCollapsed}
-    >
-      <Icon name="sidebar" size={16} />
-    </button>
-
     {#if activeRepo}
-      <span class="operation-divider"></span>
+      <BranchMenu
+        repo={activeRepo}
+        status={activeStatus}
+        left={branchLeft}
+        width={branchWidth}
+      />
 
-      <div class="header-branch">
-        <BranchDropdown repo={activeRepo} status={activeStatus} inline />
-      </div>
-
-      <span class="operation-divider"></span>
-
-      <!-- Combined GitHub Desktop-style button matching original fetch button style -->
+      <!-- Fetch: icon + action and the last-fetch time from FETCH_HEAD -->
       <button
-        class="operation"
+        class="operation fetch-button"
+        style="left: {fetchLeft}px"
         class:is-busy={isSyncing}
-        disabled={!activeRepo || isSyncing || (actionType !== "fetch" && isInactiveView)}
-        onclick={() => runGit(actionType)}
+        disabled={!activeRepo || isSyncing}
+        onclick={() => runGit("fetch")}
         title={syncTooltip}
-        aria-label={syncLabel}
+        aria-label={activeStatus?.lastFetchedAt
+          ? `Fetch, last fetched ${lastFetchedLabel}`
+          : "Fetch"}
       >
-        <span class="op-icon" class:spinning={isSyncing}>
-          <Icon name={syncIconName} size={14} />
+        <span class="op-icon fetch-icon" class:spinning={busyOp === "fetch"}>
+          <Icon name="refresh" size={18} />
         </span>
-        {#if syncCount > 0}
-          <span class="op-count">{syncCount}</span>
-        {/if}
+        <span class="fetch-text">
+          <span class="fetch-title text-strong">
+            {busyOp === "fetch" ? "Fetching…" : "Fetch"}
+          </span>
+          <span class="fetch-sub text-xs text-muted">{lastFetchedLabel}</span>
+        </span>
       </button>
     {/if}
   </div>
@@ -360,7 +328,7 @@
 <style>
   .top-header {
     /* 18px center line; Tauri's native titlebar inset is 18 (not CSS top). */
-    --header-height: 36px;
+    --header-height: 43px;
     height: var(--header-height);
     min-height: var(--header-height);
     flex-shrink: 0;
@@ -402,14 +370,6 @@
     border-radius: var(--r-sm);
     flex-shrink: 0;
     user-select: none;
-  }
-
-  .header-branch {
-    display: flex;
-    align-items: center;
-    min-width: 0;
-    max-width: 240px;
-    flex-shrink: 0;
   }
 
   .icon-button {
@@ -478,6 +438,41 @@
     cursor: wait !important;
   }
 
+  /* Two-line fetch control: icon left, action and last-fetch time stacked. */
+  .fetch-button {
+    position: absolute;
+    top: 50%;
+    transform: translateY(-50%);
+    flex-direction: row;
+    align-items: center;
+    justify-content: flex-start;
+    gap: 10px;
+    min-width: 160px;
+    height: 34px;
+    padding: 0 10px;
+    background: var(--bg-muted);
+    border-left: 1px solid var(--border);
+    border-right: 1px solid var(--border);
+  }
+  .fetch-icon {
+    flex-shrink: 0;
+  }
+  .fetch-text {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 0;
+    min-width: 0;
+  }
+  .fetch-title {
+    line-height: 1.15;
+  }
+  .fetch-sub {
+    line-height: 1.15;
+    font-weight: 400;
+    white-space: nowrap;
+  }
+
   .op-icon {
     display: inline-flex;
     align-items: center;
@@ -494,26 +489,6 @@
     to {
       transform: rotate(360deg);
     }
-  }
-
-  .op-count {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    min-width: 16px;
-    height: 16px;
-    padding: 0 4px;
-    font-size: 10px;
-    font-weight: 600;
-    line-height: 1;
-    border-radius: var(--r-sm);
-    background: rgba(0, 0, 0, 0.08);
-    color: #3d454e;
-    font-variant-numeric: tabular-nums;
-  }
-  :global([data-theme="dark"]) .op-count {
-    background: rgba(255, 255, 255, 0.14);
-    color: #e6edf3;
   }
 
   .operation-divider {

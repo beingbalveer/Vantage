@@ -10,35 +10,6 @@ export {
   type ToastMessage,
 } from "../util/toast";
 
-// UI Overlays state
-// The approved prototype starts with the repository dock collapsed on a fresh
-// profile, but a saved preference always wins (RELAY-UI · UI-03).
-const SIDEBAR_COLLAPSED_KEY = "vantage_sidebar_collapsed";
-const LEGACY_SIDEBAR_COLLAPSED_KEY = "relay_sidebar_collapsed";
-
-function loadSidebarCollapsed(): boolean {
-  try {
-    const saved = localStorage.getItem(SIDEBAR_COLLAPSED_KEY) ?? localStorage.getItem(LEGACY_SIDEBAR_COLLAPSED_KEY);
-    if (saved === "true") return true;
-    if (saved === "false") return false;
-  } catch {
-    // Fall through to the prototype default when storage is unavailable.
-  }
-  return true;
-}
-
-export const sidebarCollapsed = writable<boolean>(loadSidebarCollapsed());
-
-if (typeof window !== "undefined") {
-  sidebarCollapsed.subscribe((collapsed) => {
-    try {
-      localStorage.setItem(SIDEBAR_COLLAPSED_KEY, collapsed ? "true" : "false");
-    } catch {
-      // Persisting the preference is best-effort.
-    }
-  });
-}
-
 export const paletteOpen = writable<boolean>(false);
 export const settingsOpen = writable<boolean>(false);
 export const shortcutsHelpOpen = writable<boolean>(false);
@@ -131,8 +102,8 @@ export interface ActiveDialog {
 
 export const activeDialog = writable<ActiveDialog | null>(null);
 
-// Bumped after any local branch create/rename/delete so branch lists (header
-// switcher, pane header) refetch without prop-drilling.
+// Bumped after any local branch create/rename/delete so branch lists refetch
+// without prop-drilling.
 export const branchesVersion = writable(0);
 
 export function bumpBranches() {

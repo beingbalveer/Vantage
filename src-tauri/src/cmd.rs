@@ -1404,7 +1404,7 @@ pub async fn checkout(
         ));
     }
 
-    checkout_target(
+    let result = checkout_target(
         &state.runner,
         &repo_path,
         &target,
@@ -1412,7 +1412,33 @@ pub async fn checkout(
         stash_message.as_deref(),
         include_untracked.unwrap_or(false),
     )
-    .await
+    .await?;
+
+    // The entry represents the working copy's current branch, so a checkout
+    // moves it with HEAD. Detached checkouts clear it (rev = "HEAD").
+    let head_branch = state
+        .runner
+        .run_read(&repo_path, &["rev-parse", "--abbrev-ref", "HEAD"])
+        .await
+        .ok()
+        .filter(|out| out.success())
+        .map(|out| out.stdout_string().trim().to_string())
+        .filter(|name| !name.is_empty())
+        .and_then(|name| if name == "HEAD" { None } else { Some(name) });
+
+    let mut data = state.data.lock().await;
+    let mut changed = false;
+    if let Some(entry) = data.repos.iter_mut().find(|r| r.id == id) {
+        if entry.branch != head_branch {
+            entry.branch = head_branch;
+            changed = true;
+        }
+    }
+    if changed {
+        state.persistence.save(&data)?;
+    }
+
+    Ok(result)
 }
 
 // ---------------- Stash Commands ----------------

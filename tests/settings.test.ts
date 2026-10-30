@@ -30,6 +30,7 @@ const base: Settings = {
   commitMessageCmd: null,
   terminalFontSize: 13,
   codeFontSize: 12,
+  treeFontSize: 13,
   uiScale: 1,
   defaultBranch: "main",
   tabSize: 4,
@@ -97,6 +98,7 @@ describe("settings normalization", () => {
       autoFetchMinutes: -5,
       terminalFontSize: 4,
       codeFontSize: 99,
+      treeFontSize: 99,
       tabSize: 40,
       uiScale: Number.NaN,
       defaultBranch: "   ",
@@ -105,6 +107,7 @@ describe("settings normalization", () => {
     expect(normalized.autoFetchMinutes).toBe(0);
     expect(normalized.terminalFontSize).toBe(10);
     expect(normalized.codeFontSize).toBe(20);
+    expect(normalized.treeFontSize).toBe(18);
     expect(normalized.tabSize).toBe(8);
     expect(normalized.uiScale).toBe(1);
     expect(normalized.defaultBranch).toBe("main");

@@ -77,7 +77,6 @@ export const SHORTCUTS: Shortcut[] = [
   { id: "focus_file_search", key: "Mod+B", description: "Search files", category: "Navigation" },
   { id: "save_layout", key: "", description: "Save layout as…", category: "Panes" },
   { id: "load_layout", key: "", description: "Load layout…", category: "Panes" },
-  { id: "toggle_sidebar", key: "Mod+B", description: "Toggle sidebar", category: "Navigation", global: true },
   { id: "toggle_terminal", key: "Mod+`", description: "Toggle terminal drawer", category: "Terminal", global: true },
   { id: "prev_repo", key: "Mod+[", description: "Previous repository", category: "Navigation", global: true },
   { id: "next_repo", key: "Mod+]", description: "Next repository", category: "Navigation", global: true },
@@ -132,14 +131,6 @@ export const COMMANDS: Command[] = [
   },
   { id: "add_repo", label: "Add repository…", keys: ["Mod+O"], contexts: ["global"], category: "Navigation" },
   { id: "browse_repo", label: "Browse and add repository…", keys: [], contexts: ["global"], category: "Navigation" },
-  {
-    id: "toggle_sidebar",
-    label: "Toggle sidebar",
-    keys: ["Mod+B"],
-    contexts: ["global"],
-    category: "Navigation",
-    allowInTerminal: true,
-  },
   {
     id: "prev_repo",
     label: "Previous repository",

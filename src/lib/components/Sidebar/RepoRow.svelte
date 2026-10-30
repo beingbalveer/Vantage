@@ -9,7 +9,7 @@
     paneCount,
   } from "../../domain/stores/panes";
   import { repos, loadRepos, activeRepoId, removeRepo } from "../../domain/stores/repos";
-  import { addToast, sidebarCollapsed, openDialog } from "../../app/ui";
+  import { addToast, openDialog } from "../../app/ui";
   import { registerDismiss } from "../../app/commands";
   import { confirmLeaveEditor } from "../../app/editorGuard";
   import * as api from "../../platform/api";
@@ -17,7 +17,7 @@
   import Icon from "../common/Icon.svelte";
   import { Modal } from "../common";
   import RepoIcon from "./RepoIcon.svelte";
-  import { formatCount, pluralize } from "../../domain/format";
+  import { pluralize } from "../../domain/format";
 
   interface Props {
     repo: RepoEntry;
@@ -53,7 +53,7 @@
   let hoverTimer: ReturnType<typeof setTimeout> | undefined;
 
   function startHover(e: PointerEvent | FocusEvent) {
-    if (!$sidebarCollapsed || showMenu) return;
+    if (showMenu) return;
     const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
     // Keep the ~150px card within the viewport near the bottom of a long list.
     hoverTop = Math.max(8, Math.min(rect.top, window.innerHeight - 158));
@@ -100,12 +100,6 @@
     return unregister;
   });
 
-  // Collapse/expand transitions must dismiss the card.
-  $effect(() => {
-    void $sidebarCollapsed;
-    stopHover();
-  });
-
   onDestroy(() => {
     if (hoverTimer) clearTimeout(hoverTimer);
   });
@@ -131,9 +125,6 @@
   let hasError = $derived(Boolean(status?.error));
   let dirtyCount = $derived(status?.dirtyCount ?? 0);
   let aheadCount = $derived(status?.ahead ?? 0);
-  let behindCount = $derived(status?.behind ?? 0);
-
-  let aheadLabel = $derived(formatCount(aheadCount));
 
   let dirtyLabel = $derived(
     `${dirtyCount} ${pluralize(dirtyCount, "file")} changed`
@@ -154,23 +145,6 @@
       }
     }
     return parts.join(", ");
-  });
-
-  // Native hover tooltip: identity + sync + attention (DESIGN §4.4).
-  let rowTitle = $derived.by(() => {
-    const sync = `${displayBranch || "HEAD"}${aheadCount ? ` ↑${aheadCount}` : ""}${
-      behindCount ? ` ↓${behindCount}` : ""
-    }`;
-    const lines = [`${repo.name} · ${sync}`, repo.path, "Alt+↑/↓ to reorder"];
-    if (hasError) {
-      lines.push(status?.error || "Repository error");
-    } else {
-      const attention: string[] = [];
-      if (dirtyCount > 0) attention.push(dirtyLabel);
-      if (aheadCount > 0) attention.push(aheadTitle);
-      if (attention.length > 0) lines.push(attention.join(" · "));
-    }
-    return lines.join("\n");
   });
 
   // Attention signal displayed as a badge on the repository icon (in all modes).
@@ -311,7 +285,7 @@
 </script>
 
 <div
-  class="repo-row {isOpenInFocused ? 'active' : ''} {$sidebarCollapsed ? 'collapsed' : ''}"
+  class="repo-row {isOpenInFocused ? 'active' : ''}"
   class:error={hasError}
   class:dragging={isDragging}
   class:drop-before={dropIndicator === "before"}
@@ -342,7 +316,6 @@
   aria-label={rowAriaLabel}
   aria-keyshortcuts="Alt+ArrowUp Alt+ArrowDown"
   aria-current={isOpenInFocused ? "page" : undefined}
-  title={rowTitle}
 >
   <div class="repo-icon-wrapper">
     <div class="repo-icon-box">
@@ -354,7 +327,6 @@
         class="repo-badge {attentionSignal.kind}"
         role="img"
         aria-label={attentionSignal.label}
-        title={attentionSignal.label}
       >
         {#if attentionSignal.kind === "error"}
           <Icon name="alert" size={10} />
@@ -365,30 +337,7 @@
     {/if}
   </div>
 
-  {#if !$sidebarCollapsed}
-    <div class="info">
-      <div class="row-top">
-        <span class="repo-name">{repo.name}</span>
-      </div>
-      <span class="branch-name">{displayBranch || "HEAD"}</span>
-    </div>
-
-    <button
-      type="button"
-      class="row-menu-btn"
-      class:menu-open={showMenu}
-      title="Repository options"
-      onclick={handleMenuBtnClick}
-      onkeydown={(e) => e.stopPropagation()}
-      aria-label="Repository options"
-      aria-haspopup="menu"
-      aria-expanded={showMenu}
-    >
-      <Icon name="more-horizontal" size={15} />
-    </button>
-  {/if}
-
-  {#if hovered && $sidebarCollapsed && !showMenu}
+  {#if hovered && !showMenu}
     <div
       class="repo-hover-card"
       style="top:{hoverTop}px;left:{hoverLeft}px"
@@ -546,12 +495,17 @@
   .repo-row {
     display: flex;
     align-items: center;
-    gap: 12px;
-    min-height: 52px;
-    padding: 6px 12px;
+    justify-content: center;
+    gap: 0;
+    width: 44px;
+    height: 44px;
+    min-height: 44px;
+    max-width: 44px;
+    padding: 0;
+    margin: 4px auto;
+    flex-shrink: 0;
     cursor: pointer;
     border-radius: var(--r-sm);
-    margin: 2px 6px;
     position: relative;
     transition: background-color 100ms ease;
     user-select: none;
@@ -600,24 +554,6 @@
     border-radius: var(--r-sm);
     z-index: 20;
     pointer-events: none;
-  }
-
-  /* Collapsed View */
-  .repo-row.collapsed {
-    width: 44px;
-    height: 44px;
-    min-height: 44px;
-    max-width: 44px;
-    padding: 0;
-    margin: 4px auto;
-    justify-content: center;
-    border-radius: var(--r-sm);
-    gap: 0;
-    flex-shrink: 0;
-  }
-
-  .repo-row.collapsed .repo-icon-box {
-    margin: 0;
   }
 
   .repo-icon-wrapper {
@@ -701,99 +637,6 @@
     padding: 0;
     width: 14px;
     height: 14px;
-  }
-
-  .info {
-    flex: 1;
-    min-width: 0;
-    display: flex;
-    flex-direction: column;
-    justify-content: center;
-    gap: 2px;
-  }
-
-  .row-top {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    min-width: 0;
-  }
-
-  .repo-row.error .repo-name,
-  .repo-row.error .branch-name {
-    color: var(--text-faint);
-  }
-
-  .repo-name {
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-    flex: 1 1 auto;
-    min-width: 0;
-    color: var(--text);
-    font-size: 14px;
-    font-weight: 500;
-    line-height: 1.25;
-    letter-spacing: -0.01em;
-    font-family: var(--font-ui);
-  }
-
-  :global([data-theme="dark"]) .repo-name,
-  :global(:root[data-theme="dark"]) .repo-name {
-    color: var(--text);
-  }
-
-  .branch-name {
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-    color: var(--text-muted);
-    font-size: 12px;
-    font-weight: 400;
-    line-height: 1.25;
-    letter-spacing: 0;
-    font-family: var(--font-ui);
-  }
-
-  :global([data-theme="dark"]) .branch-name,
-  :global(:root[data-theme="dark"]) .branch-name {
-    color: var(--text-muted);
-  }
-
-  .row-menu-btn {
-    width: 24px;
-    height: 24px;
-    border-radius: var(--r-sm, 4px);
-    background: transparent;
-    border: none;
-    color: var(--text-muted);
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    cursor: pointer;
-    flex-shrink: 0;
-    opacity: 0;
-    transition: opacity 120ms ease, background-color 120ms ease;
-  }
-  .repo-row:hover .row-menu-btn,
-  .row-menu-btn:focus,
-  .row-menu-btn:focus-visible,
-  .row-menu-btn.menu-open {
-    opacity: 0.8;
-  }
-  .row-menu-btn:hover,
-  .row-menu-btn.menu-open {
-    opacity: 1 !important;
-    background-color: rgba(0, 0, 0, 0.08);
-    color: var(--text);
-  }
-  :global([data-theme="dark"]) .row-menu-btn {
-    color: var(--text-muted);
-  }
-  :global([data-theme="dark"]) .row-menu-btn:hover,
-  :global([data-theme="dark"]) .row-menu-btn.menu-open {
-    background-color: rgba(255, 255, 255, 0.1);
-    color: var(--text);
   }
 
   /* Collapsed hover card (UI-04) */

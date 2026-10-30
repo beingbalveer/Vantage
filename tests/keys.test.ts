@@ -306,7 +306,7 @@ describe("file tab shortcuts", () => {
     expect(prev?.command.id).toBe("prev_file_tab");
   });
 
-  it("uses Mod+B for file search in Files and the sidebar elsewhere", () => {
+  it("uses Mod+B for file search in the Files context only", () => {
     const inFiles = resolveCommand(COMMANDS, fromShortcut("Mod+B", true), {
       activeContexts: files,
       mac: true,
@@ -318,8 +318,7 @@ describe("file tab shortcuts", () => {
       activeContexts: history,
       mac: true,
     });
-    expect(inHistory?.command.id).toBe("toggle_sidebar");
-    expect(inHistory?.context).toBe("global");
+    expect(inHistory).toBeNull();
   });
 
   it("supports the Mod+Shift+E explorer alias", () => {

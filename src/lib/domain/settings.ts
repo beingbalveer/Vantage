@@ -88,6 +88,7 @@ export function normalizeSettings(settings: Settings): Settings {
     autoFetchMinutes: clampSetting(settings.autoFetchMinutes, 0, 60, 5),
     terminalFontSize: clampSetting(settings.terminalFontSize, 10, 20, 13),
     codeFontSize: clampSetting(settings.codeFontSize, 10, 20, 12),
+    treeFontSize: clampSetting(settings.treeFontSize, 10, 18, 13),
     tabSize: clampSetting(settings.tabSize, 1, 8, 4),
     uiScale: Number.isFinite(settings.uiScale)
       ? Math.max(0.75, Math.min(1.5, settings.uiScale))

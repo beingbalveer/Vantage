@@ -14,6 +14,7 @@ export const settings = writable<Settings>({
   commitMessageCmd: null,
   terminalFontSize: 13,
   codeFontSize: 12,
+  treeFontSize: 13,
   uiScale: 1.0,
   defaultBranch: "main",
   tabSize: 4,
@@ -63,6 +64,13 @@ export function applyCodeTabSize(tabSize: number) {
   document.documentElement.style.setProperty("--code-tab-size", `${clamped}`);
 }
 
+/** Apply the file explorer's text size; the row height follows in CSS. */
+export function applyTreeFontSize(size: number) {
+  if (typeof document === "undefined") return;
+  const clamped = Math.max(10, Math.min(18, Math.round(size || 13)));
+  document.documentElement.style.setProperty("--tree-font-size", `${clamped}px`);
+}
+
 /** Apply the Files viewer's text size and the line height derived from it. */
 export function applyCodeFontSize(size: number) {
   if (typeof document === "undefined") return;
@@ -80,6 +88,7 @@ export async function loadSettings() {
     applyUiScale(s.uiScale);
     applyCodeTabSize(s.tabSize);
     applyCodeFontSize(s.codeFontSize);
+    applyTreeFontSize(s.treeFontSize);
   } catch (e: any) {
     console.error("Failed to load settings:", e);
     addToast({
@@ -101,6 +110,9 @@ export async function updateSettings(newSettings: Settings) {
   if (previous.codeFontSize !== newSettings.codeFontSize) {
     applyCodeFontSize(newSettings.codeFontSize);
   }
+  if (previous.treeFontSize !== newSettings.treeFontSize) {
+    applyTreeFontSize(newSettings.treeFontSize);
+  }
 
   try {
     await api.settingsSet(newSettings);
@@ -111,6 +123,7 @@ export async function updateSettings(newSettings: Settings) {
     applyUiScale(previous.uiScale);
     applyCodeTabSize(previous.tabSize);
     applyCodeFontSize(previous.codeFontSize);
+    applyTreeFontSize(previous.treeFontSize);
     addToast({
       message: "Failed to save settings: " + (e?.message || e),
       kind: "error",

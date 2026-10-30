@@ -44,6 +44,7 @@
     savedPaneWidth,
     savedLeftColumnWidth,
     defaultLeftColumnWidth,
+    paneLeftColumnWidths,
     persistLeftColumnWidth,
     LEFT_COLUMN_KEY,
   } from "../../app/layout";
@@ -79,6 +80,13 @@
   // Per-pane: the commits column and the file tree share this inside the pane,
   // but other panes keep their own width.
   let leftColWidth = $state(savedLeftColumnWidth());
+  // Publish the leading column width so the window header can align to its
+  // right edge (follows drag/resize and pane focus).
+  $effect(() => {
+    paneLeftColumnWidths.update((map) =>
+      map[paneIndex] === leftColWidth ? map : { ...map, [paneIndex]: leftColWidth }
+    );
+  });
   let filesColWidth = $state(savedPaneWidth("vantage_files_col_width", viewportPaneWidths().files));
 
   const startCommitsResize = createHorizontalResizer({

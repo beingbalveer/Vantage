@@ -20,6 +20,8 @@
   /* Files viewer typography; overridden at runtime by the code font setting. */
   --code-font-size: 12px;
   --code-line-height: 19px;
+  --tree-font-size: 13px;
+  --tree-row-height: calc(var(--tree-font-size) + 12px);
 
   /* Default Light Theme (final approved prototype values) */
   --bg: #ffffff;

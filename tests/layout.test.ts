@@ -3,10 +3,10 @@ import { defaultPaneWidths, savedPaneWidth } from "../src/lib/app/layout";
 afterEach(() => vi.unstubAllGlobals());
 describe("approved layout", () => {
   it.each([
-    [1280, {sidebar:222,commits:244,files:235}],
-    [1400, {sidebar:222,commits:244,files:235}],
-    [1600, {sidebar:246,commits:274,files:260}],
-    [1750, {sidebar:268,commits:292,files:300}],
+    [1280, {commits:244,files:235}],
+    [1400, {commits:244,files:235}],
+    [1600, {commits:274,files:260}],
+    [1750, {commits:292,files:300}],
   ])("matches prototype at %i pixels", (width, expected) => {
     expect(defaultPaneWidths(width)).toEqual(expected);
   });

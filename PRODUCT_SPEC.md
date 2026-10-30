@@ -247,7 +247,7 @@ pub struct Settings {
 
 ### 5.1 Persisted state file
 
-`state.json`: `{ version: 1, repos: [RepoEntry], layout: { paneCount, panes: [{repoId, tab, widths..}], sidebarWidth, sidebarCollapsed, terminalHeight, terminalOpen }, settings: Settings, windowBounds }`. Unknown fields must be preserved on load (forward compatible). On corrupt JSON: rename to `state.corrupt-<ts>.json`, start fresh, show a toast.
+`state.json`: `{ version: 1, repos: [RepoEntry], layout: { paneCount, panes: [{repoId, tab, widths..}], terminalHeight, terminalOpen }, settings: Settings, windowBounds }`. Unknown fields must be preserved on load (forward compatible). On corrupt JSON: rename to `state.corrupt-<ts>.json`, start fresh, show a toast.
 
 ---
 
@@ -473,7 +473,7 @@ Principle: **nothing destructive happens without a backup and a confirmation tha
 | `#` | commits in the focused repo (message search, shows 20) |
 | `@` | review notes |
 
-Commands include: Add repository, Mark reviewed, Switch tab, Toggle terminal, Toggle sidebar, Toggle diff mode, Toggle whitespace, Fetch/Pull/Push, Open in editor, Reveal in file manager, Copy repo path, Save/Load layout, Settings, Recovery, Reload repo state. Each shows its shortcut. `Enter` runs. `Mod+Enter` on a repo opens it in a **new pane**.
+Commands include: Add repository, Mark reviewed, Switch tab, Toggle terminal, Toggle diff mode, Toggle whitespace, Fetch/Pull/Push, Open in editor, Reveal in file manager, Copy repo path, Save/Load layout, Settings, Recovery, Reload repo state. Each shows its shortcut. `Enter` runs. `Mod+Enter` on a repo opens it in a **new pane**.
 
 ### F14. Triage flags
 
@@ -613,7 +613,7 @@ If a budget is missed, fix it before moving to the next milestone (profile first
 | `Mod+O` | Add repository |
 | `Mod+1` / `2` / `3` | Focus pane N |
 | `Mod+\` | Cycle pane count 1, 2, 3 |
-| `Mod+B` | Toggle sidebar (full / collapsed icons) |
+| `Mod+B` | Search files (Files tab) |
 | `` Mod+` `` | Toggle terminal drawer in focused pane |
 | `Mod+[` / `Mod+]` | Previous / next repo in the focused pane (sidebar order) |
 | `Mod+,` | Settings |
@@ -670,7 +670,7 @@ Build in order. Each milestone ends with: all tests pass, `cargo clippy -- -D wa
 - **Accept:** run a long command, switch repos and back, output intact; resize works; works on the user's OS; 2 terminals idle within the RAM budget.
 
 ### M6. Split panes & palette
-- F12, F13, shortcuts from section 13 (except those for later features), saved layouts, sidebar collapsed mode, responsive pane layouts (DESIGN.md section 5.2).
+- F12, F13, shortcuts from section 13 (except those for later features), saved layouts, responsive pane layouts (DESIGN.md section 5.2).
 - **Accept:** 3 panes with 3 different repos; layout restored after restart; palette finds repos, files, commits; all listed shortcuts work, including with terminal focused.
 
 ### M7. Triage flags & safety

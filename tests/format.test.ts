@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { formatRelativeTime, hashStringToColor, formatStats, splitPath, formatCount, pluralize } from "../src/lib/domain/format";
+import { formatRelativeTime, formatRelativeTimeLong, hashStringToColor, formatStats, splitPath, formatCount, pluralize } from "../src/lib/domain/format";
 
 describe("format", () => {
   it("formats just now for recent times", () => {
@@ -15,6 +15,18 @@ describe("format", () => {
   it("formats hours ago", () => {
     const date = new Date(Date.now() - 3 * 3600 * 1000).toISOString();
     expect(formatRelativeTime(date)).toBe("3h ago");
+  });
+
+  it("formats long relative times", () => {
+    expect(formatRelativeTimeLong(new Date(Date.now() - 5 * 60 * 1000).toISOString())).toBe(
+      "5 min ago"
+    );
+    expect(formatRelativeTimeLong(new Date(Date.now() - 3 * 3600 * 1000).toISOString())).toBe(
+      "3 hr ago"
+    );
+    expect(formatRelativeTimeLong(new Date(Date.now() - 2 * 24 * 3600 * 1000).toISOString())).toBe(
+      "2 days ago"
+    );
   });
 
   it("hashes repo IDs to a stable color palette", () => {
