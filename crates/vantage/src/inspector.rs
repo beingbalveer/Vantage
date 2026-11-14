@@ -2,12 +2,12 @@
 
 use gpui::{deferred, div, prelude::*, px, relative, rgba, Context, IntoElement, Styled};
 
-use crate::app::{BranchDeckApp, InspectorTab};
+use crate::app::{InspectorTab, VantageApp};
 use crate::icons::icon;
 use crate::theme::{alpha, Theme};
 use crate::widgets::{checkbox, primary_button, secondary_button, status_text, Txt};
 
-impl BranchDeckApp {
+impl VantageApp {
     pub fn render_inspector(&mut self, cx: &mut Context<Self>) -> Option<gpui::AnyElement> {
         let repo = self.selected_repo()?.clone();
         let theme = self.theme;

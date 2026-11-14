@@ -3,7 +3,7 @@
 
 use gpui::{div, prelude::*, px, relative, Context, Div, IntoElement, Styled};
 
-use crate::app::{BranchDeckApp, GroupBy};
+use crate::app::{GroupBy, VantageApp};
 use crate::icons::icon;
 use crate::model::RepoSyncState;
 use crate::theme::Theme;
@@ -73,7 +73,7 @@ fn make_row(repo: &crate::model::Repository) -> TableRow {
     }
 }
 
-impl BranchDeckApp {
+impl VantageApp {
     pub fn render_repo_table(
         &mut self,
         window: &mut gpui::Window,

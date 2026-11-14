@@ -2,16 +2,15 @@
   <img src="assets/vantage-logo-horizontal.png" alt="Vantage Logo" width="440" />
 </p>
 
-<h3 align="center">Read the code. Check the branch. Run the agent. One app.</h3>
+<h3 align="center">Your repositories. Every branch. One dashboard.</h3>
 
 <p align="center">
-  A fast, local, read-only review deck for AI-agent commits — across every repo you have open.
+  A fast, local, native GPUI dashboard for multi-repo Git work — branches, pending changes and working-tree state at a glance.
 </p>
 
 <p align="center">
-  <a href="https://github.com/beingbalveer/Vantage/releases"><img src="https://img.shields.io/github/v/release/beingbalveer/Vantage?style=flat-square" alt="Latest Release" /></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue.svg?style=flat-square" alt="License: MIT" /></a>
-  <img src="https://img.shields.io/badge/platform-macOS%20%7C%20Windows%20%7C%20Linux-lightgrey?style=flat-square" alt="Platform Support" />
+  <img src="https://img.shields.io/badge/platform-macOS%20%7C%20Linux-lightgrey?style=flat-square" alt="Platform Support" />
   <img src="https://img.shields.io/badge/telemetry-none-brightgreen?style=flat-square" alt="No telemetry" />
   <img src="https://img.shields.io/badge/built%20with-Rust%20%2B%20GPUI-B7410E?style=flat-square" alt="Built with Rust and GPUI" />
 </p>
@@ -20,198 +19,158 @@
 
 ## Why this exists
 
-I work across several repositories at once, and most of my code is written by AI agents — in a terminal, or in the agent's own app.
+I work across several repositories at once, and much of that work is written and committed by AI agents.
 
-That left me with three windows open all day:
+The hard part is not writing more code. It is knowing, without opening a dozen windows, which repository is on which branch, what is uncommitted, what is ahead or behind, and which working tree needs attention before the next agent run.
 
-- **VS Code** — not to edit, but to *read* what the agent wrote.
-- **GitHub Desktop** — to check which branch the agent was on and what it had committed.
-- **A terminal** — because that's where the agents run.
+Vantage is the dashboard for that question. It reads the real state of every repository in your workspace, shows the things that need a decision, and gives you the few Git actions that belong in a review loop: stage or unstage a file, check out a branch, fetch, refresh. When the work needs an editor or a full commit flow, it hands you back to the tools you already use.
 
-Three apps, three memory footprints, and constant alt-tabbing. So I built the tool I wanted: one fast, local app for the review loop, and nothing else.
-
-If you run agents across more than one repo and want to see what they actually did before it ships, this is for you.
+No account. No sync. No telemetry.
 
 ---
 
-## The three things Vantage does
+## What it does
 
-### 1. Read code without editing it
+### Multi-repo overview
 
-A syntax-highlighted, read-only viewer with blame, find-in-file, and heuristic definition peek (`F12` / `Alt+Click`). Files open in tabs with VS Code-style close shortcuts, a right-click tab menu, and a centered fuzzy file finder (`Mod+B`). Browsing is read-only on purpose: when you are auditing agent output, the last thing you want is a stray keystroke dirtying the working tree. When you do need to change something, the pencil icon opens an explicit edit mode with the same syntax colors — tick or `Mod+S` saves, `Esc` discards, and leaving with unsaved edits asks first. Saves always target the working-tree copy, never the revision you are viewing. The code font size (10–20 px) lives in Settings → General.
+The **All Repositories** view lists every repository in the workspace with its current branch, working-tree status, remote sync, latest commit and last activity. Repositories are grouped by your own groups, and each group header collapses so a large workspace stays readable.
 
-Ignored local config is still readable: `.env` and `.env.*` files appear in the explorer and the file finder even though Git never tracks them.
+Click any row to open its inspector.
 
-### 2. See what changed across repos
+### Needs Attention
 
-Open one to three repositories side by side. Each pane keeps its own active tab, selection, scroll position, and terminal state. A personal review marker — stored outside Git history — shows the net diff of everything that landed since you last looked, so you can review across commits instead of one commit at a time. Heuristic triage badges flag dependency changes, large deletions, secrets, config changes, and removed tests.
+The **Needs Attention** view is the same inventory narrowed to repositories that actually need a look: merge conflicts, commits behind origin, or uncommitted changes. The sidebar count tells you how many there are before you open the view.
 
-Uncommitted work is shown as one working diff from `HEAD` to the worktree. There is no staging area to maintain: every changed file is visible at once, and line-level discard is there when you need to drop a specific selection.
+### Branch Matrix
 
-### 3. Run the agent where it lives
+The **Branch Matrix** flattens every branch across every repository into one table: branch, repository, state, ahead/behind, latest commit and when it was updated.
 
-Every repository gets a persistent PTY terminal at its root, with a 256 KB replay buffer. Switch repos or tabs and the session is still there. No second terminal app, no `cd` archaeology. The drawer hides instantly without killing the shell, shows which shell is running, and can be maximized or dragged to the height you want.
+Filter it to **All Branches**, **Feature & Experiment**, or **Checked Out**, and search by branch name, repository name or commit message. Click a row to inspect the repository it belongs to.
+
+### Pending Changes
+
+The **Pending Changes** view collects uncommitted work into one card per repository, with the current branch and total additions and deletions. Each file shows its status code, whether it is staged, and its line counts. Open the inspector to act on it.
+
+### Repository inspector
+
+The inspector is a right-hand slide-over with three tabs:
+
+- **Changes** — every changed file with its status, staged state and `+` / `-` counts. Tick a file to stage or unstage it, and click its path to expand a colour-coded diff preview.
+- **Branches** — local branches with ahead/behind counts, their current/default state and latest commit. Check out any branch that is not already current.
+- **Commits** — recent commits with SHA, author, branch and relative time.
+
+The inspector header shows the repository status, language and path (click to copy), plus a group selector for moving the repository between groups. The footer contains **Fetch Origin** and, on macOS, **Open in GitHub Desktop** for work that belongs in a full Git client.
+
+### Repository management
+
+**Add Repository** opens a focused modal: type or browse to a local path, confirm the detected repository, and choose an existing group or create a new one. Invalid paths and non-repositories fail in place without adding anything.
+
+Groups are managed from the sidebar: create a group, move repositories into it, or remove it. Group membership is persisted in Vantage's own state file.
+
+### Live working trees
+
+Vantage watches each repository and re-reads only the working trees that changed, so the dashboard stays current while agents commit and edit around you. **Refresh Status** forces a full rescan. Scan failures are shown as a banner instead of blanking the dashboard.
+
+### Light and dark
+
+The whole interface has first-class light and dark themes, switchable from the sidebar footer. Both use the same layout and palette tokens.
 
 ---
 
-## Scope, on purpose
+## What it deliberately leaves out
 
 | Vantage is | Vantage is not |
 |---|---|
-| A review deck for agent-written commits | An IDE or a code editor |
-| A read-only-by-default browser with an explicit edit mode | An IDE or a multi-file refactor tool |
-| A multi-repo branch and commit monitor | A GitHub PR / issue / CI client |
-| A per-repo terminal workspace | A terminal emulator replacement |
-| Local-first, zero telemetry, system Git | A cloud service or account system |
+| A multi-repo branch, status and changes dashboard | An IDE or a code editor |
+| A place to stage files, check out branches and fetch | A full Git client or commit workflow |
+| A local-first, zero-telemetry desktop app | A cloud service or account system |
+| Built on your system Git and existing credentials | A GitHub PR, issue or CI client |
 
-Keeping the scope small is the feature. There is no PR integration, no AI chat, no plugin marketplace — and no plan to add them.
-
----
-
-## The loop
-
-<!--
-  TODO(portfolio): record assets/demo.gif (45–60s) and replace this comment with:
-  <p align="center"><img src="assets/demo.gif" alt="Vantage demo" width="900" /></p>
-
-  Shot list:
-  1. Three panes, three repos, one keystroke between them.
-  2. Unreviewed diff across commits, then press `r` to mark reviewed.
-  3. Jump from a diff hunk into the read-only viewer; `F12` for definition peek.
-  4. `Mod+B` centered fuzzy file search, `Enter` to open.
-  5. Drop into the repo's terminal and start the next agent task.
--->
-
-> **Open three repos → see what landed since you last looked → mark it reviewed → jump into the file and the diff → `Mod+B` to fuzzy-find a file → drop into that repo's terminal and run the next agent task.**
-
-Everything is reachable from the keyboard. `Mod+K` opens the command palette, `?` shows every binding, and `Mod+1/2/3` moves between panes.
+There is no file editor, no embedded terminal, no command palette, no fuzzy file finder, no AI chat and no plugin marketplace. Editing and committing stay in the tools built for them; Vantage keeps the cross-repository picture clear.
 
 ---
 
-## Built to stay small
+## Safety and privacy
 
-Vantage is a native desktop app built with [GPUI](https://gpui.rs/), the Rust UI framework behind Zed. There is no webview, no bundled Chromium, and no second copy of your repository index — the UI draws the widgets itself and the Git engine runs in the same process.
-
-<!-- TODO: publish a release-build benchmark table (idle / 1 repo / 3 panes + terminal) here. -->
-
----
-
-## Safety by default
-
-- **System Git, invoked directly.** Your existing SSH keys, GPG signing config, credential helpers, and hooks just work. Git operations are executed as arguments, not through a shell.
-- **A commit dialog, not a commit hotkey.** Committing opens a centered dialog with the selected files, the author identity (repository, global, or a one-off custom author), and — when the GitHub CLI is signed in — the active account and its push permission on the remote. Nothing is written until you press Commit.
-- **Backups before destructive actions.** Discard and hard reset create a recoverable ref under `refs/vantage/backup/…`, with a restore UI in Settings.
-- **File-scoped writes.** Commits and discards use literal pathspecs and a temporary index for partial commits, so an unselected file cannot ride along.
-- **Zero telemetry.** Nothing leaves your machine. There is no account, no sync, and no analytics endpoint.
+- **System Git, invoked directly.** Vantage invokes the `git` on your `PATH` with explicit arguments, so your existing SSH keys, credential helpers, hooks and signing configuration apply. It does not go through a shell.
+- **A small write surface.** Vantage does not edit your files and does not create commits. Its writes are limited to staging and unstaging paths, checking out an existing branch, and fetching from the remote.
+- **Your state stays local.** Repository inventory, groups and assignments live in `state.json` in the platform data directory. No analytics endpoint, no account, no sync.
+- **Failures are visible.** A repository that cannot be read is reported by name; the rest of the dashboard keeps working.
 
 ---
 
 ## Installation
 
-### macOS
+Vantage v2 is **not published yet**. There is no v2 DMG, installer or Homebrew release. The existing cask and older release artifacts predate this dashboard and do not contain it.
 
-#### Via Homebrew (Recommended)
-The cask lives in this repository, so point Homebrew at it explicitly:
+Until a v2 build is published, run it from source:
 
 ```bash
-brew tap beingbalveer/vantage https://github.com/beingbalveer/Vantage
-brew trust beingbalveer/vantage
-brew install --cask vantage
+cargo run -p vantage
 ```
 
-`brew trust` is the Homebrew 7 confirmation for third-party taps; on older Homebrew the tap can be installed directly.
-
-If you previously installed Vantage from a DMG, quit the app and remove `/Applications/Vantage.app` first (or run `brew install --cask --force vantage`).
-
-The cask clears the download quarantine flag during install, so the app launches without a Gatekeeper prompt.
-
-#### Direct Download (.dmg)
-1. Download the latest `Vantage_<version>_universal.dmg` from [GitHub Releases](https://github.com/beingbalveer/Vantage/releases).
-2. Open the DMG and drag **Vantage** to your **Applications** folder.
-
-> **macOS Gatekeeper Note:**
-> The current build is ad-hoc signed, not notarized. If macOS warns that *"Vantage cannot be opened because Apple cannot check it for malicious software"*, either:
-> - **Right-click** (or `Control` + Click) **Vantage.app** in `/Applications`, choose **Open**, then click **Open**; or
-> - run `xattr -cr /Applications/Vantage.app` in Terminal.
-
-### Windows
-Download and run the `.msi` or `.exe` installer from [GitHub Releases](https://github.com/beingbalveer/Vantage/releases).
-
-### Linux
-Download the `.deb` package or `.AppImage` from [GitHub Releases](https://github.com/beingbalveer/Vantage/releases).
+The build instructions are below.
 
 ---
 
-## Keyboard Shortcuts
+## Building from source
 
-Press `?` inside Vantage at any time to open the interactive keyboard shortcut overlay.
+Requires a stable Rust toolchain ([rustup](https://rustup.rs/)) and the system `git` CLI on `PATH`.
 
-| Shortcut | Action |
+```bash
+cargo build -p vantage   # build the app
+cargo run -p vantage     # build and launch it
+```
+
+The debug binary is written to `target/debug/vantage`. For an optimized build:
+
+```bash
+cargo build --release -p vantage
+```
+
+The release binary is written to `target/release/vantage`.
+
+The workspace has two crates:
+
+- **`crates/vantage-core`** — the engine: a runner around the system `git` CLI, repository status, log, refs, diffs, a file watcher and state persistence.
+- **`crates/vantage`** — the native GPUI desktop app.
+
+Interested in contributing? Check out the [Contributing Guide](CONTRIBUTING.md).
+
+---
+
+## Interactions
+
+Vantage is mouse-first, with a native macOS menu bar and a small set of
+standard shortcuts.
+
+| Action | How |
 |---|---|
-| `Mod+K` / `Ctrl+Shift+P` | Open command palette (repos, `>` commands, `/` files, `#` commits, `@` notes) |
-| `Mod+O` | Add repository |
-| `Mod+1` / `Mod+2` / `Mod+3` | Focus pane 1, 2, or 3 |
-| `Mod+\` | Cycle pane count (1, 2, 3 columns) |
-| `Mod+W` | Close active file tab (Files tab); close focused pane elsewhere |
-| `Mod+Shift+W` | Close all file tabs (Files tab) |
-| `Ctrl+Tab` / `Ctrl+Shift+Tab` | Next / previous file tab (Files tab) |
-| `Mod+B` | Search files (Files tab) |
-| `Mod+Shift+E` | Search files (Files tab) |
-| `Mod+S` | Save the file being edited (Files tab) |
-| `` Mod+` `` | Toggle terminal drawer in focused pane |
-| `Mod+[` / `Mod+]` | Switch to previous / next repository in focused pane |
-| `Mod+,` | Open Settings |
-| `Mod+Shift+R` | Refresh all repositories |
-| `Mod+Shift+F` | Fetch / Pull / Push (Sync) |
-| `j` / `k` | Navigate next / previous item in focused list (commits or files) |
-| `Shift+j` / `Shift+k` | Extend commit selection |
-| `{` / `}` | Jump to previous / next flagged commit |
-| `Enter` | Move focus: commits → files → diff (History tab) |
-| `r` | Mark reviewed (advances marker to HEAD, or to the newest selected commit) |
-| `c` | Copy commit SHA (History tab) / copy repository path (Files tab) |
-| `]` / `[` | Jump to next / previous file in diff |
-| `n` / `p` | Jump to next / previous hunk |
-| `e` | Expand all context in current file |
-| `w` | Toggle ignore whitespace |
-| `/` | Search files (Files tab) |
-| `F12` | Peek symbol definition (code viewer; `Alt+Click` also works) |
-| `Mod+F` | Find in file (code viewer) |
-| `Mod+Enter` | Commit selected changes (when the commit dialog is open) |
-| `t` | Switch between History and Files tabs |
-| `?` | Keyboard shortcuts help |
-| `Esc` | Close dialog, palette, menu, or popover |
+| Open a repository inspector | Click a repository row or a branch row |
+| Expand a file diff | Click the changed file's path |
+| Stage or unstage a file | Click its checkbox in **Changes** |
+| Check out a branch | Click **Checkout** in **Branches** |
+| Fetch a repository | Click **Fetch Origin**, or `Cmd+Shift+F` for the selected repository |
+| Add a repository | Click **Add Repository**, or `Cmd+O` |
+| Refresh status | Click **Refresh Status**, or `Cmd+R` |
+| Switch views | `Cmd+1` All Repositories, `Cmd+2` Needs Attention, `Cmd+3` Branch Matrix, `Cmd+4` Pending Changes |
+| Toggle light/dark | Click the sidebar footer, or `Cmd+Shift+L` |
+| Full screen / minimize / close | `Ctrl+Cmd+F` / `Cmd+M` / `Cmd+W` |
+| Close the inspector or modal | Click outside it, or press `Esc` in a focused field |
+| Submit a group or add-repository field | Press `Enter` in the field |
 
-*`Mod` corresponds to `Cmd` on macOS and `Ctrl` on Windows / Linux. Single-letter shortcuts never fire while typing in an input or the terminal; the terminal keeps only the modifier shortcuts it needs (`` Mod+` ``, `Mod+1/2/3`, `Mod+B`, `Mod+[` / `Mod+]`, and `Ctrl+Shift+P` on Windows / Linux).*
-
-Right-click a file tab (or press `Shift+F10`) for **Close**, **Close Others**, **Close to the Right**, **Close All**, **Copy Path**, **Reveal in File Manager**, and **Open in External Editor**. File search (`Mod+B`, `Mod+Shift+E`, or `/` in the Files tab) opens a centered quick-open overlay with fuzzy path matching, arrow-key navigation, and `Enter` to open.
+The menu bar provides the same actions under **Vantage**, **File**, **View**,
+**Window** and **Help**, including About, Services, Hide, Quit and the standard
+window commands.
 
 ---
 
 ## Under the hood
 
-- **Two Rust crates.** `crates/vantage-core` is the engine — a `git` CLI runner with status, log, refs, and diffs, a repository watcher, and state persistence. `crates/branchdeck` is the UI, built with GPUI.
-- **One workspace, one build.** `cargo build` from the repository root builds both; the UI calls the engine directly as a library, so there is no IPC layer to keep in sync.
-- **Tested and gated.** `cargo test --workspace` and `cargo fmt --all -- --check` run on macOS and Linux in CI, alongside a macOS build of the app.
-- **Decisions are written down.** Stack, scope, and platform choices live in [`docs/decisions.md`](docs/decisions.md) and [`docs/adr/`](docs/adr/).
-- **Cross-platform releases.** macOS (universal), Windows, and Linux builds are produced by the release workflow, with auto-update and a Homebrew cask.
-
----
-
-## Building from Source
-
-Requires a stable Rust toolchain ([rustup](https://rustup.rs/)) and the system `git` CLI on `PATH`.
-
-```bash
-cargo build -p branchdeck   # build the app
-cargo run -p branchdeck     # build and launch it
-```
-
-The workspace has two crates:
-
-- **`crates/vantage-core`** — the engine. A runner around the system `git` CLI, plus repository status, log, refs, and diffs, a file watcher, and state persistence (written to `state.json` under the platform data directory, e.g. `~/Library/Application Support/vantage/state.json` on macOS).
-- **`crates/branchdeck`** — the GPUI desktop UI.
-
-Interested in contributing? Check out the [Contributing Guide](CONTRIBUTING.md).
+- **Native, not a webview.** The UI is built with [GPUI](https://gpui.rs/), the Rust UI framework behind Zed. There is no bundled Chromium and no IPC layer between the interface and the Git engine.
+- **One shared state file.** The dashboard reads and writes through `vantage-core`, which owns the workspace `state.json`, so the inventory and group assignments have a single source of truth.
+- **Incremental by default.** A `notify` watcher reports which working trees changed; only those repositories are re-read.
+- **Tested and gated.** `cargo fmt --all -- --check` and `cargo test --workspace` run on macOS and Linux in CI, alongside a macOS build of the app.
 
 ---
 

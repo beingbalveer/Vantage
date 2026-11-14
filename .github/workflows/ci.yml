@@ -65,5 +65,5 @@ jobs:
         with:
           workspaces: "."
 
-      - name: Build BranchDeck
-        run: cargo build -p branchdeck
+      - name: Build Vantage
+        run: cargo build -p vantage

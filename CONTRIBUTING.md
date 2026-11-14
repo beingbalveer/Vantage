@@ -27,14 +27,16 @@ sudo apt-get update && sudo apt-get install -y \
 
 ```bash
 # Build the app
-cargo build -p branchdeck
+cargo build -p vantage
 
 # Build and launch it
-cargo run -p branchdeck
+cargo run -p vantage
 ```
 
+The debug binary is written to `target/debug/vantage`.
+
 The workspace has two crates: `crates/vantage-core` (the Git engine) and
-`crates/branchdeck` (the GPUI desktop UI).
+`crates/vantage` (the GPUI desktop app).
 
 ### macOS folder permissions
 
@@ -67,12 +69,12 @@ cargo fmt --all -- --check
 
 ---
 
-## Building Release Installers
+## Building a Release Binary
 
 To build an optimized binary for your operating system:
 
 ```bash
-cargo build --release -p branchdeck
+cargo build --release -p vantage
 ```
 
-The compiled binary is written to `target/release/branchdeck`.
+The compiled binary is written to `target/release/vantage`.

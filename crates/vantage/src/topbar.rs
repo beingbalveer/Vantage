@@ -2,12 +2,12 @@
 
 use gpui::{div, prelude::*, px, rgb, Context, IntoElement, Styled};
 
-use crate::app::{BranchDeckApp, FieldId};
+use crate::app::{FieldId, VantageApp};
 use crate::icons::icon;
 use crate::theme::{SLATE_300, SLATE_700};
 use crate::widgets::{primary_button, secondary_button, Txt};
 
-impl BranchDeckApp {
+impl VantageApp {
     pub fn render_top_bar(&mut self, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = self.theme;
         let group_label = if self.active_group == "All" {

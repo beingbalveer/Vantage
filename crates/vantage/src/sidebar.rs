@@ -1,14 +1,14 @@
 //! Left sidebar — 256px fixed, 56px header, Views, Groups, theme toggle.
 
-use gpui::{div, prelude::*, px, rgb, Context, IntoElement, MouseButton, Styled, Window};
+use gpui::{div, img, prelude::*, px, rgb, Context, IntoElement, MouseButton, Styled, Window};
 
-use crate::app::{BranchDeckApp, FieldId};
-use crate::icons::icon;
+use crate::app::{FieldId, VantageApp};
+use crate::icons::{icon, VANTAGE_ICON};
 use crate::model::NavSection;
 use crate::theme::{alpha, Theme, AMBER_400, SLATE_500};
 use crate::widgets::{FieldVariant, Txt};
 
-impl BranchDeckApp {
+impl VantageApp {
     pub fn render_sidebar(
         &mut self,
         window: &mut Window,
@@ -53,12 +53,20 @@ impl BranchDeckApp {
             .border_color(theme.divider)
             .child(
                 div()
-                    .display_base()
-                    .bold()
-                    .fg(theme.text_app)
-                    .whitespace_nowrap()
+                    .flex()
+                    .items_center()
+                    .gap(px(8.0))
                     .flex_shrink_0()
-                    .child("BranchDeck"),
+                    .child(img(VANTAGE_ICON).flex_shrink_0().w(px(28.0)).h(px(28.0)))
+                    .child(
+                        div()
+                            .display_base()
+                            .bold()
+                            .fg(theme.text_app)
+                            .whitespace_nowrap()
+                            .flex_shrink_0()
+                            .child("Vantage"),
+                    ),
             )
     }
 

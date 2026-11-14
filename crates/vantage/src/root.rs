@@ -7,14 +7,14 @@
 
 use gpui::{Context, Entity, IntoElement, Render, Window};
 
-use crate::app::BranchDeckApp;
+use crate::app::VantageApp;
 
 pub struct RootView {
-    app: Entity<BranchDeckApp>,
+    app: Entity<VantageApp>,
 }
 
 impl RootView {
-    pub fn new(app: Entity<BranchDeckApp>) -> Self {
+    pub fn new(app: Entity<VantageApp>) -> Self {
         Self { app }
     }
 }
@@ -22,7 +22,7 @@ impl RootView {
 impl Render for RootView {
     fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
         // Reading the child entity during draw registers its invalidator, so
-        // `cx.notify()` inside `BranchDeckApp` repaints the window.
+        // `cx.notify()` inside `VantageApp` repaints the window.
         self.app.clone()
     }
 }

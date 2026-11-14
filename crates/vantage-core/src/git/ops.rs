@@ -1559,6 +1559,57 @@ pub async fn discard(
     })
 }
 
+/// Stage every change to one path: a modification, a deletion, or a new file.
+///
+/// The path is passed as a literal pathspec so `*`, `?`, and `[` in a filename
+/// are never treated as glob characters.
+pub async fn stage_path(runner: &GitRunner, repo_path: &Path, path: &str) -> Result<(), AppError> {
+    let out = runner
+        .run_write_literal(repo_path, &["add", "-A", "--", path], 20)
+        .await?;
+    if !out.success() {
+        return Err(AppError::other(out.stderr));
+    }
+    Ok(())
+}
+
+/// Unstage one path, leaving its working-tree content untouched.
+///
+/// `git restore --staged` restores the index entry from HEAD, so an unborn
+/// branch (a fresh `git init` whose files were staged but never committed) has
+/// nothing to restore from. That case falls back to dropping the index entry
+/// with `git rm --cached`; every other failure is returned as git's stderr.
+pub async fn unstage_path(
+    runner: &GitRunner,
+    repo_path: &Path,
+    path: &str,
+) -> Result<(), AppError> {
+    let out = runner
+        .run_write_literal(repo_path, &["restore", "--staged", "--", path], 20)
+        .await?;
+    if out.success() {
+        return Ok(());
+    }
+    if !is_unborn_head_error(&out.stderr) {
+        return Err(AppError::other(out.stderr));
+    }
+
+    let fallback = runner
+        .run_write_literal(repo_path, &["rm", "--cached", "--quiet", "--", path], 20)
+        .await?;
+    if !fallback.success() {
+        return Err(AppError::other(fallback.stderr));
+    }
+    Ok(())
+}
+
+/// Whether git refused an operation because HEAD has no commit yet.
+fn is_unborn_head_error(stderr: &str) -> bool {
+    stderr.contains("HEAD")
+        || stderr.contains("ambiguous argument")
+        || stderr.contains("could not resolve")
+}
+
 async fn revert_locked(
     runner: &GitRunner,
     repo_path: &Path,
@@ -4007,6 +4058,75 @@ mod tests {
         .await
         .unwrap_err();
         assert_eq!(err.code, "Validation");
+    }
+
+    #[tokio::test]
+    async fn test_stage_and_unstage_single_paths() {
+        let runner = GitRunner::new();
+        let repo = TempTestRepo::new(&runner).await;
+
+        fs::write(repo.path.join("keep.txt"), "keep\n").unwrap();
+        fs::write(repo.path.join("*.txt"), "literal\n").unwrap();
+        runner
+            .run_write(&repo.path, &["add", "keep.txt", "*.txt"], 10)
+            .await
+            .unwrap();
+        runner
+            .run_write(&repo.path, &["commit", "-m", "init"], 10)
+            .await
+            .unwrap();
+
+        // Stage only the file literally named "*.txt"; `keep.txt` stays dirty.
+        fs::write(repo.path.join("keep.txt"), "keep changed\n").unwrap();
+        fs::write(repo.path.join("*.txt"), "literal changed\n").unwrap();
+        stage_path(&runner, &repo.path, "*.txt").await.unwrap();
+
+        let staged = runner
+            .run_read(&repo.path, &["diff", "--cached", "--name-only"])
+            .await
+            .unwrap()
+            .stdout_string();
+        assert_eq!(staged.trim(), "*.txt");
+        assert_eq!(
+            fs::read_to_string(repo.path.join("*.txt")).unwrap(),
+            "literal changed\n",
+            "staging must not touch working-tree content"
+        );
+
+        unstage_path(&runner, &repo.path, "*.txt").await.unwrap();
+        let staged = runner
+            .run_read(&repo.path, &["diff", "--cached", "--name-only"])
+            .await
+            .unwrap()
+            .stdout_string();
+        assert!(staged.trim().is_empty(), "index should be clean again");
+        assert_eq!(
+            fs::read_to_string(repo.path.join("*.txt")).unwrap(),
+            "literal changed\n",
+            "unstaging must not touch working-tree content"
+        );
+
+        // Unborn HEAD: `restore --staged` has no commit to restore from.
+        let unborn = TempTestRepo::new(&runner).await;
+        fs::write(unborn.path.join("new.txt"), "new\n").unwrap();
+        stage_path(&runner, &unborn.path, "new.txt").await.unwrap();
+        unstage_path(&runner, &unborn.path, "new.txt")
+            .await
+            .unwrap();
+
+        let staged = runner
+            .run_read(&unborn.path, &["diff", "--cached", "--name-only"])
+            .await
+            .unwrap()
+            .stdout_string();
+        assert!(
+            staged.trim().is_empty(),
+            "unborn HEAD should fall back to dropping the index entry"
+        );
+        assert_eq!(
+            fs::read_to_string(unborn.path.join("new.txt")).unwrap(),
+            "new\n"
+        );
     }
 
     #[tokio::test]

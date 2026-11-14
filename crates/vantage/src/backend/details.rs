@@ -1,5 +1,5 @@
 //! Detail queries (branches, commits, working tree, remote, language) for the
-//! BranchDeck backend.
+//! Vantage backend.
 //!
 //! The backend owns a tokio runtime and calls these synchronously from the UI
 //! thread, so every async read runs on that runtime via `block_on`. All git
@@ -229,6 +229,7 @@ pub fn changed_files(
         return Vec::new();
     }
     let totals = rt.block_on(numstat_totals(runner, path));
+    let (unstaged_previews, staged_previews) = rt.block_on(diff_preview_maps(runner, path));
 
     let mut seen: HashSet<String> = HashSet::new();
     let mut files: Vec<ChangedFile> = Vec::new();
@@ -246,7 +247,12 @@ pub fn changed_files(
             // Untracked paths have no patch in `git diff`.
             Vec::new()
         } else {
-            rt.block_on(diff_preview(runner, path, &entry.path, entry.staged))
+            let previews = if entry.staged {
+                &staged_previews
+            } else {
+                &unstaged_previews
+            };
+            previews.get(&entry.path).cloned().unwrap_or_default()
         };
         files.push(ChangedFile {
             path: entry.path,
@@ -412,23 +418,120 @@ async fn numstat_totals(runner: &GitRunner, repo_path: &Path) -> HashMap<String,
     totals
 }
 
-async fn diff_preview(
+/// Unstaged and staged previews for every path, each map from one `git diff`
+/// run: `(worktree, index)`. Fetching them per file would cost one process per
+/// changed path.
+async fn diff_preview_maps(
     runner: &GitRunner,
     repo_path: &Path,
-    path: &str,
+) -> (HashMap<String, Vec<String>>, HashMap<String, Vec<String>>) {
+    (
+        diff_preview_map(runner, repo_path, false).await,
+        diff_preview_map(runner, repo_path, true).await,
+    )
+}
+
+async fn diff_preview_map(
+    runner: &GitRunner,
+    repo_path: &Path,
     staged: bool,
-) -> Vec<String> {
+) -> HashMap<String, Vec<String>> {
     let mut args = vec!["diff", "--no-color", "--no-ext-diff"];
     if staged {
         args.push("--cached");
     }
-    args.push("--");
-    args.push(path);
 
     match runner.run_read(repo_path, &args).await {
-        Ok(out) if out.success() => preview_lines(&out.stdout_string()),
-        _ => Vec::new(),
+        Ok(out) if out.success() => parse_diff_previews(&out.stdout_string()),
+        _ => HashMap::new(),
     }
+}
+
+/// One preview per file in a `git diff` patch, keyed by the path after the
+/// change. A block starts at `diff --git ` (or `diff --cc ` for unmerged
+/// paths); its `+++` header names the new path (`b/...`), except for deletions
+/// where it is `/dev/null` and the `---` header names the removed path
+/// (`a/...`). Blocks without file headers, such as binary or mode-only
+/// changes, contribute no entry.
+fn parse_diff_previews(patch: &str) -> HashMap<String, Vec<String>> {
+    let mut previews = HashMap::new();
+    let mut block: Vec<&str> = Vec::new();
+
+    for line in patch.lines() {
+        let starts_block = line.starts_with("diff --git ") || line.starts_with("diff --cc ");
+        if starts_block {
+            insert_block_preview(&mut previews, &block);
+            block.clear();
+        }
+        if !block.is_empty() || starts_block {
+            block.push(line);
+        }
+    }
+    insert_block_preview(&mut previews, &block);
+    previews
+}
+
+fn insert_block_preview(previews: &mut HashMap<String, Vec<String>>, block: &[&str]) {
+    let Some(path) = block_path(block) else {
+        return;
+    };
+    previews.insert(path, preview_lines(&block.join("\n")));
+}
+
+/// Path a patch block changes, from its `+++`/`---` headers before the first
+/// hunk. `None` for blocks that only change metadata.
+fn block_path(block: &[&str]) -> Option<String> {
+    let mut new_path = None;
+    let mut old_path = None;
+    for line in block {
+        if line.starts_with("@@") {
+            break;
+        }
+        if let Some(path) = line.strip_prefix("+++ ") {
+            new_path = Some(path.trim());
+        } else if let Some(path) = line.strip_prefix("--- ") {
+            old_path = Some(path.trim());
+        }
+    }
+
+    let (path, prefix) = match new_path {
+        Some(path) if path != "/dev/null" => (unquote_path(path.trim()), "b/"),
+        _ => (unquote_path(old_path?.trim()), "a/"),
+    };
+    let path = path.strip_prefix(prefix).unwrap_or(path.as_str());
+    if path.is_empty() || path == "/dev/null" {
+        return None;
+    }
+    Some(path.to_string())
+}
+
+/// Undo git's C-style quoting for paths with control characters or quotes.
+/// `GitRunner` disables `core.quotePath`, so only these escapes can appear.
+fn unquote_path(path: &str) -> String {
+    if !(path.len() >= 2 && path.starts_with('"') && path.ends_with('"')) {
+        return path.to_string();
+    }
+    let mut unquoted = String::new();
+    let mut chars = path[1..path.len() - 1].chars();
+    while let Some(ch) = chars.next() {
+        if ch != '\\' {
+            unquoted.push(ch);
+            continue;
+        }
+        match chars.next() {
+            Some('n') => unquoted.push('\n'),
+            Some('t') => unquoted.push('\t'),
+            Some('r') => unquoted.push('\r'),
+            Some('"') => unquoted.push('"'),
+            Some('\\') => unquoted.push('\\'),
+            Some(other) => {
+                unquoted.push('\\');
+                unquoted.push(other);
+            }
+            None => break,
+        }
+    }
+    unquoted
 }
 
 /// Keep git's patch prefixes (`+`, `-`, `@@`, `---`, `+++`) only.
@@ -729,5 +832,47 @@ index 111..222 100644\n\
     fn preview_is_capped_at_eight_lines() {
         let patch: String = (0..20).map(|line| format!("+line {line}\n")).collect();
         assert_eq!(preview_lines(&patch).len(), PREVIEW_LINES);
+    }
+
+    #[test]
+    fn diff_previews_split_blocks_by_path_and_include_deletions() {
+        let patch = "diff --git a/src/a.rs b/src/a.rs\n\
+index 1111111..2222222 100644\n\
+--- a/src/a.rs\n\
++++ b/src/a.rs\n\
+@@ -1,2 +1,2 @@\n\
+-old line\n\
++new line\n\
+ context\n\
+diff --git a/gone.rs b/gone.rs\n\
+deleted file mode 100644\n\
+index 3333333..0000000\n\
+--- a/gone.rs\n\
++++ /dev/null\n\
+@@ -1 +0,0 @@\n\
+-removed line\n\
+diff --git a/src/b.rs b/src/b.rs\n\
+index 4444444..5555555 100644\n\
+--- a/src/b.rs\n\
++++ b/src/b.rs\n\
+@@ -1 +1,2 @@\n\
+ keep\n\
++added line\n";
+
+        let previews = parse_diff_previews(patch);
+        assert_eq!(previews.len(), 3);
+
+        let modified = previews.get("src/a.rs").expect("modified file");
+        assert!(modified.iter().any(|line| line == "--- a/src/a.rs"));
+        assert!(modified.iter().any(|line| line == "-old line"));
+        assert!(modified.iter().any(|line| line == "+new line"));
+
+        let deleted = previews.get("gone.rs").expect("deleted file");
+        assert!(deleted.iter().any(|line| line == "+++ /dev/null"));
+        assert!(deleted.iter().any(|line| line == "-removed line"));
+        assert!(!previews.contains_key("/dev/null"));
+
+        let second = previews.get("src/b.rs").expect("second file in the patch");
+        assert!(second.iter().any(|line| line == "+added line"));
     }
 }

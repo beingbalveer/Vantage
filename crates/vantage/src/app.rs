@@ -3,6 +3,7 @@
 //! 576px inspector, 448px modal.
 
 use std::collections::HashSet;
+use std::path::PathBuf;
 use std::time::Duration;
 
 use gpui::{
@@ -11,7 +12,6 @@ use gpui::{
 };
 
 use crate::backend::Backend;
-use crate::data::{default_groups, static_repositories};
 use crate::model::{NavSection, RepoSyncState, Repository};
 use crate::theme::Theme;
 use crate::widgets::{apply_field_key, FieldKey, FieldState, Txt};
@@ -56,7 +56,7 @@ pub enum FieldId {
     ModalCustomGroup,
 }
 
-pub struct BranchDeckApp {
+pub struct VantageApp {
     pub theme: Theme,
     pub repos: Vec<Repository>,
     pub groups: Vec<String>,
@@ -107,20 +107,19 @@ pub struct BranchDeckApp {
     modal_custom_group_focus: FocusHandle,
 }
 
-impl BranchDeckApp {
+impl VantageApp {
     pub fn new(cx: &mut Context<Self>) -> Self {
         let backend = Backend::new().map(std::sync::Arc::new).ok();
-        let (mut groups, assignments) = match backend.as_ref() {
+        let (groups, assignments) = match backend.as_ref() {
             Some(backend) => backend.groups(),
             None => (Vec::new(), Default::default()),
         };
-        if groups.is_empty() {
-            groups = default_groups();
-        }
 
         Self {
             theme: Theme::light(),
-            repos: static_repositories(),
+            // Repositories come exclusively from the engine scan; a fresh
+            // install starts empty so the viewport can render its empty state.
+            repos: Vec::new(),
             groups,
             active_section: NavSection::Overview,
             active_group: "All".to_string(),
@@ -149,7 +148,7 @@ impl BranchDeckApp {
             copied_path: false,
 
             modal_path: FieldState::new(),
-            modal_group_choice: "AI Tools".to_string(),
+            modal_group_choice: "Ungrouped".to_string(),
             modal_custom_group: FieldState::new(),
             modal_error: None,
             modal_group_menu_open: false,
@@ -169,8 +168,19 @@ impl BranchDeckApp {
 
     /// Re-read every repo through Vantage's git engine (background thread).
     pub fn start_scan(&mut self, cx: &mut Context<Self>) {
+        self.begin_scan(None, cx);
+    }
+
+    /// Re-read only the working trees the watcher reported as changed, leaving
+    /// every other row untouched.
+    pub fn start_scan_dirty(&mut self, roots: Vec<PathBuf>, cx: &mut Context<Self>) {
+        self.begin_scan(Some(roots), cx);
+    }
+
+    fn begin_scan(&mut self, roots: Option<Vec<PathBuf>>, cx: &mut Context<Self>) {
         let Some(backend) = self.backend.clone() else {
             self.scan_errors = vec!["vantage-core engine unavailable".to_string()];
+            cx.notify();
             return;
         };
 
@@ -179,10 +189,16 @@ impl BranchDeckApp {
         self.is_scanning = true;
         cx.notify();
 
+        let dirty = roots.is_some();
         cx.spawn(async move |this, cx| {
             let (repositories, errors) = cx
                 .background_executor()
-                .spawn(async move { backend.snapshot() })
+                .spawn(async move {
+                    match roots {
+                        Some(roots) => backend.snapshot_subset(&roots),
+                        None => backend.snapshot(),
+                    }
+                })
                 .await;
 
             this.update(cx, |app, cx| {
@@ -192,37 +208,42 @@ impl BranchDeckApp {
                 app.is_scanning = false;
                 app.scan_errors = errors;
 
-                if !repositories.is_empty() {
-                    app.repos = repositories;
-
-                    // The three seed groups are only meaningful for the demo
-                    // inventory; drop the ones that ended up empty once real
-                    // repositories are on screen.
-                    const SEED_GROUPS: [&str; 3] = ["AI Tools", "Web Apps", "Packages & CLI"];
-                    app.groups.retain(|group| {
-                        !SEED_GROUPS.contains(&group.as_str())
-                            || app.repos.iter().any(|repo| &repo.workspace == group)
-                    });
-
-                    // Keep the configured order, then append groups only found
-                    // on disk.
+                if dirty {
+                    for repository in repositories {
+                        match app.repos.iter().position(|repo| repo.id == repository.id) {
+                            Some(index) => app.repos[index] = repository,
+                            None => app.repos.push(repository),
+                        }
+                    }
                     for repo in &app.repos {
                         if !app.groups.contains(&repo.workspace) {
                             app.groups.push(repo.workspace.clone());
                         }
                     }
-
-                    if app.active_group != "All" && !app.groups.contains(&app.active_group) {
-                        app.active_group = "All".to_string();
-                    }
-                    if let Some(id) = app.selected_repo_id.clone() {
-                        if !app.repos.iter().any(|repo| repo.id == id) {
-                            app.selected_repo_id = None;
-                        }
-                    }
-
-                    app.bind_watcher(cx);
+                    cx.notify();
+                    return;
                 }
+
+                app.repos = repositories;
+
+                // Keep the configured order, then append groups only found
+                // on disk.
+                for repo in &app.repos {
+                    if !app.groups.contains(&repo.workspace) {
+                        app.groups.push(repo.workspace.clone());
+                    }
+                }
+
+                if app.active_group != "All" && !app.groups.contains(&app.active_group) {
+                    app.active_group = "All".to_string();
+                }
+                if let Some(id) = app.selected_repo_id.clone() {
+                    if !app.repos.iter().any(|repo| repo.id == id) {
+                        app.selected_repo_id = None;
+                    }
+                }
+
+                app.bind_watcher(cx);
                 cx.notify();
             })
             .ok();
@@ -271,22 +292,33 @@ impl BranchDeckApp {
             if dirty.is_empty() {
                 continue;
             }
-            let _ = this.update(cx, |app, cx| app.start_scan(cx));
+            let _ = this.update(cx, |app, cx| app.start_scan_dirty(dirty, cx));
         })
         .detach();
     }
 
     /// Persist groups and assignments into Vantage's own state file.
+    ///
+    /// Only rows backed by the engine are merged in: repositories that failed to
+    /// scan must not overwrite the assignments already on disk, and rows that
+    /// are not on screen keep their stored group.
     pub fn persist(&mut self, _cx: &mut Context<Self>) {
-        self.assignments = self
-            .repos
-            .iter()
-            .filter(|repo| repo.workspace != "Ungrouped")
-            .map(|repo| (repo.id.clone(), repo.workspace.clone()))
-            .collect();
-        if let Some(backend) = &self.backend {
-            backend.set_groups(&self.groups, &self.assignments).ok();
+        let Some(backend) = self.backend.clone() else {
+            return;
+        };
+        let known = backend.repo_ids();
+        for repo in &self.repos {
+            if !known.contains(&repo.id) {
+                continue;
+            }
+            if repo.workspace == "Ungrouped" {
+                self.assignments.remove(&repo.id);
+            } else {
+                self.assignments
+                    .insert(repo.id.clone(), repo.workspace.clone());
+            }
         }
+        backend.set_groups(&self.groups, &self.assignments).ok();
     }
 
     fn repo_path_opt(&self, repo: &Repository) -> Option<std::path::PathBuf> {
@@ -305,6 +337,7 @@ impl BranchDeckApp {
         self.toast = Some(message.into());
         self.toast_seq = self.toast_seq.wrapping_add(1);
         let seq = self.toast_seq;
+        cx.notify();
         cx.spawn(async move |this, cx| {
             cx.background_executor()
                 .timer(Duration::from_millis(2600))
@@ -491,6 +524,23 @@ impl BranchDeckApp {
         cx.notify();
     }
 
+    #[cfg(not(target_os = "macos"))]
+    pub fn show_about(&mut self, cx: &mut Context<Self>) {
+        self.show_toast(
+            "Vantage — every repository, every branch, one dashboard",
+            cx,
+        );
+    }
+
+    /// Fetch the repository currently open in the inspector.
+    pub fn fetch_selected(&mut self, cx: &mut Context<Self>) {
+        if let Some(repository) = self.selected_repo().cloned() {
+            self.fetch_repo(&repository, cx);
+        } else {
+            self.show_toast("Select a repository first", cx);
+        }
+    }
+
     pub fn toggle_group_collapsed(&mut self, key: String, cx: &mut Context<Self>) {
         if !self.collapsed_groups.remove(&key) {
             self.collapsed_groups.insert(key);
@@ -554,41 +604,76 @@ impl BranchDeckApp {
     }
 
     pub fn toggle_file_stage(&mut self, repo_id: &str, path: &str, cx: &mut Context<Self>) {
-        for repo in &mut self.repos {
-            if repo.id != repo_id {
-                continue;
-            }
-            for file in &mut repo.uncommitted_files {
-                if file.path == path {
-                    file.staged = !file.staged;
+        let Some(backend) = self.backend.clone() else {
+            return;
+        };
+        let Some(staged) = self
+            .repos
+            .iter()
+            .find(|repo| repo.id == repo_id)
+            .and_then(|repo| {
+                repo.uncommitted_files
+                    .iter()
+                    .find(|file| file.path == path)
+                    .map(|file| file.staged)
+            })
+        else {
+            return;
+        };
+
+        let id = repo_id.to_string();
+        let file_path = path.to_string();
+        let toast_path = file_path.clone();
+        let target = !staged;
+        cx.spawn(async move |this, cx| {
+            let result = cx
+                .background_executor()
+                .spawn(async move { backend.set_staged(&id, &file_path, target) })
+                .await;
+            this.update(cx, |app, cx| {
+                if let Err(error) = result {
+                    app.show_toast(format!("Could not update {toast_path}: {error}"), cx);
                 }
-            }
-        }
-        cx.notify();
+                app.start_scan(cx);
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
     }
 
     pub fn switch_branch(&mut self, repo_id: &str, branch_name: &str, cx: &mut Context<Self>) {
-        for repo in &mut self.repos {
-            if repo.id != repo_id {
-                continue;
-            }
-            let Some(target) = repo
-                .branches
-                .iter()
-                .find(|b| b.name == branch_name)
-                .cloned()
-            else {
-                continue;
-            };
-            repo.current_branch = branch_name.to_string();
-            repo.ahead_count = target.ahead;
-            repo.behind_count = target.behind;
-            for branch in &mut repo.branches {
-                branch.is_current = branch.name == branch_name;
-            }
-        }
-        self.show_toast(format!("Checked out {branch_name}"), cx);
-        cx.notify();
+        let Some(backend) = self.backend.clone() else {
+            return;
+        };
+        let name = self
+            .repos
+            .iter()
+            .find(|repo| repo.id == repo_id)
+            .map(|repo| repo.name.clone())
+            .unwrap_or_else(|| repo_id.to_string());
+
+        let id = repo_id.to_string();
+        let branch = branch_name.to_string();
+        let checkout_branch = branch.clone();
+        cx.spawn(async move |this, cx| {
+            let result = cx
+                .background_executor()
+                .spawn(async move { backend.checkout(&id, &checkout_branch) })
+                .await;
+            this.update(cx, |app, cx| {
+                match result {
+                    Ok(()) => app.show_toast(format!("Checked out {branch}"), cx),
+                    Err(error) => {
+                        app.show_toast(format!("Checkout failed for {name}: {error}"), cx)
+                    }
+                }
+                app.start_scan(cx);
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
     }
 
     /// Phase 2: actually fetch, then rescan the tree.
@@ -701,10 +786,19 @@ impl BranchDeckApp {
                 app.modal_is_adding = false;
                 match result {
                     Ok(mut repository) => {
+                        let existing_group = app
+                            .groups
+                            .iter()
+                            .find(|group| group.to_lowercase() == resolved_group.to_lowercase())
+                            .cloned();
+                        let resolved_group = match existing_group {
+                            Some(existing) => existing,
+                            None => {
+                                app.groups.push(resolved_group.clone());
+                                resolved_group.clone()
+                            }
+                        };
                         repository.workspace = resolved_group.clone();
-                        if !app.groups.contains(&resolved_group) {
-                            app.groups.push(resolved_group.clone());
-                        }
                         app.repos.retain(|repo| repo.id != repository.id);
                         app.repos.insert(0, repository.clone());
                         app.selected_repo_id = Some(repository.id.clone());
@@ -947,7 +1041,7 @@ impl BranchDeckApp {
     }
 }
 
-impl Render for BranchDeckApp {
+impl Render for VantageApp {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = self.theme;
 

@@ -37,9 +37,15 @@ impl RepoWatcher {
                 return;
             }
 
-            // Ignore pure index/lock churn inside `.git` — it fires constantly
-            // while git itself is reading status.
-            if event.paths.iter().any(|p| p.ends_with(".git/index.lock")) {
+            // Ignore anything under `.git`: our own status calls refresh the
+            // index, which would otherwise mark the repo dirty and trigger
+            // another scan. Checking a full path component also catches a
+            // worktree/submodule `.git` file (not just the `.git` directory).
+            if event
+                .paths
+                .iter()
+                .any(|p| p.components().any(|c| c.as_os_str() == ".git"))
+            {
                 return;
             }
 
@@ -61,7 +67,7 @@ impl RepoWatcher {
         // Watch nothing yet; `watch` registers repositories as they appear.
         watcher
             .watch(
-                Path::new("/nonexistent-branchdeck"),
+                Path::new("/nonexistent-vantage"),
                 RecursiveMode::NonRecursive,
             )
             .ok();
@@ -85,8 +91,8 @@ impl RepoWatcher {
             self._watcher.unwatch(root).ok();
         }
         for root in &roots {
-            // `.git` churn is not interesting; watching the tree covers the
-            // working-directory changes the dashboard reports.
+            // Watch the whole tree recursively; events under `.git` are
+            // filtered out in the callback above.
             self._watcher.watch(root, RecursiveMode::Recursive).ok();
         }
         state.roots = roots;

@@ -1,14 +1,14 @@
 //! Add Repository modal — 448px card built around a local repository path,
-//! with a native folder picker and the BranchDeck group selector.
+//! with a native folder picker and the Vantage group selector.
 
 use gpui::{deferred, div, prelude::*, px, relative, Context, IntoElement, Styled, Window};
 
-use crate::app::{BranchDeckApp, FieldId};
+use crate::app::{FieldId, VantageApp};
 use crate::icons::icon;
 use crate::theme::{FONT_SANS, LH_SM, TEXT_SM};
 use crate::widgets::{secondary_button, FieldVariant, Txt};
 
-impl BranchDeckApp {
+impl VantageApp {
     pub fn render_add_repo_modal(
         &mut self,
         window: &Window,
@@ -124,7 +124,7 @@ impl BranchDeckApp {
             None => div()
                 .x11()
                 .fg(theme.text_dim)
-                .child("BranchDeck reads the name, branch, and stack from this folder."),
+                .child("Vantage reads the name, branch, and stack from this folder."),
         };
 
         form = form.child(
@@ -359,12 +359,12 @@ fn field_label(theme: &crate::theme::Theme, text: &'static str) -> impl IntoElem
 mod tests {
     use gpui::{point, px, AppContext, Modifiers, TestAppContext};
 
-    use crate::app::BranchDeckApp;
+    use crate::app::VantageApp;
     use crate::root::RootView;
 
     #[gpui::test]
     fn dialog_ignores_clicks_on_its_own_body(cx: &mut TestAppContext) {
-        let app = cx.new(BranchDeckApp::new);
+        let app = cx.new(VantageApp::new);
         let (_root, cx) = cx.add_window_view(|_window, _cx| RootView::new(app.clone()));
 
         cx.update(|window, cx| {

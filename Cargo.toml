@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["crates/vantage-core", "crates/branchdeck"]
+members = ["crates/vantage-core", "crates/vantage"]
 
 [workspace.package]
 version = "0.6.0"

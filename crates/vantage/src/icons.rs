@@ -1,8 +1,10 @@
 //! Embedded Lucide icons (SVG path data taken from lucide 0.546, the version the
-//! React app depends on) served through GPUI's `AssetSource`.
+//! React app depends on) and raster brand images served through GPUI's
+//! `AssetSource`.
 //!
 //! GPUI rasterises an SVG to a monochrome mask and tints it with the element's
-//! text colour, so every icon is rendered as black strokes here.
+//! text colour, so every icon is rendered as black strokes here. Raster images
+//! under `images/` keep their own colours.
 
 use std::borrow::Cow;
 
@@ -12,6 +14,14 @@ macro_rules! icons {
     ($($name:literal => $file:literal),* $(,)?) => {
         pub const ALL: &[(&str, &[u8])] = &[
             $(($name, include_bytes!(concat!("../assets/icons/", $file))),)*
+        ];
+    };
+}
+
+macro_rules! images {
+    ($($name:literal => $file:literal),* $(,)?) => {
+        pub const ALL_IMAGES: &[(&str, &[u8])] = &[
+            $(($name, include_bytes!(concat!("../assets/images/", $file))),)*
         ];
     };
 }
@@ -40,15 +50,32 @@ icons! {
     "x" => "x.svg",
 }
 
+images! {
+    "vantage-icon" => "vantage-icon.png",
+}
+
 pub struct Assets;
+
+/// Path under which the Vantage mark is embedded (for `gpui::img`).
+pub const VANTAGE_ICON: &str = "images/vantage-icon.png";
 
 impl AssetSource for Assets {
     fn load(&self, path: &str) -> Result<Option<Cow<'static, [u8]>>> {
-        let name = path
+        if let Some(name) = path
             .strip_prefix("icons/")
-            .and_then(|rest| rest.strip_suffix(".svg"));
-        Ok(name
-            .and_then(|name| ALL.iter().find(|(n, _)| *n == name))
+            .and_then(|rest| rest.strip_suffix(".svg"))
+        {
+            return Ok(ALL
+                .iter()
+                .find(|(n, _)| *n == name)
+                .map(|(_, bytes)| Cow::Borrowed(*bytes)));
+        }
+
+        let image = path
+            .strip_prefix("images/")
+            .and_then(|rest| rest.strip_suffix(".png"));
+        Ok(image
+            .and_then(|image| ALL_IMAGES.iter().find(|(n, _)| *n == image))
             .map(|(_, bytes)| Cow::Borrowed(*bytes)))
     }
 
@@ -56,6 +83,11 @@ impl AssetSource for Assets {
         Ok(ALL
             .iter()
             .map(|(name, _)| SharedString::from(format!("icons/{name}.svg")))
+            .chain(
+                ALL_IMAGES
+                    .iter()
+                    .map(|(name, _)| SharedString::from(format!("images/{name}.png"))),
+            )
             .collect())
     }
 }

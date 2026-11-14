@@ -1,14 +1,15 @@
-//! BranchDeck — native GPUI port of the React BranchDeck dashboard.
+//! Vantage — native GPUI port of the React Vantage dashboard.
 //!
-//! Phase 1: exact UI + state on the static seed data from `staticRepos.ts`.
+//! Repositories are read from the local engine scan and persisted group
+//! assignments, so the UI always reflects real work trees.
 
 mod add_repo_modal;
 mod app;
 mod backend;
 mod branch_matrix;
-mod data;
 mod icons;
 mod inspector;
+mod menu;
 mod model;
 mod pending_changes;
 mod repo_table;
@@ -29,7 +30,7 @@ use gpui::{
     WindowBounds, WindowOptions,
 };
 
-use crate::app::BranchDeckApp;
+use crate::app::VantageApp;
 use crate::icons::Assets;
 
 macro_rules! fonts {
@@ -53,10 +54,10 @@ fn register_fonts(cx: &App) {
         .expect("register bundled fonts");
 }
 
-/// Dev/QA helper: `BRANCHDECK_STATE=dark,section:branches,inspector:repo-prompt-workbench,modal,newgroup`
+/// Dev/QA helper: `VANTAGE_STATE=dark,section:branches,inspector:first,modal,newgroup`
 /// drives the UI into a given state so screenshots can be taken without scripting.
-fn apply_demo_state(entity: &gpui::Entity<BranchDeckApp>, cx: &mut App) {
-    let Ok(state) = std::env::var("BRANCHDECK_STATE") else {
+fn apply_env_state(entity: &gpui::Entity<VantageApp>, cx: &mut App) {
+    let Ok(state) = std::env::var("VANTAGE_STATE") else {
         return;
     };
     let tokens: Vec<String> = state.split(',').map(|t| t.trim().to_string()).collect();
@@ -115,7 +116,7 @@ fn apply_demo_state(entity: &gpui::Entity<BranchDeckApp>, cx: &mut App) {
     });
 
     // QA: `inspector:first` is evaluated before the first scan lands, so
-    // re-select once the inventory has been replaced.
+    // re-select once the scan has replaced the repository list.
     if tokens.iter().any(|token| token == "inspector:first") {
         let entity = entity.clone();
         cx.spawn(async move |cx| {
@@ -166,34 +167,41 @@ fn main() {
 
     Application::new().with_assets(Assets).run(|cx: &mut App| {
         register_fonts(cx);
+        cx.on_window_closed(|cx| {
+            if cx.windows().is_empty() {
+                cx.quit();
+            }
+        })
+        .detach();
 
         let bounds = Bounds::centered(None, size(px(1440.0), px(900.0)), cx);
-        let root: std::cell::RefCell<Option<gpui::Entity<BranchDeckApp>>> =
+        let root: std::cell::RefCell<Option<gpui::Entity<VantageApp>>> =
             std::cell::RefCell::new(None);
         let _window = cx
             .open_window(
                 WindowOptions {
                     window_bounds: Some(WindowBounds::Windowed(bounds)),
                     titlebar: Some(TitlebarOptions {
-                        title: Some("BranchDeck".into()),
+                        title: Some("Vantage".into()),
                         appears_transparent: false,
                         traffic_light_position: None,
                     }),
                     window_min_size: Some(size(px(1040.0), px(640.0))),
                     window_background: WindowBackgroundAppearance::Opaque,
-                    app_id: Some("BranchDeck".to_string()),
+                    app_id: Some("Vantage".to_string()),
                     ..Default::default()
                 },
                 |_window, cx| {
-                    let entity = cx.new(BranchDeckApp::new);
+                    let entity = cx.new(VantageApp::new);
                     *root.borrow_mut() = Some(entity.clone());
                     cx.new(|_| root::RootView::new(entity))
                 },
             )
-            .expect("open BranchDeck window");
+            .expect("open Vantage window");
 
         if let Some(entity) = root.into_inner() {
-            apply_demo_state(&entity, cx);
+            menu::install(cx, entity.clone());
+            apply_env_state(&entity, cx);
             entity.update(cx, |app, cx| app.start_scan(cx));
         }
         cx.activate(true);

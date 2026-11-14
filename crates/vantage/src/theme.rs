@@ -1,4 +1,4 @@
-//! Exact palettes lifted from the BranchDeck React app's Tailwind classes.
+//! Exact palettes lifted from the Vantage React app's Tailwind classes.
 //!
 //! Hex values are the Tailwind v4 `theme.css` tokens (the app pins
 //! `tailwindcss@4.3.3`) converted from OKLCH to sRGB, so every value below is

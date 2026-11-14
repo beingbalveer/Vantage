@@ -1,3 +1,5 @@
+> **Historical document — Vantage v1.** This design specification describes the original Vantage application and is retained for reference. Vantage v2 is the native GPUI multi-repo dashboard described in [`README.md`](README.md); this file does not describe v2 visuals or behavior.
+
 # Vantage: Design Specification
 
 > Companion to `PRODUCT_SPEC.md`. This file defines **how it looks, feels, and behaves** at the pixel and interaction level. Where this file and the product spec disagree on behavior, the product spec wins; where they disagree on visuals, this file wins.

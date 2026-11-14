@@ -1,4 +1,4 @@
-//! Mirrors `src/types/repo.ts` from the BranchDeck React app, field for field.
+//! Mirrors `src/types/repo.ts` from the Vantage React app, field for field.
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum FileChangeStatus {

@@ -921,6 +921,49 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn checkout_branch_switches_head_and_reports_unknown_branches() {
+        let runner = GitRunner::new();
+        let repo = TempTestRepo::new(&runner).await;
+        let default = runner
+            .run_read(&repo.path, &["symbolic-ref", "--short", "HEAD"])
+            .await
+            .unwrap()
+            .stdout_string()
+            .trim()
+            .to_string();
+        repo.commit(&runner, "a.txt", "one\n", "first").await;
+        runner
+            .run_write(&repo.path, &["checkout", "-b", "feature"], 10)
+            .await
+            .unwrap();
+        repo.commit(&runner, "b.txt", "two\n", "second").await;
+        runner
+            .run_write(&repo.path, &["checkout", &default], 10)
+            .await
+            .unwrap();
+
+        checkout_branch(&runner, &repo.path, "feature")
+            .await
+            .unwrap();
+        let head = runner
+            .run_read(&repo.path, &["symbolic-ref", "--short", "HEAD"])
+            .await
+            .unwrap()
+            .stdout_string();
+        assert_eq!(head.trim(), "feature");
+        assert!(repo.path.join("b.txt").exists());
+
+        let err = checkout_branch(&runner, &repo.path, "no-such-branch")
+            .await
+            .unwrap_err();
+        assert!(
+            err.message.contains("no-such-branch"),
+            "git's own error should surface: {}",
+            err.message
+        );
+    }
+
+    #[tokio::test]
     async fn branch_list_includes_the_tip_commit_date() {
         let runner = GitRunner::new();
         let repo = TempTestRepo::new(&runner).await;

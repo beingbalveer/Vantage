@@ -2,7 +2,7 @@
 
 use gpui::{div, prelude::*, px, Context, IntoElement, Styled};
 
-use crate::app::BranchDeckApp;
+use crate::app::VantageApp;
 use crate::icons::icon;
 use crate::model::{file_status_code, file_status_label, FileChangeStatus};
 use crate::theme::{FONT_MONO, LH_XS, TEXT_XS};
@@ -27,7 +27,7 @@ struct PendingRepo {
     files: Vec<PendingFile>,
 }
 
-impl BranchDeckApp {
+impl VantageApp {
     pub fn render_pending_changes(&mut self, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = self.theme;
 

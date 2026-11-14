@@ -43,7 +43,13 @@ pub fn map_repo(
 
     let uncommitted_files = details::changed_files(rt, runner, path);
     let branches = details::branches(rt, runner, path, &current_branch, &default_branch);
-    let recent_commits = details::commits(rt, runner, path, &current_branch);
+    // "detached" is only a display label; `git log` must be asked for HEAD.
+    let commit_branch = if current_branch == DETACHED {
+        "HEAD"
+    } else {
+        current_branch.as_str()
+    };
+    let recent_commits = details::commits(rt, runner, path, commit_branch);
 
     Repository {
         id: entry.id.clone(),
@@ -60,7 +66,7 @@ pub fn map_repo(
         last_activity_label,
         last_activity_minutes,
         primary_language: details::language(path),
-        // BranchDeck has no session notes; Vantage's review notes live in the
+        // Vantage has no session notes; Vantage's review notes live in the
         // repo's own pane, not on the dashboard row.
         session_note: String::new(),
         uncommitted_files,
@@ -412,7 +418,7 @@ mod tests {
             eprintln!("skipping: git is not installed");
             return;
         }
-        let dir = std::env::temp_dir().join(format!("branchdeck_repo_map_{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("vantage_repo_map_{}", std::process::id()));
         std::fs::remove_dir_all(&dir).ok();
         std::fs::create_dir_all(&dir).unwrap();
         git(&dir, &["init", "-q", "-b", "main"]);

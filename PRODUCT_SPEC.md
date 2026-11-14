@@ -1,3 +1,5 @@
+> **Historical document — Vantage v1.** This spec describes the original Vantage application and is retained for reference. Vantage v2 is the native GPUI multi-repo dashboard described in [`README.md`](README.md); this file does not describe v2 behavior.
+
 # Vantage: Product & Engineering Spec
 
 > Product name: **Vantage**. (Originally prototyped under the working name "Relay"; identifiers such as the `refs/relay/backup/*` ref namespace and the legacy `relay_*` storage keys are intentionally kept for backward compatibility.)

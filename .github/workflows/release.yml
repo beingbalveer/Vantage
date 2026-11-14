@@ -21,14 +21,14 @@ jobs:
         uses: Swatinem/rust-cache@v2
 
       - name: Build native app
-        run: cargo build --release -p branchdeck
+        run: cargo build --release -p vantage
 
       - name: Package
         run: |
           mkdir -p dist
-          cp target/release/branchdeck dist/
+          cp target/release/vantage dist/
           cd dist
-          zip -r "vantage-${GITHUB_REF_NAME}-macos-arm64.zip" branchdeck
+          zip -r "vantage-${GITHUB_REF_NAME}-macos-arm64.zip" vantage
 
       - name: Upload release asset
         uses: softprops/action-gh-release@v2

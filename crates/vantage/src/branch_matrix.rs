@@ -2,7 +2,7 @@
 
 use gpui::{div, prelude::*, px, relative, Context, Div, IntoElement, Styled, Window};
 
-use crate::app::{BranchDeckApp, BranchFilter, FieldId};
+use crate::app::{BranchFilter, FieldId, VantageApp};
 use crate::icons::icon;
 use crate::theme::Theme;
 use crate::widgets::{FieldVariant, Txt};
@@ -32,7 +32,7 @@ fn cell(width: f32) -> Div {
     div().w(relative(width)).flex_shrink_0()
 }
 
-impl BranchDeckApp {
+impl VantageApp {
     pub fn render_branch_matrix(
         &mut self,
         window: &mut Window,

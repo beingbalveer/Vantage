@@ -1,7 +1,7 @@
 # Rust / Cargo
 /target/
 src-tauri/target/
-crates/branchdeck/target/
+crates/vantage/target/
 
 # Environment & Secrets
 .env

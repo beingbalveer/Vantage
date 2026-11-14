@@ -1,11 +1,17 @@
-# BranchDeck (native GPUI)
+# Vantage — native GPUI dashboard
 
-The repository dashboard UI for Vantage, built with [GPUI](https://gpui.rs).
+The native desktop app for Vantage, built with [GPUI](https://gpui.rs).
 It renders Vantage's real git data through `vantage-core` — no webview.
 
+Run these commands from the repository root:
+
+```sh
+cargo build -p vantage   # build the app
+cargo run -p vantage     # build and launch it
 ```
-cargo run -p branchdeck
-```
+
+The binaries are written to `target/debug/vantage` (debug) and
+`target/release/vantage` (release).
 
 ## Where the data comes from
 
@@ -19,18 +25,18 @@ log, refs, diffs, stash, watcher, JSON state). This crate adds a thin adapter:
 | `src/backend/details.rs` | Branches, recent commits, changed files with per-file stats and diff previews, remote normalisation, language detection. |
 | `src/model.rs` | View model (`Repository`, `BranchInfo`, `ChangedEntry`, …). |
 | `src/theme.rs` | The dashboard palette. |
-| `src/sidebar.rs`, `topbar.rs`, `repo_table.rs`, `branch_matrix.rs`, `pending_changes.rs`, `inspector.rs`, `add_repo_modal.rs` | The five views, inspector and modal. |
+| `src/sidebar.rs`, `topbar.rs`, `repo_table.rs`, `branch_matrix.rs`, `pending_changes.rs`, `inspector.rs`, `add_repo_modal.rs` | The dashboard views, inspector and add-repository modal. |
 | `src/text.rs` | Ellipsis fitting via GPUI's own line wrapper. |
 | `src/watcher.rs` | `notify` watchers over repo paths; a debounced poll refreshes through the backend. |
 
 Groups and per-repo group assignments are persisted inside Vantage's own
-`state.json` under `extra["branchdeck"]`, so there is a single source of truth.
+`state.json` under `extra["vantage"]`, so there is a single source of truth.
 
 ## Dev flags
 
 ```sh
-BRANCHDECK_STATE=dark,section:branches,inspector:first,itab:branches,modal cargo run -p branchdeck
-cargo run -p branchdeck -- --print-fonts
+VANTAGE_STATE=dark,section:branches,inspector:first,itab:branches,modal cargo run -p vantage
+cargo run -p vantage -- --print-fonts
 ```
 
 ## Known gaps
