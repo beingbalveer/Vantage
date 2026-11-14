@@ -1,0 +1,733 @@
+//! Detail queries (branches, commits, working tree, remote, language) for the
+//! BranchDeck backend.
+//!
+//! The backend owns a tokio runtime and calls these synchronously from the UI
+//! thread, so every async read runs on that runtime via `block_on`. All git
+//! access goes through Vantage's read-only git layer (`vantage_core::git`)
+//! instead of a second front end-specific implementation.
+
+use std::collections::{HashMap, HashSet};
+use std::path::Path;
+use std::time::{SystemTime, UNIX_EPOCH};
+
+use vantage_core::git::{diff, github, log, refs, status};
+use vantage_core::GitRunner;
+
+use crate::model::{BranchInfo, ChangedFile, CommitEntry, FileChangeStatus};
+
+/// Commits listed per branch panel.
+const COMMIT_LIMIT: u32 = 15;
+/// Patch lines kept as a changed file's preview.
+const PREVIEW_LINES: usize = 8;
+const NO_REMOTE: &str = "no remote";
+const NO_COMMITS: &str = "no commits";
+const UNKNOWN_AUTHOR: &str = "unknown";
+
+// ---------------- Branches ----------------
+
+/// Every local branch, current first and then newest tip first.
+pub fn branches(
+    rt: &tokio::runtime::Runtime,
+    runner: &GitRunner,
+    path: &Path,
+    current: &str,
+    default: &str,
+) -> Vec<BranchInfo> {
+    let listed = match rt.block_on(refs::list_branches(runner, path)) {
+        Ok(list) => list,
+        Err(_) => return Vec::new(),
+    };
+    let tips = rt.block_on(branch_tips(runner, path));
+    let now = now_seconds();
+
+    let mut seen: HashSet<String> = HashSet::new();
+    let mut snapshots: Vec<(BranchInfo, i64)> = Vec::new();
+    for branch in listed {
+        let name = branch.name.trim().to_string();
+        // `BranchInfo` models local branches: a remote-tracking ref would list a
+        // branch twice and can never be checked out by that name.
+        if name.is_empty()
+            || name.starts_with("remotes/")
+            || name.starts_with("origin/")
+            || name.ends_with("/HEAD")
+            || !seen.insert(name.clone())
+        {
+            continue;
+        }
+
+        let tip = tips.get(&name);
+        let seconds = tip.and_then(|tip| tip.seconds).unwrap_or(0);
+        snapshots.push((
+            BranchInfo {
+                is_current: branch.is_head || name == current,
+                is_default: name == default,
+                ahead: tip.map(|tip| tip.ahead).unwrap_or(0),
+                behind: tip.map(|tip| tip.behind).unwrap_or(0),
+                last_commit_msg: tip.map(|tip| tip.subject.clone()).unwrap_or_default(),
+                last_commit_time: if seconds > 0 {
+                    relative_label(now, seconds)
+                } else {
+                    NO_COMMITS.to_string()
+                },
+                author: tip
+                    .map(|tip| tip.author.clone())
+                    .filter(|author| !author.is_empty())
+                    .unwrap_or_else(|| UNKNOWN_AUTHOR.to_string()),
+                name,
+            },
+            seconds,
+        ));
+    }
+
+    snapshots.sort_by(|a, b| {
+        b.0.is_current
+            .cmp(&a.0.is_current)
+            .then_with(|| b.1.cmp(&a.1))
+    });
+    snapshots.into_iter().map(|(info, _)| info).collect()
+}
+
+struct BranchTip {
+    ahead: i32,
+    behind: i32,
+    /// Seconds since the epoch of the branch tip, `None` for an unborn branch.
+    seconds: Option<i64>,
+    subject: String,
+    author: String,
+}
+
+const BRANCH_TIP_FORMAT: &str =
+    "%(refname:short)\x1f%(upstream:track)\x1f%(committerdate:unix)\x1f%(authorname)\x1f%(subject)";
+
+/// Ahead/behind and tip-commit metadata for every local branch in one call.
+/// `state::BranchInfo` (what `refs::list_branches` returns) only carries the
+/// ref name and its committer date, so the remaining fields come from here.
+async fn branch_tips(runner: &GitRunner, repo_path: &Path) -> HashMap<String, BranchTip> {
+    let format_arg = format!("--format={BRANCH_TIP_FORMAT}");
+    let out = match runner
+        .run_read(repo_path, &["for-each-ref", &format_arg, "refs/heads"])
+        .await
+    {
+        Ok(out) if out.success() => out,
+        _ => return HashMap::new(),
+    };
+
+    let mut tips = HashMap::new();
+    for line in out.stdout_string().lines() {
+        let fields: Vec<&str> = line.split('\x1f').collect();
+        if fields.len() < 5 {
+            continue;
+        }
+        let name = fields[0].trim();
+        if name.is_empty() {
+            continue;
+        }
+        let (ahead, behind) = parse_track(fields[1]);
+        tips.insert(
+            name.to_string(),
+            BranchTip {
+                ahead,
+                behind,
+                seconds: fields[2].trim().parse::<i64>().ok(),
+                author: fields[3].trim().to_string(),
+                subject: fields[4].trim().to_string(),
+            },
+        );
+    }
+    tips
+}
+
+/// `%(upstream:track)` renders as `[ahead 2, behind 1]`, `[gone]` or nothing.
+fn parse_track(track: &str) -> (i32, i32) {
+    let mut ahead = 0;
+    let mut behind = 0;
+    for part in track
+        .trim()
+        .trim_start_matches('[')
+        .trim_end_matches(']')
+        .split(',')
+    {
+        let part = part.trim();
+        if let Some(value) = part.strip_prefix("ahead ") {
+            ahead = value.trim().parse().unwrap_or(0);
+        } else if let Some(value) = part.strip_prefix("behind ") {
+            behind = value.trim().parse().unwrap_or(0);
+        }
+    }
+    (ahead, behind)
+}
+
+// ---------------- Commits ----------------
+
+/// The most recent commits of `branch` (the checked-out branch when empty).
+pub fn commits(
+    rt: &tokio::runtime::Runtime,
+    runner: &GitRunner,
+    path: &Path,
+    branch: &str,
+) -> Vec<CommitEntry> {
+    let target = if branch.trim().is_empty() {
+        "HEAD"
+    } else {
+        branch.trim()
+    };
+    let page = match rt.block_on(log::get_log_page(
+        runner,
+        path,
+        Some(target),
+        0,
+        COMMIT_LIMIT,
+        None,
+        None,
+    )) {
+        Ok(page) => page,
+        Err(_) => return Vec::new(),
+    };
+    let now = now_seconds();
+
+    page.into_iter()
+        .take(COMMIT_LIMIT as usize)
+        .map(|commit| CommitEntry {
+            sha: short_sha(&commit.sha, &commit.short),
+            message: commit.subject,
+            author: if commit.author_name.trim().is_empty() {
+                commit.author_email
+            } else {
+                commit.author_name
+            },
+            relative_time: relative_iso_label(now, &commit.date),
+            branch: target.to_string(),
+        })
+        .collect()
+}
+
+fn short_sha(sha: &str, short: &str) -> String {
+    if short.trim().is_empty() {
+        sha.chars().take(7).collect()
+    } else {
+        short.to_string()
+    }
+}
+
+// ---------------- Working tree ----------------
+
+struct StatusEntry {
+    path: String,
+    status: FileChangeStatus,
+    /// True when the path has index (staged) changes.
+    staged: bool,
+}
+
+/// Unstaged, staged, untracked and unmerged paths of the working tree.
+pub fn changed_files(
+    rt: &tokio::runtime::Runtime,
+    runner: &GitRunner,
+    path: &Path,
+) -> Vec<ChangedFile> {
+    let (entries, conflicts) = rt.block_on(status_snapshot(runner, path));
+    if entries.is_empty() && conflicts.is_empty() {
+        return Vec::new();
+    }
+    let totals = rt.block_on(numstat_totals(runner, path));
+
+    let mut seen: HashSet<String> = HashSet::new();
+    let mut files: Vec<ChangedFile> = Vec::new();
+    for entry in entries {
+        if !seen.insert(entry.path.clone()) {
+            continue;
+        }
+        let state = if conflicts.contains(&entry.path) {
+            FileChangeStatus::Conflicted
+        } else {
+            entry.status
+        };
+        let (additions, deletions) = totals.get(&entry.path).copied().unwrap_or((0, 0));
+        let diff_preview = if matches!(state, FileChangeStatus::Untracked) {
+            // Untracked paths have no patch in `git diff`.
+            Vec::new()
+        } else {
+            rt.block_on(diff_preview(runner, path, &entry.path, entry.staged))
+        };
+        files.push(ChangedFile {
+            path: entry.path,
+            status: state,
+            additions,
+            deletions,
+            staged: entry.staged,
+            diff_preview,
+        });
+    }
+
+    // A conflicted path always belongs in the list, even if the porcelain parse
+    // surfaced no ordinary record for it.
+    for conflicted in conflicts {
+        if !seen.insert(conflicted.clone()) {
+            continue;
+        }
+        let (additions, deletions) = totals.get(&conflicted).copied().unwrap_or((0, 0));
+        files.push(ChangedFile {
+            path: conflicted,
+            status: FileChangeStatus::Conflicted,
+            additions,
+            deletions,
+            staged: false,
+            diff_preview: Vec::new(),
+        });
+    }
+
+    files.sort_by(|a, b| a.path.cmp(&b.path));
+    files
+}
+
+async fn status_snapshot(
+    runner: &GitRunner,
+    repo_path: &Path,
+) -> (Vec<StatusEntry>, HashSet<String>) {
+    let out = match runner
+        .run_read(
+            repo_path,
+            &["status", "--porcelain=v2", "-z", "--untracked-files=all"],
+        )
+        .await
+    {
+        Ok(out) if out.success() => out,
+        _ => return (Vec::new(), HashSet::new()),
+    };
+
+    let conflicts: HashSet<String> = status::parse_porcelain_v2(&out.stdout)
+        .conflicted_paths
+        .into_iter()
+        .collect();
+    (parse_status_entries(&out.stdout), conflicts)
+}
+
+/// Per-path records of `git status --porcelain=v2 -z`.
+///
+/// `status::parse_porcelain_v2` only reports counts and conflicts, so the
+/// records are split here using the same NUL-separated layout:
+/// `1 <XY> <sub> <mH> <mI> <mW> <hH> <hI> <path>`,
+/// `2 <XY> ... <X><score> <path>\0<origPath>`,
+/// `u <XY> <sub> <m1> <m2> <m3> <mW> <h1> <h2> <h3> <path>`, `? <path>`.
+fn parse_status_entries(output: &[u8]) -> Vec<StatusEntry> {
+    let mut entries = Vec::new();
+    let parts: Vec<&[u8]> = output.split(|&byte| byte == 0).collect();
+    let mut i = 0;
+
+    while i < parts.len() {
+        let record = parts[i];
+        i += 1;
+        let Some(kind) = record.first() else {
+            continue;
+        };
+
+        match kind {
+            // Header and ignored records carry no file to list.
+            b'#' | b'!' => {}
+            b'?' => {
+                if let Some(path) = record.get(2..).filter(|path| !path.is_empty()) {
+                    entries.push(StatusEntry {
+                        path: String::from_utf8_lossy(path).to_string(),
+                        status: FileChangeStatus::Untracked,
+                        staged: false,
+                    });
+                }
+            }
+            b'1' => {
+                let line = String::from_utf8_lossy(record);
+                let fields: Vec<&str> = line.splitn(9, ' ').collect();
+                if fields.len() == 9 {
+                    entries.push(entry_from_xy(fields[1], fields[8]));
+                }
+            }
+            b'2' => {
+                let line = String::from_utf8_lossy(record);
+                let fields: Vec<&str> = line.splitn(10, ' ').collect();
+                if fields.len() == 10 {
+                    entries.push(entry_from_xy(fields[1], fields[9]));
+                }
+                // The original path of a rename/copy is its own record.
+                i += 1;
+            }
+            b'u' => {
+                let line = String::from_utf8_lossy(record);
+                let fields: Vec<&str> = line.splitn(11, ' ').collect();
+                if fields.len() == 11 {
+                    entries.push(StatusEntry {
+                        path: fields[10].to_string(),
+                        status: FileChangeStatus::Conflicted,
+                        staged: false,
+                    });
+                }
+            }
+            _ => {}
+        }
+    }
+
+    entries
+}
+
+/// `XY` is index status followed by worktree status; `.` means "unchanged".
+fn entry_from_xy(xy: &str, path: &str) -> StatusEntry {
+    let mut codes = xy.chars();
+    let index = codes.next().unwrap_or('.');
+    let worktree = codes.next().unwrap_or('.');
+    let staged = index != '.' && index != '?';
+    let code = if staged { index } else { worktree };
+    StatusEntry {
+        path: path.to_string(),
+        status: status_from_code(code),
+        staged,
+    }
+}
+
+fn status_from_code(code: char) -> FileChangeStatus {
+    match code {
+        'A' => FileChangeStatus::Added,
+        'D' => FileChangeStatus::Deleted,
+        'U' => FileChangeStatus::Conflicted,
+        '?' => FileChangeStatus::Untracked,
+        // M, plus R/C/T which `ChangedFile` has no slot for.
+        _ => FileChangeStatus::Modified,
+    }
+}
+
+/// Added/deleted line counts per path, summing the staged (HEAD→index) and
+/// worktree (index→worktree) numstats. Untracked paths are absent from both.
+async fn numstat_totals(runner: &GitRunner, repo_path: &Path) -> HashMap<String, (u32, u32)> {
+    let mut totals: HashMap<String, (u32, u32)> = HashMap::new();
+    for args in [
+        vec!["diff", "--numstat", "-M", "-z"],
+        vec!["diff", "--numstat", "-M", "-z", "--cached"],
+    ] {
+        let out = match runner.run_read(repo_path, &args).await {
+            Ok(out) if out.success() => out,
+            _ => continue,
+        };
+        for change in diff::parse_numstat_z(&out.stdout) {
+            let total = totals.entry(change.path).or_insert((0, 0));
+            total.0 = total.0.saturating_add(change.additions);
+            total.1 = total.1.saturating_add(change.deletions);
+        }
+    }
+    totals
+}
+
+async fn diff_preview(
+    runner: &GitRunner,
+    repo_path: &Path,
+    path: &str,
+    staged: bool,
+) -> Vec<String> {
+    let mut args = vec!["diff", "--no-color", "--no-ext-diff"];
+    if staged {
+        args.push("--cached");
+    }
+    args.push("--");
+    args.push(path);
+
+    match runner.run_read(repo_path, &args).await {
+        Ok(out) if out.success() => preview_lines(&out.stdout_string()),
+        _ => Vec::new(),
+    }
+}
+
+/// Keep git's patch prefixes (`+`, `-`, `@@`, `---`, `+++`) only.
+fn preview_lines(patch: &str) -> Vec<String> {
+    let mut preview = Vec::new();
+    for line in patch.lines() {
+        if line.starts_with(['+', '-', '@']) {
+            preview.push(line.to_string());
+            if preview.len() == PREVIEW_LINES {
+                break;
+            }
+        }
+    }
+    preview
+}
+
+// ---------------- Remote ----------------
+
+/// `origin`'s URL normalized to `host/owner/repo`, or `no remote`.
+///
+/// The signature carries no runtime because this is a single cheap config read;
+/// it asks git directly so worktrees and `include`d configs resolve correctly.
+pub fn remote(_runner: &GitRunner, path: &Path) -> String {
+    let Some(url) = origin_url(path) else {
+        return NO_REMOTE.to_string();
+    };
+    match github::parse_remote(&url) {
+        Some(target) => format!("{}/{}/{}", target.host, target.owner, target.repo),
+        // A filesystem remote is still a remote; report it verbatim.
+        None => url,
+    }
+}
+
+fn origin_url(repo_path: &Path) -> Option<String> {
+    let output = std::process::Command::new("git")
+        .arg("-C")
+        .arg(repo_path)
+        .args(["config", "--get", "remote.origin.url"])
+        .env("LC_ALL", "C")
+        .env("GIT_TERMINAL_PROMPT", "0")
+        .stdin(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .output()
+        .ok()?;
+
+    if !output.status.success() {
+        return None;
+    }
+    let url = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    (!url.is_empty()).then_some(url)
+}
+
+// ---------------- Language ----------------
+
+/// Root-level extension -> language, in tie-break order.
+const LANGUAGES: [(&str, &[&str]); 11] = [
+    ("TypeScript", &["ts", "tsx"]),
+    ("JavaScript", &["js", "jsx"]),
+    ("Python", &["py"]),
+    ("Rust", &["rs"]),
+    ("Go", &["go"]),
+    ("Swift", &["swift"]),
+    ("Ruby", &["rb"]),
+    ("Java", &["java"]),
+    ("Kotlin", &["kt"]),
+    ("Markdown", &["md"]),
+    ("JSON", &["json"]),
+];
+
+const SKIP_DIRS: [&str; 9] = [
+    "node_modules",
+    ".git",
+    "dist",
+    "build",
+    "target",
+    "out",
+    ".next",
+    "vendor",
+    "coverage",
+];
+
+/// Shallow (depth 2) extension census, skipping build/vendor trees. Manifests
+/// only win when the tree has no source files at all.
+pub fn language(path: &Path) -> String {
+    let mut counts = [0usize; LANGUAGES.len()];
+    collect_extensions(path, 0, &mut counts);
+
+    if counts[0] + counts[1] > 0 {
+        if let Some(framework) = javascript_framework(path) {
+            return framework.to_string();
+        }
+    }
+
+    // Source extensions outrank docs and manifests; otherwise the most common
+    // extension of any kind wins.
+    let code_best = (0..9)
+        .filter(|slot| counts[*slot] > 0)
+        .max_by_key(|slot| counts[*slot]);
+    let any_best = (0..counts.len())
+        .filter(|slot| counts[*slot] > 0)
+        .max_by_key(|slot| counts[*slot]);
+
+    match code_best.or(any_best) {
+        Some(slot) => LANGUAGES[slot].0.to_string(),
+        None => "Other".to_string(),
+    }
+}
+
+fn collect_extensions(dir: &Path, depth: usize, counts: &mut [usize; LANGUAGES.len()]) {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        let name = path
+            .file_name()
+            .map(|name| name.to_string_lossy().to_lowercase())
+            .unwrap_or_default();
+        if path.is_dir() {
+            if depth < 2 && !name.starts_with('.') && !SKIP_DIRS.contains(&name.as_str()) {
+                collect_extensions(&path, depth + 1, counts);
+            }
+            continue;
+        }
+        let Some(extension) = path
+            .extension()
+            .map(|extension| extension.to_string_lossy().to_lowercase())
+        else {
+            continue;
+        };
+        for (slot, (_, extensions)) in LANGUAGES.iter().enumerate() {
+            if extensions.contains(&extension.as_str()) {
+                counts[slot] += 1;
+                break;
+            }
+        }
+    }
+}
+
+fn javascript_framework(root: &Path) -> Option<&'static str> {
+    let bytes = std::fs::read(root.join("package.json")).ok()?;
+    let manifest: serde_json::Value = serde_json::from_slice(&bytes).ok()?;
+    let has = |name: &str| {
+        ["dependencies", "devDependencies", "peerDependencies"]
+            .iter()
+            .any(|section| {
+                manifest
+                    .get(*section)
+                    .and_then(|deps| deps.get(name))
+                    .is_some()
+            })
+    };
+    if has("next") {
+        Some("Next.js")
+    } else if has("react") {
+        Some("React / TS")
+    } else {
+        None
+    }
+}
+
+// ---------------- Relative time ----------------
+
+fn now_seconds() -> i64 {
+    match SystemTime::now().duration_since(UNIX_EPOCH) {
+        Ok(elapsed) => elapsed.as_secs().min(i64::MAX as u64) as i64,
+        Err(_) => 0,
+    }
+}
+
+/// `just now` / `14m ago` / `3h ago` / `2d ago` / `1w ago` / `3mo ago`.
+fn relative_label(now: i64, then: i64) -> String {
+    let minutes = now.saturating_sub(then).max(0) / 60;
+    if minutes < 1 {
+        "just now".to_string()
+    } else if minutes < 60 {
+        format!("{minutes}m ago")
+    } else if minutes < 60 * 24 {
+        format!("{}h ago", minutes / 60)
+    } else if minutes < 60 * 24 * 7 {
+        format!("{}d ago", minutes / (60 * 24))
+    } else if minutes < 60 * 24 * 30 {
+        format!("{}w ago", minutes / (60 * 24 * 7))
+    } else {
+        format!("{}mo ago", minutes / (60 * 24 * 30))
+    }
+}
+
+/// Same labels for git's `%aI` timestamps (`2024-05-06T07:08:09+02:00`).
+fn relative_iso_label(now: i64, stamp: &str) -> String {
+    match chrono::DateTime::parse_from_rfc3339(stamp) {
+        Ok(moment) => relative_label(now, moment.timestamp()),
+        Err(_) => UNKNOWN_AUTHOR.to_string(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn relative_labels_follow_the_dashboard_scale() {
+        let now = 1_700_000_000;
+        assert_eq!(relative_label(now, now), "just now");
+        assert_eq!(relative_label(now, now - 30), "just now");
+        assert_eq!(relative_label(now, now - 14 * 60), "14m ago");
+        assert_eq!(relative_label(now, now - 3 * 3600), "3h ago");
+        assert_eq!(relative_label(now, now - 2 * 86_400), "2d ago");
+        assert_eq!(relative_label(now, now - 9 * 86_400), "1w ago");
+        assert_eq!(relative_label(now, now - 95 * 86_400), "3mo ago");
+    }
+
+    #[test]
+    fn relative_labels_parse_iso_timestamps() {
+        let now = 1_700_000_000;
+        let stamp = chrono::DateTime::from_timestamp(now - 120, 0)
+            .unwrap()
+            .to_rfc3339();
+        assert_eq!(relative_iso_label(now, &stamp), "2m ago");
+        assert_eq!(relative_iso_label(now, ""), UNKNOWN_AUTHOR);
+    }
+
+    #[test]
+    fn parse_track_reads_ahead_behind_counts() {
+        assert_eq!(parse_track(""), (0, 0));
+        assert_eq!(parse_track("[gone]"), (0, 0));
+        assert_eq!(parse_track("[ahead 2]"), (2, 0));
+        assert_eq!(parse_track("[ahead 2, behind 1]"), (2, 1));
+        assert_eq!(parse_track("[behind 7]"), (0, 7));
+    }
+
+    #[test]
+    fn status_records_map_to_changed_file_states() {
+        let output = b"# branch.head main\0\
+1 M. N... 100644 100644 100644 aaaaaaa bbbbbbb staged.rs\0\
+1 .M N... 100644 100644 100644 aaaaaaa bbbbbbb worktree.rs\0\
+1 A. N... 000000 100644 100644 0000000 bbbbbbb added.rs\0\
+1 .D N... 100644 100644 000000 aaaaaaa 0000000 deleted.rs\0\
+2 R. N... 100644 100644 100644 aaaaaaa bbbbbbb R100 renamed.rs\0old.rs\0\
+u UU N... 100644 100644 100644 100644 aaaaaaa bbbbbbb ccccccc conflicted.rs\0\
+? untracked file.rs\0";
+
+        let entries = parse_status_entries(output);
+        let find = |path: &str| {
+            entries
+                .iter()
+                .find(|entry| entry.path == path)
+                .unwrap_or_else(|| panic!("missing {path}"))
+        };
+
+        let staged = find("staged.rs");
+        assert_eq!(staged.status, FileChangeStatus::Modified);
+        assert!(staged.staged);
+
+        let worktree = find("worktree.rs");
+        assert_eq!(worktree.status, FileChangeStatus::Modified);
+        assert!(!worktree.staged);
+
+        assert_eq!(find("added.rs").status, FileChangeStatus::Added);
+        assert_eq!(find("deleted.rs").status, FileChangeStatus::Deleted);
+        assert_eq!(find("renamed.rs").status, FileChangeStatus::Modified);
+        assert_eq!(find("conflicted.rs").status, FileChangeStatus::Conflicted);
+        let untracked = find("untracked file.rs");
+        assert_eq!(untracked.status, FileChangeStatus::Untracked);
+        assert!(!untracked.staged);
+
+        assert!(
+            entries.iter().all(|entry| entry.path != "old.rs"),
+            "a rename's original path must not become its own row"
+        );
+    }
+
+    #[test]
+    fn preview_keeps_only_patch_prefixed_lines() {
+        let patch = "diff --git a/a.rs b/a.rs\n\
+index 111..222 100644\n\
+--- a/a.rs\n\
++++ b/a.rs\n\
+@@ -1,3 +1,3 @@\n\
+-old line\n\
++new line\n\
+ context line\n\
+\\ No newline at end of file\n";
+
+        assert_eq!(
+            preview_lines(patch),
+            vec![
+                "--- a/a.rs".to_string(),
+                "+++ b/a.rs".to_string(),
+                "@@ -1,3 +1,3 @@".to_string(),
+                "-old line".to_string(),
+                "+new line".to_string(),
+            ]
+        );
+    }
+
+    #[test]
+    fn preview_is_capped_at_eight_lines() {
+        let patch: String = (0..20).map(|line| format!("+line {line}\n")).collect();
+        assert_eq!(preview_lines(&patch).len(), PREVIEW_LINES);
+    }
+}

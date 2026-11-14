@@ -1,0 +1,19 @@
+[package]
+name = "branchdeck"
+version = "0.1.0"
+edition = "2021"
+description = "BranchDeck — native GPUI port of the BranchDeck repository dashboard"
+
+[dependencies]
+gpui = "0.2.2"
+vantage-core = { path = "../vantage-core" }
+anyhow = "1"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+notify = "8"
+dirs = "6"
+tokio = { version = "1", features = ["rt-multi-thread", "process", "time", "fs", "sync", "io-util", "macros"] }
+chrono = { version = "0.4", features = ["serde"] }
+
+[dev-dependencies]
+gpui = { version = "0.2.2", features = ["test-support"] }

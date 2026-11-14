@@ -13,7 +13,7 @@
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue.svg?style=flat-square" alt="License: MIT" /></a>
   <img src="https://img.shields.io/badge/platform-macOS%20%7C%20Windows%20%7C%20Linux-lightgrey?style=flat-square" alt="Platform Support" />
   <img src="https://img.shields.io/badge/telemetry-none-brightgreen?style=flat-square" alt="No telemetry" />
-  <img src="https://img.shields.io/badge/built%20with-Tauri%20%2B%20Rust-24C8DB?style=flat-square" alt="Built with Tauri and Rust" />
+  <img src="https://img.shields.io/badge/built%20with-Rust%20%2B%20GPUI-B7410E?style=flat-square" alt="Built with Rust and GPUI" />
 </p>
 
 ---
@@ -90,11 +90,9 @@ Everything is reachable from the keyboard. `Mod+K` opens the command palette, `?
 
 ## Built to stay small
 
-Vantage is a [Tauri](https://tauri.app/) app: a Rust backend around the system WebView. There is no bundled Chromium, and no second copy of your repository index.
+Vantage is a native desktop app built with [GPUI](https://gpui.rs/), the Rust UI framework behind Zed. There is no webview, no bundled Chromium, and no second copy of your repository index — the UI draws the widgets itself and the Git engine runs in the same process.
 
-On my machine (macOS, debug build, no repositories open) it idles around **120 MB**. The VS Code + GitHub Desktop pair I used to keep open sat around **900 MB** before I opened a terminal. A release-build benchmark across one and three panes is the next number I want to publish.
-
-<!-- TODO: replace the paragraph above with a proper benchmark table (release build; idle / 1 repo / 3 panes + terminal). -->
+<!-- TODO: publish a release-build benchmark table (idle / 1 repo / 3 panes + terminal) here. -->
 
 ---
 
@@ -191,23 +189,35 @@ Right-click a file tab (or press `Shift+F10`) for **Close**, **Close Others**, *
 
 ## Under the hood
 
-- **Tauri 2 + Svelte 5 + Rust.** The UI is Svelte; Git, diffing, the PTY, and file previews live in Rust.
-- **Typed IPC end to end.** Every backend command has a typed wrapper on both sides of the bridge.
-- **Tested and gated.** 270+ frontend tests and 160+ Rust tests, plus `svelte-check`, `clippy`, `rustfmt`, and a design-token ratchet, run on macOS and Linux in CI.
+- **Two Rust crates.** `crates/vantage-core` is the engine — a `git` CLI runner with status, log, refs, and diffs, a repository watcher, and state persistence. `crates/branchdeck` is the UI, built with GPUI.
+- **One workspace, one build.** `cargo build` from the repository root builds both; the UI calls the engine directly as a library, so there is no IPC layer to keep in sync.
+- **Tested and gated.** `cargo test --workspace` and `cargo fmt --all -- --check` run on macOS and Linux in CI, alongside a macOS build of the app.
 - **Decisions are written down.** Stack, scope, and platform choices live in [`docs/decisions.md`](docs/decisions.md) and [`docs/adr/`](docs/adr/).
 - **Cross-platform releases.** macOS (universal), Windows, and Linux builds are produced by the release workflow, with auto-update and a Homebrew cask.
 
 ---
 
-## Contributing & Building from Source
+## Building from Source
 
-Interested in developing or building Vantage locally? Check out the [Contributing Guide](CONTRIBUTING.md).
+Requires a stable Rust toolchain ([rustup](https://rustup.rs/)) and the system `git` CLI on `PATH`.
+
+```bash
+cargo build -p branchdeck   # build the app
+cargo run -p branchdeck     # build and launch it
+```
+
+The workspace has two crates:
+
+- **`crates/vantage-core`** — the engine. A runner around the system `git` CLI, plus repository status, log, refs, and diffs, a file watcher, and state persistence (written to `state.json` under the platform data directory, e.g. `~/Library/Application Support/vantage/state.json` on macOS).
+- **`crates/branchdeck`** — the GPUI desktop UI.
+
+Interested in contributing? Check out the [Contributing Guide](CONTRIBUTING.md).
 
 ---
 
 ## Acknowledgments & Trademarks
 
-- Built with [Tauri](https://tauri.app/), [Svelte](https://svelte.dev/), [xterm.js](https://xtermjs.org/), [Highlight.js](https://highlightjs.org/), and [Lucide Icons](https://lucide.dev/).
+- Built with [Rust](https://www.rust-lang.org/) and [GPUI](https://gpui.rs/).
 - Git is a registered trademark of Software Freedom Conservancy.
 - GitHub Desktop is a trademark of GitHub, Inc. Vantage is an independent open-source project and is not affiliated with or endorsed by GitHub, Inc.
 

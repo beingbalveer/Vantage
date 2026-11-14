@@ -1,0 +1,16 @@
+[workspace]
+resolver = "2"
+members = ["crates/vantage-core", "crates/branchdeck"]
+
+[workspace.package]
+version = "0.6.0"
+edition = "2021"
+license = "MIT"
+repository = "https://github.com/beingbalveer/vantage"
+
+# Long-running desktop UI: keep our code quick to build but optimise deps.
+[profile.dev]
+opt-level = 1
+
+[profile.dev.package."*"]
+opt-level = 2
