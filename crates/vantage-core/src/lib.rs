@@ -1,5 +1,5 @@
-//! Vantage's git engine, extracted from the Tauri shell so the native GPUI
-//! front end and any future surface share one implementation.
+//! Vantage's git engine, shared by the native GPUI desktop app and any future
+//! surface.
 //!
 //! Nothing in here depends on a UI toolkit: git is driven through the real
 //! `git` binary (`git::runner`), watching reports through an `events::Sink`.

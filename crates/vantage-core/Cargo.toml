@@ -2,8 +2,9 @@
 name = "vantage-core"
 version = "0.6.0"
 edition = "2021"
+license.workspace = true
+repository.workspace = true
 description = "Vantage's git engine: runner, status, log, refs, diffs, watching and state persistence"
-license = "MIT"
 
 [dependencies]
 serde = { version = "1", features = ["derive"] }

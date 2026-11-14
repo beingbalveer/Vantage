@@ -1,7 +1,5 @@
 # Rust / Cargo
 /target/
-src-tauri/target/
-crates/vantage/target/
 
 # Environment & Secrets
 .env
@@ -10,10 +8,6 @@ crates/vantage/target/
 *.pem
 *.key
 *.cert
-
-# Tauri build artifacts
-src-tauri/gen/
-native-preview/
 
 # Logs & temp files
 *.log

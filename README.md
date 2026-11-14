@@ -148,6 +148,7 @@ standard shortcuts.
 | Add a repository | Click **Add Repository**, or `Cmd+O` |
 | Refresh status | Click **Refresh Status**, or `Cmd+R` |
 | Switch views | `Cmd+1` All Repositories, `Cmd+2` Needs Attention, `Cmd+3` Pending Changes |
+| Toggle the sidebar | Click the header button, or `Cmd+B` |
 | Toggle light/dark | Click the sidebar footer, or `Cmd+Shift+L` |
 | Full screen / minimize / close | `Ctrl+Cmd+F` / `Cmd+M` / `Cmd+W` |
 | Close the inspector or modal | Click outside it, or press `Esc` in a focused field |
@@ -164,7 +165,8 @@ window commands.
 - **Native, not a webview.** The UI is built with [GPUI](https://gpui.rs/), the Rust UI framework behind Zed. There is no bundled Chromium and no IPC layer between the interface and the Git engine.
 - **One shared state file.** The dashboard reads and writes through `vantage-core`, which owns the workspace `state.json`, so the inventory and group assignments have a single source of truth.
 - **Incremental by default.** A `notify` watcher reports which working trees changed; only those repositories are re-read.
-- **Tested and gated.** `cargo fmt --all -- --check` and `cargo test --workspace` run on macOS and Linux in CI, alongside a macOS build of the app.
+- **Documented layout.** See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the workspace map and data flow.
+- **Tested and gated.** `cargo fmt --all -- --check`, `cargo clippy`, and `cargo test --workspace` run on macOS and Linux in CI, alongside a macOS build of the app.
 
 ---
 

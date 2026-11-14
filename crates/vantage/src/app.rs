@@ -16,23 +16,6 @@ use crate::model::{NavSection, RepoSyncState, Repository};
 use crate::theme::Theme;
 use crate::widgets::{apply_field_key, FieldKey, FieldState, Txt};
 
-#[allow(dead_code)]
-#[derive(Clone, Copy, PartialEq, Eq)]
-pub enum SortKey {
-    Recent,
-    Changes,
-    Name,
-}
-
-#[allow(dead_code)]
-#[derive(Clone, Copy, PartialEq, Eq)]
-pub enum GroupBy {
-    None,
-    Group,
-    Status,
-    Language,
-}
-
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum InspectorTab {
     Changes,
@@ -57,8 +40,6 @@ pub struct VantageApp {
     pub active_group: String,
     pub status_filter: Option<RepoSyncState>,
     pub search_query: String,
-    pub sort_by: SortKey,
-    pub group_by: GroupBy,
     pub selected_repo_id: Option<String>,
     pub is_add_modal_open: bool,
     pub is_refreshing: bool,
@@ -114,8 +95,6 @@ impl VantageApp {
             active_group: "All".to_string(),
             status_filter: None,
             search_query: String::new(),
-            sort_by: SortKey::Recent,
-            group_by: GroupBy::Group,
             selected_repo_id: None,
             is_add_modal_open: false,
             is_refreshing: false,
@@ -353,7 +332,7 @@ impl VantageApp {
         }
     }
 
-    /// `filteredRepos` in App.tsx, including the default `recent` sort.
+    /// Visible repositories, newest activity first.
     pub fn filtered_repos(&self) -> Vec<&Repository> {
         let mut list: Vec<&Repository> = self.grouped_repos();
 
@@ -380,18 +359,10 @@ impl VantageApp {
                     || r.current_branch.to_lowercase().contains(&query)
                     || r.local_path.to_lowercase().contains(&query)
                     || r.workspace.to_lowercase().contains(&query)
-                    || r.session_note.to_lowercase().contains(&query)
             });
         }
 
-        match self.sort_by {
-            SortKey::Changes => {
-                list.sort_by_key(|repo| std::cmp::Reverse(repo.uncommitted_files.len()))
-            }
-            SortKey::Name => list.sort_by(|a, b| a.name.cmp(&b.name)),
-            SortKey::Recent => list.sort_by_key(|r| r.last_activity_minutes),
-        }
-
+        list.sort_by_key(|repo| repo.last_activity_minutes);
         list
     }
 
@@ -1028,22 +999,30 @@ impl Render for VantageApp {
         let mut root = div()
             .relative()
             .flex()
+            .flex_col()
             .size_full()
             .bg(theme.bg_app)
             .fg(theme.text_app)
             .font_family(crate::theme::FONT_SANS)
             .text_size(px(crate::theme::TEXT_SM))
             .line_height(crate::theme::LH_SM)
-            .child(self.render_sidebar(window, cx))
+            .child(self.render_top_bar(window, cx))
             .child(
                 div()
                     .flex()
-                    .flex_col()
                     .flex_1()
-                    .min_w(px(0.0))
-                    .h_full()
-                    .child(self.render_top_bar(cx))
-                    .child(self.render_viewport(window, cx)),
+                    .min_h(px(0.0))
+                    .child(self.render_sidebar(window, cx))
+                    .child(
+                        div()
+                            .flex()
+                            .flex_col()
+                            .flex_1()
+                            .min_w(px(0.0))
+                            .min_h(px(0.0))
+                            .h_full()
+                            .child(self.render_viewport(window, cx)),
+                    ),
             );
 
         if let Some(panel) = self.render_inspector(cx) {

@@ -7,11 +7,10 @@ use crate::icons::icon;
 use crate::model::RepoSyncState;
 use crate::theme::{
     Theme, FONT_DISPLAY, FONT_MONO, FONT_SANS, LH_BASE, LH_LG, LH_SM, LH_XS, TEXT_BASE, TEXT_LG,
-    TEXT_SM, TEXT_XS, W_BOLD, W_MEDIUM, W_REGULAR, W_SEMIBOLD,
+    TEXT_SM, TEXT_XS, W_BOLD, W_MEDIUM, W_SEMIBOLD,
 };
 
-/// Tailwind type-scale helpers; these cascade to child text like CSS does.
-#[allow(dead_code)]
+/// Type-scale helpers; these cascade to child text like CSS does.
 pub trait Txt: Styled + Sized {
     fn fam(self, family: &'static str, size: f32, line_height: Pixels) -> Self {
         self.font_family(family)
@@ -25,14 +24,6 @@ pub trait Txt: Styled + Sized {
     /// text-sm
     fn sm(self) -> Self {
         self.fam(FONT_SANS, TEXT_SM, LH_SM)
-    }
-    /// text-base
-    fn base(self) -> Self {
-        self.fam(FONT_SANS, TEXT_BASE, LH_BASE)
-    }
-    /// text-lg
-    fn lg(self) -> Self {
-        self.fam(FONT_SANS, TEXT_LG, LH_LG)
     }
     /// text-[11px]
     fn x11(self) -> Self {
@@ -58,16 +49,9 @@ pub trait Txt: Styled + Sized {
     fn mono_xs(self) -> Self {
         self.fam(FONT_MONO, TEXT_XS, LH_XS)
     }
-    /// font-mono text-sm
-    fn mono_sm(self) -> Self {
-        self.fam(FONT_MONO, TEXT_SM, LH_SM)
-    }
     /// font-mono text-[11px]
     fn mono_x11(self) -> Self {
         self.fam(FONT_MONO, 11.0, px(16.0))
-    }
-    fn regular(self) -> Self {
-        self.font_weight(W_REGULAR)
     }
     fn medium(self) -> Self {
         self.font_weight(W_MEDIUM)
@@ -434,11 +418,6 @@ pub fn field(
 }
 
 // ---- misc ----------------------------------------------------------------
-
-#[allow(dead_code)]
-pub fn divider(theme: &Theme) -> Div {
-    div().w_full().h(px(1.0)).bg(theme.divider)
-}
 
 pub fn sync_arrows(theme: &Theme, ahead: i32, behind: i32) -> Div {
     div()

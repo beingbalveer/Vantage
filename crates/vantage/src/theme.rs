@@ -36,27 +36,17 @@ pub const AMBER_400: u32 = 0xffb900;
 pub const AMBER_700: u32 = 0xbb4d00;
 
 pub const EMERALD_400: u32 = 0x00d492;
-#[allow(dead_code)]
-pub const EMERALD_600: u32 = 0x009966;
 pub const EMERALD_700: u32 = 0x007a55;
 
 pub const RED_50: u32 = 0xfef2f2;
 pub const RED_200: u32 = 0xffc9c9;
 pub const RED_400: u32 = 0xff6467;
-#[allow(dead_code)]
-pub const RED_600: u32 = 0xe7000b;
 pub const RED_700: u32 = 0xc10007;
 pub const RED_900: u32 = 0x82181a;
 pub const RED_950: u32 = 0x460809;
 
 pub fn alpha(color: Rgba, a: f32) -> Rgba {
     Rgba { a, ..color }
-}
-
-/// Tailwind spacing scale (1 unit = 0.25rem = 4px).
-#[allow(dead_code)]
-pub fn s(units: f32) -> Pixels {
-    px(units * 4.0)
 }
 
 pub const TEXT_XS: f32 = 12.0;
@@ -68,6 +58,10 @@ pub const LH_XS: Pixels = px(16.0);
 pub const LH_SM: Pixels = px(20.0);
 pub const LH_BASE: Pixels = px(24.0);
 pub const LH_LG: Pixels = px(28.0);
+
+/// Height of the merged app header. The macOS traffic lights are centered in
+/// this band, so changing it also means changing `traffic_light_position`.
+pub const HEADER_HEIGHT: Pixels = px(42.0);
 
 pub const W_REGULAR: FontWeight = FontWeight(400.0);
 pub const W_MEDIUM: FontWeight = FontWeight(500.0);
@@ -137,8 +131,6 @@ pub struct Theme {
 
     // Diff block
     pub diff_bg: Rgba,
-    #[allow(dead_code)]
-    pub diff_text: Rgba,
     pub diff_meta: Rgba,
     pub diff_add: Rgba,
     pub diff_del: Rgba,
@@ -208,7 +200,6 @@ impl Theme {
             placeholder: rgb(SLATE_400),
 
             diff_bg: rgb(SLATE_950),
-            diff_text: rgb(SLATE_200),
             diff_meta: rgb(SLATE_300),
             diff_add: rgb(EMERALD_400),
             diff_del: rgb(RED_400),
@@ -277,7 +268,6 @@ impl Theme {
             placeholder: rgb(SLATE_400),
 
             diff_bg: rgb(SLATE_950),
-            diff_text: rgb(SLATE_200),
             diff_meta: rgb(SLATE_300),
             diff_add: rgb(EMERALD_400),
             diff_del: rgb(RED_400),

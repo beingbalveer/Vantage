@@ -8,17 +8,22 @@ Thank you for your interest in contributing to Vantage!
 2. **Git:** System `git` CLI installed and available on `PATH`.
 
 ### Linux Dependencies
-On Debian/Ubuntu-based distributions, install the required system development packages:
+GPUI needs the platform graphics, input and font packages. On Debian/Ubuntu:
 ```bash
 sudo apt-get update && sudo apt-get install -y \
   build-essential \
-  curl \
-  wget \
-  file \
+  pkg-config \
   libssl-dev \
-  libgtk-3-dev \
-  libayatana-appindicator3-dev \
-  librsvg2-dev
+  libfontconfig1-dev \
+  libfreetype6-dev \
+  libwayland-dev \
+  libxkbcommon-dev \
+  libx11-xcb-dev \
+  libxcb1-dev \
+  libxcb-render0-dev \
+  libxcb-shape0-dev \
+  libxcb-xfixes0-dev \
+  libvulkan-dev
 ```
 
 ---

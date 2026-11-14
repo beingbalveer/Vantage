@@ -1,24 +1,19 @@
-//! Vantage — native GPUI port of the React Vantage dashboard.
+//! Vantage — native GPUI desktop dashboard.
 //!
 //! Repositories are read from the local engine scan and persisted group
 //! assignments, so the UI always reflects real work trees.
 
-mod add_repo_modal;
 mod app;
 mod backend;
+mod chrome;
 mod icons;
-mod inspector;
 mod menu;
 mod model;
-mod pending_changes;
-mod repo_table;
+mod path;
 mod root;
-mod sidebar;
-mod store;
 mod text;
 mod theme;
-mod topbar;
-mod viewport;
+mod views;
 mod watcher;
 mod widgets;
 
@@ -182,7 +177,15 @@ fn main() {
                     window_bounds: Some(WindowBounds::Windowed(bounds)),
                     titlebar: Some(TitlebarOptions {
                         title: Some("Vantage".into()),
+                        // macOS: let the app header draw under the titlebar and
+                        // place the three system buttons inside the 42px bar.
+                        #[cfg(target_os = "macos")]
+                        appears_transparent: true,
+                        #[cfg(not(target_os = "macos"))]
                         appears_transparent: false,
+                        #[cfg(target_os = "macos")]
+                        traffic_light_position: Some(gpui::point(px(20.0), px(14.0))),
+                        #[cfg(not(target_os = "macos"))]
                         traffic_light_position: None,
                     }),
                     window_min_size: Some(size(px(1040.0), px(640.0))),

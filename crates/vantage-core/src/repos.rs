@@ -58,7 +58,7 @@ pub fn save_state(state: &PersistedState) -> Result<(), AppError> {
 ///
 /// The path must exist, be a directory, and sit inside a work tree: a bare
 /// repository or a stray directory is rejected with [`AppError::not_a_repo`],
-/// matching what the Tauri shell reported via `git rev-parse --show-toplevel`.
+/// matching `git rev-parse --show-toplevel`.
 pub async fn validate_repo_path(runner: &GitRunner, path: &Path) -> Result<PathBuf, AppError> {
     let display = path.to_string_lossy();
     if !path.exists() {

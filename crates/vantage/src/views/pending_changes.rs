@@ -4,14 +4,13 @@ use gpui::{div, prelude::*, px, Context, IntoElement, Styled};
 
 use crate::app::VantageApp;
 use crate::icons::icon;
-use crate::model::{file_status_code, file_status_label, FileChangeStatus};
+use crate::model::{file_status_code, FileChangeStatus};
 use crate::theme::{FONT_MONO, LH_XS, TEXT_XS};
 use crate::widgets::Txt;
 
 struct PendingFile {
     path: String,
     code: &'static str,
-    label: &'static str,
     additions: u32,
     deletions: u32,
     staged: bool,
@@ -42,7 +41,6 @@ impl VantageApp {
                 .map(|f| PendingFile {
                     path: f.path.clone(),
                     code: file_status_code(f.status),
-                    label: file_status_label(f.status),
                     additions: f.additions,
                     deletions: f.deletions,
                     staged: f.staged,
@@ -265,9 +263,4 @@ impl VantageApp {
 
         stack
     }
-}
-
-#[allow(dead_code)]
-fn _label(file: &PendingFile) -> &'static str {
-    file.label
 }

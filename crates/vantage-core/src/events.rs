@@ -1,5 +1,5 @@
-//! UI-agnostic event sink. The Tauri shell wired this to `Emitter`, the GPUI
-//! app wires it to its own state updates; the engine only knows this trait.
+//! UI-agnostic event sink. A front end can wire it to its own state updates;
+//! the engine only knows this trait.
 
 use std::sync::Arc;
 

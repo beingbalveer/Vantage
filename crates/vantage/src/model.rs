@@ -55,8 +55,6 @@ pub struct BranchInfo {
     pub behind: i32,
     pub last_commit_msg: String,
     pub last_commit_time: String,
-    #[allow(dead_code)]
-    pub author: String,
 }
 
 #[derive(Clone, Debug)]
@@ -76,17 +74,12 @@ pub struct Repository {
     pub local_path: String,
     pub remote_repo: String,
     pub current_branch: String,
-    #[allow(dead_code)]
-    pub default_branch: String,
     pub sync_state: RepoSyncState,
     pub ahead_count: i32,
     pub behind_count: i32,
-    #[allow(dead_code)]
-    pub stash_count: u32,
     pub last_activity_label: String,
     pub last_activity_minutes: i64,
     pub primary_language: String,
-    pub session_note: String,
     pub uncommitted_files: Vec<ChangedFile>,
     pub branches: Vec<BranchInfo>,
     pub recent_commits: Vec<CommitEntry>,
@@ -100,11 +93,6 @@ impl Repository {
             RepoSyncState::Conflict | RepoSyncState::Behind
         ) || !self.uncommitted_files.is_empty()
     }
-
-    #[allow(dead_code)]
-    pub fn default_branch_info(&self) -> Option<&BranchInfo> {
-        self.branches.iter().find(|b| b.is_default)
-    }
 }
 
 /// Helpers used by the status cell and the pending-changes list.
@@ -115,15 +103,5 @@ pub fn file_status_code(status: FileChangeStatus) -> &'static str {
         FileChangeStatus::Deleted => "D",
         FileChangeStatus::Untracked => "?",
         FileChangeStatus::Conflicted => "!",
-    }
-}
-
-pub fn file_status_label(status: FileChangeStatus) -> &'static str {
-    match status {
-        FileChangeStatus::Modified => "Modified",
-        FileChangeStatus::Added => "Added",
-        FileChangeStatus::Deleted => "Deleted",
-        FileChangeStatus::Untracked => "Untracked",
-        FileChangeStatus::Conflicted => "Conflict",
     }
 }

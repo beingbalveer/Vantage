@@ -8,7 +8,7 @@
 //! * fetch a *bounded* preview of image blobs as a data URL.
 //!
 //! Every blob read is size-checked first and capped; oversized blobs are
-//! reported by size only and never loaded (PRODUCT_SPEC.md §6.4).
+//! reported by size only and never loaded (v1 product spec §6.4).
 
 use crate::error::AppError;
 use crate::git::blob::get_blob_text;

@@ -10,8 +10,7 @@
 
 ## Checklist
 - [ ] My code follows the code style of this project
-- [ ] I have run `npm test` and all frontend unit tests pass
-- [ ] I have run `npm run check` and there are 0 errors and 0 warnings
-- [ ] I have run `cargo fmt --manifest-path src-tauri/Cargo.toml -- --check`
-- [ ] I have run `cargo test --manifest-path src-tauri/Cargo.toml`
+- [ ] I have run `cargo fmt --all -- --check`
+- [ ] I have run `cargo clippy --workspace --all-targets -- -D warnings`
+- [ ] I have run `cargo test --workspace`
 - [ ] I have added tests that prove my fix is effective or that my feature works

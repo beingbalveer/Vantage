@@ -3,7 +3,7 @@
 
 use gpui::{div, prelude::*, px, relative, Context, Div, IntoElement, Styled};
 
-use crate::app::{GroupBy, VantageApp};
+use crate::app::VantageApp;
 use crate::icons::icon;
 use crate::model::RepoSyncState;
 use crate::theme::Theme;
@@ -37,16 +37,6 @@ struct TableSection {
     rows: Vec<TableRow>,
     uncommitted_total: usize,
     ahead_total: i32,
-}
-
-fn status_group_order() -> [(&'static str, RepoSyncState); 5] {
-    [
-        ("Merge Conflicts", RepoSyncState::Conflict),
-        ("Behind Origin", RepoSyncState::Behind),
-        ("Uncommitted Changes", RepoSyncState::Modified),
-        ("Unpushed Commits", RepoSyncState::Ahead),
-        ("Clean & Synced", RepoSyncState::Clean),
-    ]
 }
 
 fn cell(width: f32) -> Div {
@@ -86,102 +76,47 @@ impl VantageApp {
             crate::text::column_width(container_width, COL_LATEST, 16.0).min(px(COL_LATEST_MAX));
         let branch_width =
             (crate::text::column_width(container_width, COL_BRANCH, 16.0) - px(20.0)).max(px(24.0));
-        let grouped = self.group_by != GroupBy::None;
-        let include_workspace = self.group_by != GroupBy::Group;
-
         let repos = self.filtered_repos();
         let rows: Vec<TableRow> = repos.iter().map(|r| make_row(r)).collect();
         drop(repos);
 
         let mut sections: Vec<TableSection> = Vec::new();
-        match self.group_by {
-            GroupBy::None => sections.push(TableSection {
-                key: "__all__".into(),
-                label: "All Repositories".into(),
-                uncommitted_total: rows.iter().map(|r| r.uncommitted).sum(),
-                ahead_total: rows.iter().map(|r| r.ahead).sum(),
-                rows,
-            }),
-            GroupBy::Status => {
-                for (label, state) in status_group_order() {
-                    let items: Vec<TableRow> = rows
-                        .iter()
-                        .filter(|r| r.sync == state)
-                        .map(clone_row)
-                        .collect();
-                    if items.is_empty() {
-                        continue;
-                    }
-                    sections.push(TableSection {
-                        key: label.to_string(),
-                        label: label.to_string(),
-                        uncommitted_total: items.iter().map(|r| r.uncommitted).sum(),
-                        ahead_total: items.iter().map(|r| r.ahead).sum(),
-                        rows: items,
-                    });
+        let mut assigned = vec![false; rows.len()];
+        for group in self.groups.clone() {
+            let mut items = Vec::new();
+            for (index, row) in rows.iter().enumerate() {
+                if row.workspace == group {
+                    assigned[index] = true;
+                    items.push(clone_row(row));
                 }
             }
-            GroupBy::Language => {
-                let mut seen: Vec<String> = Vec::new();
-                for row in &rows {
-                    if !seen.contains(&row.language) {
-                        seen.push(row.language.clone());
-                    }
-                }
-                for language in seen {
-                    let items: Vec<TableRow> = rows
-                        .iter()
-                        .filter(|r| r.language == language)
-                        .map(clone_row)
-                        .collect();
-                    sections.push(TableSection {
-                        key: language.clone(),
-                        label: language,
-                        uncommitted_total: items.iter().map(|r| r.uncommitted).sum(),
-                        ahead_total: items.iter().map(|r| r.ahead).sum(),
-                        rows: items,
-                    });
-                }
+            if items.is_empty() {
+                continue;
             }
-            GroupBy::Group => {
-                let mut assigned = vec![false; rows.len()];
-                for group in self.groups.clone() {
-                    let mut items = Vec::new();
-                    for (index, row) in rows.iter().enumerate() {
-                        if row.workspace == group {
-                            assigned[index] = true;
-                            items.push(clone_row(row));
-                        }
-                    }
-                    if items.is_empty() {
-                        continue;
-                    }
-                    sections.push(TableSection {
-                        key: group.clone(),
-                        label: group,
-                        uncommitted_total: items.iter().map(|r| r.uncommitted).sum(),
-                        ahead_total: items.iter().map(|r| r.ahead).sum(),
-                        rows: items,
-                    });
-                }
-                for (index, row) in rows.iter().enumerate() {
-                    if assigned[index] {
-                        continue;
-                    }
-                    if let Some(existing) = sections.iter_mut().find(|s| s.key == row.workspace) {
-                        existing.rows.push(clone_row(row));
-                        existing.uncommitted_total += row.uncommitted;
-                        existing.ahead_total += row.ahead;
-                    } else {
-                        sections.push(TableSection {
-                            key: row.workspace.clone(),
-                            label: row.workspace.clone(),
-                            uncommitted_total: row.uncommitted,
-                            ahead_total: row.ahead,
-                            rows: vec![clone_row(row)],
-                        });
-                    }
-                }
+            sections.push(TableSection {
+                key: group.clone(),
+                label: group,
+                uncommitted_total: items.iter().map(|r| r.uncommitted).sum(),
+                ahead_total: items.iter().map(|r| r.ahead).sum(),
+                rows: items,
+            });
+        }
+        for (index, row) in rows.iter().enumerate() {
+            if assigned[index] {
+                continue;
+            }
+            if let Some(existing) = sections.iter_mut().find(|s| s.key == row.workspace) {
+                existing.rows.push(clone_row(row));
+                existing.uncommitted_total += row.uncommitted;
+                existing.ahead_total += row.ahead;
+            } else {
+                sections.push(TableSection {
+                    key: row.workspace.clone(),
+                    label: row.workspace.clone(),
+                    uncommitted_total: row.uncommitted,
+                    ahead_total: row.ahead,
+                    rows: vec![clone_row(row)],
+                });
             }
         }
 
@@ -234,10 +169,8 @@ impl VantageApp {
         let mut first = true;
 
         for section in &sections {
-            if grouped {
-                body = body.child(self.render_group_header(theme, section, first, cx));
-                first = false;
-            }
+            body = body.child(self.render_group_header(theme, section, first, cx));
+            first = false;
 
             if self.collapsed_groups.contains(&section.key) {
                 continue;
@@ -249,7 +182,6 @@ impl VantageApp {
                     row,
                     first,
                     wide,
-                    include_workspace,
                     latest_width,
                     branch_width,
                     cx,
@@ -415,7 +347,6 @@ impl VantageApp {
         row: &TableRow,
         first: bool,
         wide: bool,
-        include_workspace: bool,
         latest_width: gpui::Pixels,
         branch_width: gpui::Pixels,
         cx: &mut Context<Self>,
@@ -470,9 +401,6 @@ impl VantageApp {
                         .xs()
                         .fg(theme.label_muted)
                         .whitespace_nowrap()
-                        .when(include_workspace, |d| {
-                            d.child(row.workspace.clone()).child("·")
-                        })
                         .child(row.language.clone()),
                 ),
         );

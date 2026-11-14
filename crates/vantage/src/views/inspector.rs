@@ -4,7 +4,6 @@ use gpui::{deferred, div, prelude::*, px, relative, rgba, Context, IntoElement, 
 
 use crate::app::{InspectorTab, VantageApp};
 use crate::icons::icon;
-use crate::theme::{alpha, Theme};
 use crate::widgets::{checkbox, primary_button, secondary_button, status_text, Txt};
 
 impl VantageApp {
@@ -18,10 +17,10 @@ impl VantageApp {
 
         let backdrop = div()
             .absolute()
-            .top(px(0.0))
+            .top(crate::theme::HEADER_HEIGHT)
             .left(px(0.0))
             .w(relative(1.0))
-            .h(relative(1.0))
+            .bottom(px(0.0))
             .bg(theme.overlay)
             .id("inspector-backdrop")
             .on_click(cx.listener(|this, _e, _w, cx| this.close_inspector(cx)));
@@ -70,10 +69,10 @@ impl VantageApp {
 
         let overlay = div()
             .absolute()
-            .top(px(0.0))
+            .top(crate::theme::HEADER_HEIGHT)
             .left(px(0.0))
             .w(relative(1.0))
-            .h(relative(1.0))
+            .bottom(px(0.0))
             .flex()
             .justify_end()
             .child(backdrop)
@@ -878,9 +877,4 @@ impl VantageApp {
                     ),
             )
     }
-}
-
-#[allow(dead_code)]
-fn _unused(theme: &Theme) -> gpui::Rgba {
-    alpha(theme.panel, 1.0)
 }

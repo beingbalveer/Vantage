@@ -48,7 +48,7 @@ impl AppError {
     pub fn auth_failed(stderr: Option<String>) -> Self {
         let mut err = Self::new(
             "AuthFailed",
-            "Git needs credentials. Run `git fetch` in the terminal to sign in.",
+            "Git needs credentials. Run `git fetch` from a terminal once to sign in.",
         );
         err.stderr = stderr;
         err

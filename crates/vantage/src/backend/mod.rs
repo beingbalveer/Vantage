@@ -92,15 +92,6 @@ impl Backend {
         (repositories, errors)
     }
 
-    /// Re-read one repo (after a watcher hit or an action).
-    #[allow(dead_code)]
-    pub fn refresh(&self, repo_id: &str) -> Option<Repository> {
-        let state = self.state();
-        let (_, assignments) = groups_from(&state);
-        let entry = state.repos.iter().find(|repo| repo.id == repo_id)?;
-        self.map_entry(entry, group_of(&assignments, repo_id)).ok()
-    }
-
     /// Add a folder as a repo; returns the mapped row.
     ///
     /// The entry is mapped before the workspace is saved: if its git state
@@ -120,17 +111,8 @@ impl Backend {
         Ok(repository)
     }
 
-    #[allow(dead_code)]
-    pub fn remove_repo(&self, repo_id: &str) -> Result<()> {
-        let mut state = self.state();
-        if !repos::remove(&mut state, repo_id) {
-            bail!("no repository with id `{repo_id}` in the workspace");
-        }
-        self.save(&state)
-    }
-
-    /// `git fetch --prune` for one repo. The caller re-reads the row with
-    /// [`Backend::refresh`] once this returns.
+    /// `git fetch --prune` for one repo. The caller re-scans the workspace once
+    /// this returns.
     pub fn fetch(&self, repo_id: &str) -> Result<()> {
         let path = self.known_path(repo_id)?;
         self.runtime.block_on(sync_fetch(&self.runner, &path))?;

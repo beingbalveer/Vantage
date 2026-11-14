@@ -69,10 +69,6 @@ pub fn branches(
                 } else {
                     NO_COMMITS.to_string()
                 },
-                author: tip
-                    .map(|tip| tip.author.clone())
-                    .filter(|author| !author.is_empty())
-                    .unwrap_or_else(|| UNKNOWN_AUTHOR.to_string()),
                 name,
             },
             seconds,
@@ -93,11 +89,10 @@ struct BranchTip {
     /// Seconds since the epoch of the branch tip, `None` for an unborn branch.
     seconds: Option<i64>,
     subject: String,
-    author: String,
 }
 
 const BRANCH_TIP_FORMAT: &str =
-    "%(refname:short)\x1f%(upstream:track)\x1f%(committerdate:unix)\x1f%(authorname)\x1f%(subject)";
+    "%(refname:short)\x1f%(upstream:track)\x1f%(committerdate:unix)\x1f%(subject)";
 
 /// Ahead/behind and tip-commit metadata for every local branch in one call.
 /// `state::BranchInfo` (what `refs::list_branches` returns) only carries the
@@ -115,7 +110,7 @@ async fn branch_tips(runner: &GitRunner, repo_path: &Path) -> HashMap<String, Br
     let mut tips = HashMap::new();
     for line in out.stdout_string().lines() {
         let fields: Vec<&str> = line.split('\x1f').collect();
-        if fields.len() < 5 {
+        if fields.len() < 4 {
             continue;
         }
         let name = fields[0].trim();
@@ -129,8 +124,7 @@ async fn branch_tips(runner: &GitRunner, repo_path: &Path) -> HashMap<String, Br
                 ahead,
                 behind,
                 seconds: fields[2].trim().parse::<i64>().ok(),
-                author: fields[3].trim().to_string(),
-                subject: fields[4].trim().to_string(),
+                subject: fields[3].trim().to_string(),
             },
         );
     }

@@ -9,7 +9,6 @@ use std::path::Path;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use tokio::runtime::Runtime;
-use vantage_core::git::stash::list_stashes;
 use vantage_core::state::{RepoEntry, RepoStatus};
 use vantage_core::{repos, GitRunner};
 
@@ -55,20 +54,15 @@ pub fn map_repo(
         id: entry.id.clone(),
         name: entry.name.clone(),
         workspace: group,
-        local_path: crate::store::contract(path),
+        local_path: crate::path::contract(path),
         remote_repo: details::remote(runner, path),
         current_branch,
-        default_branch,
         sync_state: sync_state(status),
         ahead_count: status.ahead as i32,
         behind_count: status.behind as i32,
-        stash_count: stash_count(rt, runner, path),
         last_activity_label,
         last_activity_minutes,
         primary_language: details::language(path),
-        // Vantage has no session notes; Vantage's review notes live in the
-        // repo's own pane, not on the dashboard row.
-        session_note: String::new(),
         uncommitted_files,
         branches,
         recent_commits,
@@ -100,12 +94,6 @@ fn current_branch(status: &RepoStatus, default_branch: &str) -> String {
         None if status.detached_sha.is_some() => DETACHED.to_string(),
         None => default_branch.to_string(),
     }
-}
-
-fn stash_count(rt: &Runtime, runner: &GitRunner, path: &Path) -> u32 {
-    rt.block_on(list_stashes(runner, path))
-        .map(|entries| entries.len() as u32)
-        .unwrap_or(0)
 }
 
 /// Age of the newest commit, as the label and the whole minutes the table sorts
@@ -451,11 +439,9 @@ mod tests {
         assert_eq!(clean.name, "fixture");
         assert_eq!(clean.workspace, "Ungrouped");
         assert_eq!(clean.current_branch, "main");
-        assert_eq!(clean.default_branch, "main");
         assert_eq!(clean.sync_state, RepoSyncState::Clean);
         assert_eq!(clean.ahead_count, 0);
         assert_eq!(clean.behind_count, 0);
-        assert_eq!(clean.stash_count, 0);
         assert_eq!(clean.last_activity_minutes, 0);
         assert_ne!(clean.last_activity_label, NO_COMMITS);
         assert!(clean
