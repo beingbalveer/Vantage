@@ -30,7 +30,6 @@ actions!(
         OpenRepository,
         SectionOverview,
         SectionAttention,
-        SectionBranches,
         SectionChanges,
     ]
 );
@@ -50,8 +49,7 @@ pub fn install(cx: &mut App, app: Entity<VantageApp>) {
         KeyBinding::new("cmd-w", CloseWindow, None),
         KeyBinding::new("cmd-1", SectionOverview, None),
         KeyBinding::new("cmd-2", SectionAttention, None),
-        KeyBinding::new("cmd-3", SectionBranches, None),
-        KeyBinding::new("cmd-4", SectionChanges, None),
+        KeyBinding::new("cmd-3", SectionChanges, None),
     ]);
 
     cx.on_action({
@@ -106,12 +104,6 @@ pub fn install(cx: &mut App, app: Entity<VantageApp>) {
         let app = app.clone();
         move |_: &SectionAttention, cx: &mut App| {
             app.update(cx, |app, cx| app.select_section(NavSection::Attention, cx));
-        }
-    });
-    cx.on_action({
-        let app = app.clone();
-        move |_: &SectionBranches, cx: &mut App| {
-            app.update(cx, |app, cx| app.select_section(NavSection::Branches, cx));
         }
     });
     cx.on_action({
@@ -176,7 +168,6 @@ pub fn install(cx: &mut App, app: Entity<VantageApp>) {
             items: vec![
                 MenuItem::action("All Repositories", SectionOverview),
                 MenuItem::action("Needs Attention", SectionAttention),
-                MenuItem::action("Branch Matrix", SectionBranches),
                 MenuItem::action("Pending Changes", SectionChanges),
                 MenuItem::separator(),
                 MenuItem::action("Toggle Sidebar", ToggleSidebar),

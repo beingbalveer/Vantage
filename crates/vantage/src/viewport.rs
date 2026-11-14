@@ -20,7 +20,6 @@ impl VantageApp {
             self.render_empty_repos(cx).into_any_element()
         } else {
             match self.active_section {
-                NavSection::Branches => self.render_branch_matrix(window, cx).into_any_element(),
                 NavSection::Changes => self.render_pending_changes(cx).into_any_element(),
                 NavSection::Overview | NavSection::Attention => {
                     self.render_repo_table(window, cx).into_any_element()

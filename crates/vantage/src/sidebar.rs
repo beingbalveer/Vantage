@@ -122,7 +122,7 @@ impl VantageApp {
         let theme = self.theme;
         let collapsed = self.sidebar_collapsed;
 
-        let nav_items: [(NavSection, &'static str, &'static str, usize); 4] = [
+        let nav_items: [(NavSection, &'static str, &'static str, usize); 3] = [
             (
                 NavSection::Overview,
                 "All Repositories",
@@ -134,12 +134,6 @@ impl VantageApp {
                 "Needs Attention",
                 "alert-circle",
                 self.attention_count(),
-            ),
-            (
-                NavSection::Branches,
-                "Branch Matrix",
-                "git-branch",
-                self.feature_branch_count(),
             ),
             (
                 NavSection::Changes,

@@ -6,7 +6,6 @@
 mod add_repo_modal;
 mod app;
 mod backend;
-mod branch_matrix;
 mod icons;
 mod inspector;
 mod menu;
@@ -54,7 +53,7 @@ fn register_fonts(cx: &App) {
         .expect("register bundled fonts");
 }
 
-/// Dev/QA helper: `VANTAGE_STATE=dark,sidebar,section:branches,inspector:first,modal,newgroup`
+/// Dev/QA helper: `VANTAGE_STATE=dark,sidebar,section:changes,inspector:first,modal,newgroup`
 /// drives the UI into a given state so screenshots can be taken without scripting.
 fn apply_env_state(entity: &gpui::Entity<VantageApp>, cx: &mut App) {
     let Ok(state) = std::env::var("VANTAGE_STATE") else {
@@ -81,7 +80,6 @@ fn apply_env_state(entity: &gpui::Entity<VantageApp>, cx: &mut App) {
                         app.modal_path.set(path.to_string());
                     } else if let Some(section) = other.strip_prefix("section:") {
                         app.active_section = match section {
-                            "branches" => model::NavSection::Branches,
                             "changes" => model::NavSection::Changes,
                             "attention" => model::NavSection::Attention,
                             _ => model::NavSection::Overview,

@@ -22,7 +22,6 @@ pub enum RepoSyncState {
 pub enum NavSection {
     Overview,
     Attention,
-    Branches,
     Changes,
 }
 
@@ -32,7 +31,6 @@ impl NavSection {
         match self {
             NavSection::Overview => "All Repositories",
             NavSection::Attention => "Needs Attention",
-            NavSection::Branches => "Branch Matrix",
             NavSection::Changes => "Pending Changes",
         }
     }

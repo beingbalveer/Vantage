@@ -41,12 +41,6 @@ Click any row to open its inspector.
 
 The **Needs Attention** view is the same inventory narrowed to repositories that actually need a look: merge conflicts, commits behind origin, or uncommitted changes. The sidebar count tells you how many there are before you open the view.
 
-### Branch Matrix
-
-The **Branch Matrix** flattens every branch across every repository into one table: branch, repository, state, ahead/behind, latest commit and when it was updated.
-
-Filter it to **All Branches**, **Feature & Experiment**, or **Checked Out**, and search by branch name, repository name or commit message. Click a row to inspect the repository it belongs to.
-
 ### Pending Changes
 
 The **Pending Changes** view collects uncommitted work into one card per repository, with the current branch and total additions and deletions. Each file shows its status code, whether it is staged, and its line counts. Open the inspector to act on it.
@@ -146,14 +140,14 @@ standard shortcuts.
 
 | Action | How |
 |---|---|
-| Open a repository inspector | Click a repository row or a branch row |
+| Open a repository inspector | Click a repository row |
 | Expand a file diff | Click the changed file's path |
 | Stage or unstage a file | Click its checkbox in **Changes** |
 | Check out a branch | Click **Checkout** in **Branches** |
 | Fetch a repository | Click **Fetch Origin**, or `Cmd+Shift+F` for the selected repository |
 | Add a repository | Click **Add Repository**, or `Cmd+O` |
 | Refresh status | Click **Refresh Status**, or `Cmd+R` |
-| Switch views | `Cmd+1` All Repositories, `Cmd+2` Needs Attention, `Cmd+3` Branch Matrix, `Cmd+4` Pending Changes |
+| Switch views | `Cmd+1` All Repositories, `Cmd+2` Needs Attention, `Cmd+3` Pending Changes |
 | Toggle light/dark | Click the sidebar footer, or `Cmd+Shift+L` |
 | Full screen / minimize / close | `Ctrl+Cmd+F` / `Cmd+M` / `Cmd+W` |
 | Close the inspector or modal | Click outside it, or press `Esc` in a focused field |

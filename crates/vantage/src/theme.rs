@@ -129,11 +129,6 @@ pub struct Theme {
     pub add_text: Rgba,     // text-emerald-700 / dark:text-emerald-400
     pub del_text: Rgba,     // text-red-700     / dark:text-red-400
 
-    // Branch-matrix segmented control
-    pub segmented_bg: Rgba,          // bg-slate-100 / dark:bg-slate-800/80
-    pub segmented_active_bg: Rgba,   // bg-white     / dark:bg-slate-700
-    pub segmented_active_text: Rgba, // text-slate-900 / dark:text-slate-100
-
     // Form fields
     pub field_bg: Rgba,     // bg-slate-50    / dark:bg-slate-950
     pub field_border: Rgba, // border-slate-200 / dark:border-slate-700
@@ -207,10 +202,6 @@ impl Theme {
             add_text: rgb(EMERALD_700),
             del_text: rgb(RED_700),
 
-            segmented_bg: rgb(SLATE_100),
-            segmented_active_bg: rgb(WHITE),
-            segmented_active_text: rgb(SLATE_900),
-
             field_bg: rgb(SLATE_50),
             field_border: rgb(SLATE_200),
             field_text: rgb(SLATE_900),
@@ -279,10 +270,6 @@ impl Theme {
             status_green: rgb(EMERALD_400),
             add_text: rgb(EMERALD_400),
             del_text: rgb(RED_400),
-
-            segmented_bg: alpha(rgb(SLATE_800), 0.8),
-            segmented_active_bg: rgb(SLATE_700),
-            segmented_active_text: rgb(SLATE_100),
 
             field_bg: rgb(SLATE_950),
             field_border: rgb(SLATE_700),

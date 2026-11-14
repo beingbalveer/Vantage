@@ -25,7 +25,7 @@ log, refs, diffs, stash, watcher, JSON state). This crate adds a thin adapter:
 | `src/backend/details.rs` | Branches, recent commits, changed files with per-file stats and diff previews, remote normalisation, language detection. |
 | `src/model.rs` | View model (`Repository`, `BranchInfo`, `ChangedEntry`, …). |
 | `src/theme.rs` | The dashboard palette. |
-| `src/sidebar.rs`, `topbar.rs`, `repo_table.rs`, `branch_matrix.rs`, `pending_changes.rs`, `inspector.rs`, `add_repo_modal.rs` | The dashboard views, inspector and add-repository modal. |
+| `src/sidebar.rs`, `topbar.rs`, `repo_table.rs`, `pending_changes.rs`, `inspector.rs`, `add_repo_modal.rs` | The dashboard views, inspector and add-repository modal. |
 | `src/text.rs` | Ellipsis fitting via GPUI's own line wrapper. |
 | `src/watcher.rs` | `notify` watchers over repo paths; a debounced poll refreshes through the backend. |
 
@@ -35,7 +35,7 @@ Groups and per-repo group assignments are persisted inside Vantage's own
 ## Dev flags
 
 ```sh
-VANTAGE_STATE=dark,sidebar,section:branches,inspector:first,itab:branches,modal cargo run -p vantage
+VANTAGE_STATE=dark,sidebar,section:changes,inspector:first,itab:branches,modal cargo run -p vantage
 cargo run -p vantage -- --print-fonts
 ```
 

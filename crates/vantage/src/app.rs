@@ -34,13 +34,6 @@ pub enum GroupBy {
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
-pub enum BranchFilter {
-    All,
-    Feature,
-    CheckedOut,
-}
-
-#[derive(Clone, Copy, PartialEq, Eq)]
 pub enum InspectorTab {
     Changes,
     Branches,
@@ -51,7 +44,6 @@ pub enum InspectorTab {
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum FieldId {
     NewGroup,
-    BranchSearch,
     ModalPath,
     ModalCustomGroup,
 }
@@ -80,11 +72,6 @@ pub struct VantageApp {
     pub is_adding_group: bool,
     pub group_field: FieldState,
     group_field_focus: FocusHandle,
-
-    // Branch matrix
-    pub branch_filter: BranchFilter,
-    pub branch_query: FieldState,
-    branch_query_focus: FocusHandle,
 
     // Inspector
     pub inspector_tab: InspectorTab,
@@ -140,10 +127,6 @@ impl VantageApp {
             is_adding_group: false,
             group_field: FieldState::new(),
             group_field_focus: cx.focus_handle(),
-
-            branch_filter: BranchFilter::All,
-            branch_query: FieldState::new(),
-            branch_query_focus: cx.focus_handle(),
 
             inspector_tab: InspectorTab::Changes,
             expanded_file: None,
@@ -414,13 +397,6 @@ impl VantageApp {
 
     pub fn attention_count(&self) -> usize {
         self.repos.iter().filter(|r| r.needs_attention()).count()
-    }
-
-    pub fn feature_branch_count(&self) -> usize {
-        self.repos
-            .iter()
-            .map(|r| r.branches.iter().filter(|b| !b.is_default).count())
-            .sum()
     }
 
     pub fn changed_file_count(&self) -> usize {
@@ -930,7 +906,6 @@ impl VantageApp {
     pub fn field_state_mut(&mut self, id: FieldId) -> &mut FieldState {
         match id {
             FieldId::NewGroup => &mut self.group_field,
-            FieldId::BranchSearch => &mut self.branch_query,
             FieldId::ModalPath => &mut self.modal_path,
             FieldId::ModalCustomGroup => &mut self.modal_custom_group,
         }
@@ -939,7 +914,6 @@ impl VantageApp {
     pub fn field_state(&self, id: FieldId) -> &FieldState {
         match id {
             FieldId::NewGroup => &self.group_field,
-            FieldId::BranchSearch => &self.branch_query,
             FieldId::ModalPath => &self.modal_path,
             FieldId::ModalCustomGroup => &self.modal_custom_group,
         }
@@ -948,7 +922,6 @@ impl VantageApp {
     pub fn field_focus(&self, id: FieldId) -> FocusHandle {
         match id {
             FieldId::NewGroup => self.group_field_focus.clone(),
-            FieldId::BranchSearch => self.branch_query_focus.clone(),
             FieldId::ModalPath => self.modal_path_focus.clone(),
             FieldId::ModalCustomGroup => self.modal_custom_group_focus.clone(),
         }
@@ -997,7 +970,6 @@ impl VantageApp {
                         self.submit_add_modal(cx);
                     }
                 }
-                FieldId::BranchSearch => {}
             },
         }
     }
