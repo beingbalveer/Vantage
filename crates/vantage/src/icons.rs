@@ -48,6 +48,7 @@ icons! {
     "plus" => "plus.svg",
     "refresh-cw" => "refresh-cw.svg",
     "search" => "search.svg",
+    "settings" => "settings.svg",
     "sun" => "sun.svg",
     "x" => "x.svg",
 }

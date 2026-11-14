@@ -11,6 +11,7 @@ mod menu;
 mod model;
 mod path;
 mod root;
+mod settings;
 mod text;
 mod theme;
 mod views;
@@ -20,12 +21,13 @@ mod widgets;
 use std::borrow::Cow;
 
 use gpui::{
-    px, size, App, AppContext, Application, Bounds, TitlebarOptions, WindowBackgroundAppearance,
-    WindowBounds, WindowOptions,
+    point, px, size, App, AppContext, Application, Bounds, TitlebarOptions,
+    WindowBackgroundAppearance, WindowBounds, WindowOptions,
 };
 
 use crate::app::VantageApp;
 use crate::icons::Assets;
+use crate::settings::UiSettings;
 
 macro_rules! fonts {
     ($($file:literal),* $(,)?) => {
@@ -136,6 +138,27 @@ fn apply_env_state(entity: &gpui::Entity<VantageApp>, cx: &mut App) {
     }
 }
 
+fn initial_window_bounds(settings: &UiSettings, cx: &App) -> Bounds<gpui::Pixels> {
+    if settings.remember_window {
+        if let Some(ref saved) = settings.window_bounds {
+            let bounds = Bounds {
+                origin: point(px(saved.x as f32), px(saved.y as f32)),
+                size: size(px(saved.width as f32), px(saved.height as f32)),
+            };
+            if visible_on_any_display(bounds, cx) {
+                return bounds;
+            }
+        }
+    }
+    Bounds::centered(None, size(px(1440.0), px(900.0)), cx)
+}
+
+fn visible_on_any_display(bounds: Bounds<gpui::Pixels>, cx: &App) -> bool {
+    cx.displays()
+        .iter()
+        .any(|display| display.bounds().intersects(&bounds))
+}
+
 fn main() {
     if std::env::args().any(|arg| arg == "--print-fonts") {
         Application::headless().run(|cx: &mut App| {
@@ -168,7 +191,8 @@ fn main() {
         })
         .detach();
 
-        let bounds = Bounds::centered(None, size(px(1440.0), px(900.0)), cx);
+        let settings = UiSettings::load();
+        let bounds = initial_window_bounds(&settings, cx);
         let root: std::cell::RefCell<Option<gpui::Entity<VantageApp>>> =
             std::cell::RefCell::new(None);
         let _window = cx
@@ -203,8 +227,34 @@ fn main() {
 
         if let Some(entity) = root.into_inner() {
             menu::install(cx, entity.clone());
+
+            let appearance_entity = entity.clone();
+            _window
+                .update(cx, |_, window, cx| {
+                    appearance_entity.update(cx, |app, cx| {
+                        app.apply_theme(window.appearance());
+                        cx.observe_window_appearance(window, |app, window, cx| {
+                            app.on_appearance_changed(window, cx)
+                        })
+                        .detach();
+                    });
+
+                    let bounds_entity = appearance_entity.clone();
+                    window.on_window_should_close(cx, move |window, cx| {
+                        let bounds = window.bounds();
+                        let fullscreen = window.is_fullscreen();
+                        bounds_entity
+                            .update(cx, |app, cx| app.save_window_bounds(bounds, fullscreen, cx));
+                        true
+                    });
+                })
+                .ok();
+
             apply_env_state(&entity, cx);
-            entity.update(cx, |app, cx| app.start_scan(cx));
+            entity.update(cx, |app, cx| {
+                app.start_scan(cx);
+                app.start_auto_fetch(cx);
+            });
         }
         cx.activate(true);
     });

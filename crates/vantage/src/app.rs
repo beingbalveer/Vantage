@@ -4,15 +4,18 @@
 
 use std::collections::HashSet;
 use std::path::PathBuf;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use gpui::{
     div, prelude::*, px, ClipboardItem, Context, FocusHandle, IntoElement, KeyDownEvent,
-    MouseButton, PathPromptOptions, Window,
+    MouseButton, PathPromptOptions, Window, WindowAppearance,
 };
 
 use crate::backend::Backend;
 use crate::model::{NavSection, RepoSyncState, Repository};
+use crate::settings::{
+    DefaultView, Diagnostics, SettingsSection, SortOrder, ThemeChoice, UiSettings,
+};
 use crate::theme::Theme;
 use crate::widgets::{apply_field_key, FieldKey, FieldState, Txt};
 
@@ -29,10 +32,18 @@ pub enum FieldId {
     NewGroup,
     ModalPath,
     ModalCustomGroup,
+    SettingsBranch,
 }
 
 pub struct VantageApp {
     pub theme: Theme,
+    pub settings: UiSettings,
+    pub is_settings_open: bool,
+    pub settings_section: SettingsSection,
+    pub settings_reset_confirm: bool,
+    pub diagnostics: Option<Diagnostics>,
+    pub last_auto_fetch: Option<Instant>,
+    pub did_initial_fetch: bool,
     pub repos: Vec<Repository>,
     pub groups: Vec<String>,
     pub active_section: NavSection,
@@ -67,6 +78,11 @@ pub struct VantageApp {
     pub modal_error: Option<String>,
     pub modal_group_menu_open: bool,
     pub modal_is_adding: bool,
+
+    // Settings modal
+    pub settings_branch_field: FieldState,
+    settings_branch_focus: FocusHandle,
+
     pub backend: Option<std::sync::Arc<Backend>>,
     pub assignments: std::collections::BTreeMap<String, String>,
     pub is_scanning: bool,
@@ -84,14 +100,29 @@ impl VantageApp {
             Some(backend) => backend.groups(),
             None => (Vec::new(), Default::default()),
         };
+        let settings = backend
+            .as_ref()
+            .map(|backend| backend.ui_settings())
+            .unwrap_or_default();
 
         Self {
-            theme: Theme::light(),
+            theme: if settings.theme == ThemeChoice::Dark {
+                Theme::dark()
+            } else {
+                Theme::light()
+            },
+            settings: settings.clone(),
+            is_settings_open: false,
+            settings_section: SettingsSection::General,
+            settings_reset_confirm: false,
+            diagnostics: None,
+            last_auto_fetch: None,
+            did_initial_fetch: false,
             // Repositories come exclusively from the engine scan; a fresh
             // install starts empty so the viewport can render its empty state.
             repos: Vec::new(),
             groups,
-            active_section: NavSection::Overview,
+            active_section: settings.default_view.nav_section(),
             active_group: "All".to_string(),
             status_filter: None,
             search_query: String::new(),
@@ -101,7 +132,7 @@ impl VantageApp {
             toast: None,
             toast_seq: 0,
             collapsed_groups: HashSet::new(),
-            sidebar_collapsed: false,
+            sidebar_collapsed: settings.sidebar_collapsed,
 
             is_adding_group: false,
             group_field: FieldState::new(),
@@ -118,6 +149,10 @@ impl VantageApp {
             modal_error: None,
             modal_group_menu_open: false,
             modal_is_adding: false,
+
+            settings_branch_field: FieldState::new(),
+            settings_branch_focus: cx.focus_handle(),
+
             backend,
             assignments,
             is_scanning: false,
@@ -209,6 +244,7 @@ impl VantageApp {
                 }
 
                 app.bind_watcher(cx);
+                app.maybe_fetch_on_launch(cx);
                 cx.notify();
             })
             .ok();
@@ -362,7 +398,22 @@ impl VantageApp {
             });
         }
 
-        list.sort_by_key(|repo| repo.last_activity_minutes);
+        match self.settings.sort {
+            SortOrder::Recent => list.sort_by_key(|repo| repo.last_activity_minutes),
+            SortOrder::Name => list.sort_by(|a, b| a.name.cmp(&b.name)),
+            SortOrder::Changes => list.sort_by(|a, b| {
+                let count = |repo: &Repository| {
+                    let files = repo.uncommitted_files.len();
+                    let churn: u32 = repo
+                        .uncommitted_files
+                        .iter()
+                        .map(|file| file.additions.saturating_add(file.deletions))
+                        .sum();
+                    (files, churn)
+                };
+                count(b).cmp(&count(a))
+            }),
+        }
         list
     }
 
@@ -466,17 +517,279 @@ impl VantageApp {
     }
 
     pub fn toggle_theme(&mut self, cx: &mut Context<Self>) {
-        self.theme = if self.theme.is_dark {
-            Theme::light()
+        self.settings.theme = if self.theme.is_dark {
+            ThemeChoice::Light
         } else {
-            Theme::dark()
+            ThemeChoice::Dark
         };
+        self.theme = if self.settings.theme == ThemeChoice::Dark {
+            Theme::dark()
+        } else {
+            Theme::light()
+        };
+        self.save_settings(cx);
         cx.notify();
     }
 
     pub fn toggle_sidebar(&mut self, cx: &mut Context<Self>) {
         self.sidebar_collapsed = !self.sidebar_collapsed;
+        self.settings.sidebar_collapsed = self.sidebar_collapsed;
+        self.save_settings(cx);
         cx.notify();
+    }
+
+    pub fn open_settings(&mut self, cx: &mut Context<Self>) {
+        self.is_add_modal_open = false;
+        self.modal_group_menu_open = false;
+        self.is_settings_open = true;
+        self.settings_section = SettingsSection::General;
+        self.settings_reset_confirm = false;
+        self.settings_branch_field
+            .set(self.settings.default_branch.clone());
+        self.diagnostics = Some(Diagnostics::collect(&self.state_path()));
+        cx.notify();
+    }
+
+    pub fn close_settings(&mut self, cx: &mut Context<Self>) {
+        self.is_settings_open = false;
+        self.settings_reset_confirm = false;
+        cx.notify();
+    }
+
+    pub fn state_path(&self) -> std::path::PathBuf {
+        self.backend
+            .as_ref()
+            .map(|backend| backend.state_path())
+            .unwrap_or_default()
+    }
+
+    pub fn set_theme_choice(
+        &mut self,
+        choice: ThemeChoice,
+        appearance: WindowAppearance,
+        cx: &mut Context<Self>,
+    ) {
+        self.settings.theme = choice;
+        self.apply_theme(appearance);
+        self.save_settings(cx);
+        cx.notify();
+    }
+
+    pub fn apply_theme(&mut self, appearance: WindowAppearance) {
+        self.theme = if self.settings.theme.is_dark(appearance) {
+            Theme::dark()
+        } else {
+            Theme::light()
+        };
+    }
+
+    pub fn on_appearance_changed(&mut self, window: &Window, cx: &mut Context<Self>) {
+        self.apply_theme(window.appearance());
+        cx.notify();
+    }
+
+    pub fn set_default_view(&mut self, view: DefaultView, cx: &mut Context<Self>) {
+        self.settings.default_view = view;
+        self.save_settings(cx);
+        cx.notify();
+    }
+
+    pub fn set_sort(&mut self, sort: SortOrder, cx: &mut Context<Self>) {
+        self.settings.sort = sort;
+        self.save_settings(cx);
+        cx.notify();
+    }
+
+    pub fn set_auto_fetch_minutes(&mut self, minutes: u32, cx: &mut Context<Self>) {
+        self.settings.auto_fetch_minutes = minutes;
+        self.last_auto_fetch = None;
+        self.save_settings(cx);
+        cx.notify();
+    }
+
+    pub fn set_fetch_on_launch(&mut self, enabled: bool, cx: &mut Context<Self>) {
+        self.settings.fetch_on_launch = enabled;
+        self.save_settings(cx);
+        cx.notify();
+    }
+
+    pub fn set_remember_window(&mut self, enabled: bool, cx: &mut Context<Self>) {
+        self.settings.remember_window = enabled;
+        if !enabled {
+            self.settings.window_bounds = None;
+        }
+        self.save_settings(cx);
+        cx.notify();
+    }
+
+    pub fn commit_settings_branch(&mut self, cx: &mut Context<Self>) {
+        let branch = self.settings_branch_field.value.trim().to_string();
+        if let Err(error) = vantage_core::state::validate_branch_name(&branch) {
+            self.show_toast(error, cx);
+            return;
+        }
+        self.settings.default_branch = branch;
+        self.save_settings(cx);
+        self.show_toast("Default branch saved", cx);
+    }
+
+    pub fn reset_settings(&mut self, appearance: WindowAppearance, cx: &mut Context<Self>) {
+        self.settings = UiSettings::default();
+        self.sidebar_collapsed = false;
+        self.settings_branch_field
+            .set(self.settings.default_branch.clone());
+        self.settings_reset_confirm = false;
+        self.apply_theme(appearance);
+        self.save_settings(cx);
+        self.show_toast("Preferences reset", cx);
+    }
+
+    pub fn save_settings(&mut self, cx: &mut Context<Self>) {
+        let Some(backend) = self.backend.clone() else {
+            return;
+        };
+        if let Err(error) = backend.set_ui_settings(&self.settings) {
+            self.show_toast(format!("Could not save settings: {error}"), cx);
+        }
+    }
+
+    pub fn save_window_bounds(
+        &mut self,
+        bounds: gpui::Bounds<gpui::Pixels>,
+        is_fullscreen: bool,
+        cx: &mut Context<Self>,
+    ) {
+        if !self.settings.remember_window || is_fullscreen {
+            return;
+        }
+        self.settings.window_bounds = Some(vantage_core::state::WindowBounds {
+            x: f32::from(bounds.origin.x).round() as i32,
+            y: f32::from(bounds.origin.y).round() as i32,
+            width: f32::from(bounds.size.width).round().max(0.0) as u32,
+            height: f32::from(bounds.size.height).round().max(0.0) as u32,
+        });
+        self.save_settings(cx);
+    }
+
+    pub fn copy_diagnostics(&mut self, cx: &mut Context<Self>) {
+        let Some(diagnostics) = self.diagnostics.clone() else {
+            return;
+        };
+        cx.write_to_clipboard(ClipboardItem::new_string(diagnostics.text()));
+        self.show_toast("Diagnostics copied", cx);
+    }
+
+    pub fn reveal_state_path(&mut self, cx: &mut Context<Self>) {
+        let path = self.state_path();
+        let mut command = std::process::Command::new(if cfg!(target_os = "macos") {
+            "open"
+        } else {
+            "xdg-open"
+        });
+        if cfg!(target_os = "macos") {
+            command.arg("-R");
+        }
+        let result = command.arg(&path).spawn();
+        if let Err(error) = result {
+            self.show_toast(format!("Could not reveal the data folder: {error}"), cx);
+        }
+    }
+
+    pub fn open_url(&mut self, url: &str, cx: &mut Context<Self>) {
+        #[cfg(target_os = "macos")]
+        let result = std::process::Command::new("open").arg(url).spawn();
+        #[cfg(target_os = "windows")]
+        let result = std::process::Command::new("cmd")
+            .args(["/C", "start", "", url])
+            .spawn();
+        #[cfg(all(unix, not(target_os = "macos")))]
+        let result = std::process::Command::new("xdg-open").arg(url).spawn();
+
+        if let Err(error) = result {
+            self.show_toast(format!("Could not open link: {error}"), cx);
+        }
+    }
+
+    pub fn fetch_all_quiet(&mut self, cx: &mut Context<Self>) {
+        let Some(backend) = self.backend.clone() else {
+            return;
+        };
+        let ids: Vec<String> = self.repos.iter().map(|repo| repo.id.clone()).collect();
+        if ids.is_empty() {
+            return;
+        }
+        cx.spawn(async move |this, cx| {
+            let failures = cx
+                .background_executor()
+                .spawn(async move { backend.fetch_all(&ids) })
+                .await;
+            this.update(cx, |app, cx| {
+                if !failures.is_empty() {
+                    let failures: Vec<String> = failures
+                        .into_iter()
+                        .map(|(id, error)| {
+                            let name = app
+                                .repos
+                                .iter()
+                                .find(|repo| repo.id == id)
+                                .map(|repo| repo.name.clone())
+                                .unwrap_or(id);
+                            format!("{name}: {error}")
+                        })
+                        .collect();
+                    app.show_toast(
+                        format!("Background fetch failed — {}", failures.join("; ")),
+                        cx,
+                    );
+                }
+                app.start_scan(cx);
+            })
+            .ok();
+        })
+        .detach();
+    }
+
+    pub fn start_auto_fetch(&mut self, cx: &mut Context<Self>) {
+        cx.spawn(async move |this, cx| loop {
+            cx.background_executor()
+                .timer(Duration::from_secs(60))
+                .await;
+
+            let due = this
+                .update(cx, |app, _| {
+                    let minutes = app.settings.auto_fetch_minutes;
+                    if minutes == 0 {
+                        return false;
+                    }
+                    let now = Instant::now();
+                    let due = app
+                        .last_auto_fetch
+                        .map(|last| {
+                            now.duration_since(last) >= Duration::from_secs(minutes as u64 * 60)
+                        })
+                        .unwrap_or(true);
+                    if due {
+                        app.last_auto_fetch = Some(now);
+                    }
+                    due
+                })
+                .unwrap_or(false);
+
+            if due {
+                let _ = this.update(cx, |app, cx| app.fetch_all_quiet(cx));
+            }
+        })
+        .detach();
+    }
+
+    fn maybe_fetch_on_launch(&mut self, cx: &mut Context<Self>) {
+        if self.did_initial_fetch {
+            return;
+        }
+        self.did_initial_fetch = true;
+        if self.settings.fetch_on_launch {
+            self.fetch_all_quiet(cx);
+        }
     }
 
     #[cfg(not(target_os = "macos"))]
@@ -879,6 +1192,7 @@ impl VantageApp {
             FieldId::NewGroup => &mut self.group_field,
             FieldId::ModalPath => &mut self.modal_path,
             FieldId::ModalCustomGroup => &mut self.modal_custom_group,
+            FieldId::SettingsBranch => &mut self.settings_branch_field,
         }
     }
 
@@ -887,6 +1201,7 @@ impl VantageApp {
             FieldId::NewGroup => &self.group_field,
             FieldId::ModalPath => &self.modal_path,
             FieldId::ModalCustomGroup => &self.modal_custom_group,
+            FieldId::SettingsBranch => &self.settings_branch_field,
         }
     }
 
@@ -895,6 +1210,7 @@ impl VantageApp {
             FieldId::NewGroup => self.group_field_focus.clone(),
             FieldId::ModalPath => self.modal_path_focus.clone(),
             FieldId::ModalCustomGroup => self.modal_custom_group_focus.clone(),
+            FieldId::SettingsBranch => self.settings_branch_focus.clone(),
         }
     }
 
@@ -917,6 +1233,8 @@ impl VantageApp {
                 if id == FieldId::NewGroup {
                     self.is_adding_group = false;
                     self.group_field.clear();
+                } else if self.is_settings_open {
+                    self.close_settings(cx);
                 } else if self.is_add_modal_open {
                     self.close_add_modal(cx);
                 } else if self.selected_repo_id.is_some() {
@@ -940,6 +1258,9 @@ impl VantageApp {
                     } else {
                         self.submit_add_modal(cx);
                     }
+                }
+                FieldId::SettingsBranch => {
+                    self.commit_settings_branch(cx);
                 }
             },
         }
@@ -1030,6 +1351,9 @@ impl Render for VantageApp {
         }
         if self.is_add_modal_open {
             root = root.child(self.render_add_repo_modal(window, cx));
+        }
+        if self.is_settings_open {
+            root = root.child(self.render_settings_modal(window, cx));
         }
         if let Some(toast) = self.render_toast() {
             root = root.child(toast);

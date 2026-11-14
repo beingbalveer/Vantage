@@ -57,18 +57,32 @@ Linux:   $XDG_DATA_HOME/vantage/state.json (or ~/.local/share/vantage/state.json
 Windows: %APPDATA%\vantage\state.json
 ```
 
-Repositories and their persisted metadata are in `repos`. The dashboard's groups and
-per-repository assignments live in `extra["vantage"]`:
+Repositories and their persisted metadata are in `repos`. Dashboard settings,
+groups and per-repository assignments share the `extra["vantage"]` object:
 
 ```json
 {
   "groups": ["Ungrouped", "SE"],
-  "assignments": { "<repo-id>": "SE" }
+  "assignments": { "<repo-id>": "SE" },
+  "settings": {
+    "version": 1,
+    "theme": "system",
+    "defaultView": "overview",
+    "sort": "recent",
+    "sidebarCollapsed": false,
+    "autoFetchMinutes": 0,
+    "fetchOnLaunch": false,
+    "defaultBranch": "main",
+    "rememberWindow": true,
+    "windowBounds": null
+  }
 }
 ```
 
-An older build wrote the same object under `extra["branchdeck"]`. `Backend::new()`
-migrates that key once and leaves every other `extra` key untouched.
+Settings writes merge into that object, so group writes preserve settings and settings
+writes preserve groups. The legacy top-level `settings`, `layout`, markers and notes are
+left untouched. An older build wrote groups under `extra["branchdeck"]`; `Backend::new()`
+merges that key once and leaves every other `extra` key untouched.
 
 ## Actions
 

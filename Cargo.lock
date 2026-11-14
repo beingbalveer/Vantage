@@ -6305,6 +6305,7 @@ dependencies = [
  "notify 8.2.2",
  "objc2",
  "objc2-app-kit",
+ "serde",
  "serde_json",
  "tokio",
  "vantage-core",

@@ -24,6 +24,7 @@ use vantage_core::persist::PersistedState;
 use vantage_core::{repos, GitRunner, RepoEntry};
 
 use crate::model::Repository;
+use crate::settings::UiSettings;
 
 /// Key in `PersistedState.extra` holding Vantage's own grouping settings.
 const EXTRA_KEY: &str = "vantage";
@@ -117,6 +118,59 @@ impl Backend {
         let path = self.known_path(repo_id)?;
         self.runtime.block_on(sync_fetch(&self.runner, &path))?;
         Ok(())
+    }
+
+    /// Fetch several repositories with a small bounded worker pool. Returns
+    /// `(repo_id, error)` for the failures so the UI can report them without
+    /// blocking a successful background run.
+    pub fn fetch_all(&self, repo_ids: &[String]) -> Vec<(String, String)> {
+        const MAX_PARALLEL: usize = 4;
+        let mut failures = Vec::new();
+        for chunk in repo_ids.chunks(MAX_PARALLEL) {
+            std::thread::scope(|scope| {
+                let handles: Vec<_> = chunk
+                    .iter()
+                    .map(|repo_id| {
+                        scope.spawn(|| {
+                            let result = self.fetch(repo_id);
+                            (repo_id.clone(), result)
+                        })
+                    })
+                    .collect();
+                for handle in handles {
+                    match handle.join() {
+                        Ok((_repo_id, Ok(()))) => {}
+                        Ok((repo_id, Err(error))) => {
+                            failures.push((repo_id, error.to_string()));
+                        }
+                        Err(_) => failures
+                            .push(("unknown".to_string(), "fetch worker panicked".to_string())),
+                    }
+                }
+            });
+        }
+        failures
+    }
+
+    /// v2 preferences, importing only the legacy theme when no v2 object has
+    /// been written yet.
+    pub fn ui_settings(&self) -> UiSettings {
+        UiSettings::from_state(&self.state())
+    }
+
+    /// Persist v2 preferences without disturbing groups, assignments or any
+    /// other key in the shared `vantage` object.
+    pub fn set_ui_settings(&self, settings: &UiSettings) -> Result<()> {
+        let mut state = self.state();
+        sets_ui_settings_in(&mut state, settings)?;
+        self.save(&state)
+    }
+
+    /// Absolute path of the workspace state file.
+    pub fn state_path(&self) -> std::path::PathBuf {
+        vantage_core::persist::StatePersistence::new()
+            .map(|persistence| persistence.path().to_path_buf())
+            .unwrap_or_default()
     }
 
     /// Check out `branch` in one repo. The caller re-reads the row with
@@ -318,9 +372,35 @@ fn sets_groups_in(
     groups: &[String],
     assignments: &BTreeMap<String, String>,
 ) {
-    let section = serde_json::json!({ "groups": groups, "assignments": assignments });
-    state.extra.insert(EXTRA_KEY.to_string(), section);
+    let mut section = state
+        .extra
+        .get(EXTRA_KEY)
+        .and_then(|value| value.as_object().cloned())
+        .unwrap_or_default();
+    section.insert("groups".to_string(), serde_json::json!(groups));
+    section.insert("assignments".to_string(), serde_json::json!(assignments));
+    state
+        .extra
+        .insert(EXTRA_KEY.to_string(), serde_json::Value::Object(section));
     state.extra.remove(LEGACY_EXTRA_KEY);
+}
+
+/// Store the v2 preferences inside the shared `vantage` object, preserving
+/// groups, assignments and any future keys.
+fn sets_ui_settings_in(state: &mut PersistedState, settings: &UiSettings) -> Result<()> {
+    let mut section = state
+        .extra
+        .get(EXTRA_KEY)
+        .and_then(|value| value.as_object().cloned())
+        .unwrap_or_default();
+    section.insert(
+        "settings".to_string(),
+        serde_json::to_value(settings).context("serialize Vantage settings")?,
+    );
+    state
+        .extra
+        .insert(EXTRA_KEY.to_string(), serde_json::Value::Object(section));
+    Ok(())
 }
 
 /// Copy the pre-rename group settings to [`EXTRA_KEY`] unless a non-empty
@@ -331,13 +411,24 @@ fn migrate_legacy_groups_in(state: &mut PersistedState) -> bool {
         return false;
     };
 
-    let keeps_new = state
+    let mut section = state
         .extra
         .get(EXTRA_KEY)
-        .is_some_and(|section| !groups_section_is_empty(section));
-    if !keeps_new {
-        state.extra.insert(EXTRA_KEY.to_string(), legacy);
+        .and_then(|value| value.as_object().cloned())
+        .unwrap_or_default();
+    let new_section_value = serde_json::Value::Object(section.clone());
+    if groups_section_is_empty(&new_section_value) {
+        if let Some(legacy) = legacy.as_object() {
+            for key in ["groups", "assignments"] {
+                if let Some(value) = legacy.get(key) {
+                    section.insert(key.to_string(), value.clone());
+                }
+            }
+        }
     }
+    state
+        .extra
+        .insert(EXTRA_KEY.to_string(), serde_json::Value::Object(section));
     state.extra.remove(LEGACY_EXTRA_KEY);
     true
 }
@@ -499,5 +590,73 @@ mod tests {
         let mut state = PersistedState::default();
         assert!(!migrate_legacy_groups_in(&mut state));
         assert!(state.extra.is_empty());
+    }
+
+    #[test]
+    fn writing_groups_preserves_v2_settings() {
+        let mut state = PersistedState::default();
+        let settings = UiSettings {
+            theme: crate::settings::ThemeChoice::Dark,
+            ..UiSettings::default()
+        };
+        sets_ui_settings_in(&mut state, &settings).unwrap();
+
+        sets_groups_in(
+            &mut state,
+            &["SE".to_string()],
+            &BTreeMap::from([("repo-se".to_string(), "SE".to_string())]),
+        );
+
+        assert_eq!(groups_from(&state).0, ["SE".to_string()]);
+        let loaded = UiSettings::from_state(&state);
+        assert_eq!(loaded.theme, crate::settings::ThemeChoice::Dark);
+    }
+
+    #[test]
+    fn writing_settings_preserves_groups() {
+        let mut state = PersistedState::default();
+        sets_groups_in(
+            &mut state,
+            &["Ungrouped".to_string(), "SE".to_string()],
+            &BTreeMap::from([("repo-se".to_string(), "SE".to_string())]),
+        );
+
+        sets_ui_settings_in(
+            &mut state,
+            &UiSettings {
+                auto_fetch_minutes: 15,
+                ..UiSettings::default()
+            },
+        )
+        .unwrap();
+
+        let (groups, assignments) = groups_from(&state);
+        assert_eq!(groups, ["Ungrouped".to_string(), "SE".to_string()]);
+        assert_eq!(assignments.get("repo-se"), Some(&"SE".to_string()));
+        assert_eq!(UiSettings::from_state(&state).auto_fetch_minutes, 15);
+    }
+
+    #[test]
+    fn migration_adds_legacy_groups_without_dropping_v2_settings() {
+        let mut state = PersistedState::default();
+        sets_ui_settings_in(
+            &mut state,
+            &UiSettings {
+                theme: crate::settings::ThemeChoice::Light,
+                ..UiSettings::default()
+            },
+        )
+        .unwrap();
+        legacy_settings(&mut state);
+
+        assert!(migrate_legacy_groups_in(&mut state));
+        assert!(!state.extra.contains_key(LEGACY_EXTRA_KEY));
+        let (groups, assignments) = groups_from(&state);
+        assert_eq!(groups, ["Ungrouped".to_string(), "SE".to_string()]);
+        assert_eq!(assignments.get("repo-se"), Some(&"SE".to_string()));
+        assert_eq!(
+            UiSettings::from_state(&state).theme,
+            crate::settings::ThemeChoice::Light
+        );
     }
 }

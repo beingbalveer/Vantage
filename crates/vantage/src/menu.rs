@@ -13,6 +13,7 @@ actions!(
     vantage_menu,
     [
         About,
+        Settings,
         AddRepository,
         RefreshStatus,
         FetchOrigin,
@@ -39,6 +40,7 @@ pub fn install(cx: &mut App, app: Entity<VantageApp>) {
         KeyBinding::new("cmd-q", Quit, None),
         KeyBinding::new("cmd-h", Hide, None),
         KeyBinding::new("cmd-alt-h", HideOthers, None),
+        KeyBinding::new("cmd-,", Settings, None),
         KeyBinding::new("cmd-o", AddRepository, None),
         KeyBinding::new("cmd-r", RefreshStatus, None),
         KeyBinding::new("cmd-shift-f", FetchOrigin, None),
@@ -62,6 +64,12 @@ pub fn install(cx: &mut App, app: Entity<VantageApp>) {
             }
             #[cfg(not(target_os = "macos"))]
             app.update(cx, |app, cx| app.show_about(cx));
+        }
+    });
+    cx.on_action({
+        let app = app.clone();
+        move |_: &Settings, cx: &mut App| {
+            app.update(cx, |app, cx| app.open_settings(cx));
         }
     });
     cx.on_action({
@@ -142,6 +150,7 @@ pub fn install(cx: &mut App, app: Entity<VantageApp>) {
             name: "Vantage".into(),
             items: vec![
                 MenuItem::action("About Vantage", About),
+                MenuItem::action("Settings…", Settings),
                 MenuItem::separator(),
                 MenuItem::os_submenu("Services", SystemMenuType::Services),
                 MenuItem::separator(),

@@ -476,11 +476,41 @@ impl VantageApp {
                 )
         };
 
+        let settings_button = div()
+            .id("settings-open")
+            .flex()
+            .items_center()
+            .justify_center()
+            .w(px(32.0))
+            .h(px(32.0))
+            .rounded(px(8.0))
+            .cursor_pointer()
+            .hover(move |s| s.bg(theme.secondary_bg_hover))
+            .on_click(cx.listener(|this, _e, _w, cx| this.open_settings(cx)))
+            .child(icon("settings", 16.0, theme.label_muted));
+
+        let controls = if collapsed {
+            div()
+                .flex()
+                .flex_col()
+                .items_center()
+                .gap(px(8.0))
+                .child(toggle)
+                .child(settings_button)
+        } else {
+            div()
+                .flex()
+                .items_center()
+                .gap(px(8.0))
+                .child(div().flex_1().min_w(px(0.0)).child(toggle))
+                .child(settings_button)
+        };
+
         div()
             .flex_shrink_0()
             .p(px(if collapsed { 8.0 } else { 12.0 }))
             .border_t_1()
             .border_color(theme.divider)
-            .child(toggle)
+            .child(controls)
     }
 }

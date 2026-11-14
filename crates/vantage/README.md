@@ -25,7 +25,8 @@ log, refs, diffs, stash, watcher, JSON state). This crate adds a thin adapter:
 | `src/backend/details.rs` | Branches, recent commits, changed files with per-file stats and diff previews, remote normalisation, language detection. |
 | `src/model.rs` | View model (`Repository`, `BranchInfo`, `ChangedEntry`, …). |
 | `src/theme.rs` | The dashboard palette. |
-| `src/views/` | The sidebar, top bar, overview, pending changes, inspector and add-repository modal. |
+| `src/views/` | The sidebar, top bar, overview, pending changes, inspector, add-repository modal and settings modal. |
+| `src/settings.rs` | Typed v2 preferences, legacy-theme import, diagnostics and validation. |
 | `src/menu.rs` | Native application menu bar and shortcuts. |
 | `src/path.rs` | Home-directory contraction for displayed paths. |
 | `src/text.rs` | Ellipsis fitting via GPUI's own line wrapper. |

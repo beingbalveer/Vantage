@@ -65,9 +65,21 @@ Groups are managed from the sidebar: create a group, move repositories into it, 
 
 Vantage watches each repository and re-reads only the working trees that changed, so the dashboard stays current while agents commit and edit around you. **Refresh Status** forces a full rescan. Scan failures are shown as a banner instead of blanking the dashboard.
 
+### Settings
+
+**Settings** opens from the Vantage menu, `Cmd+,`, or the gear in the sidebar footer. It keeps only preferences that affect the current dashboard:
+
+- **General** — default view, repository sort, window memory.
+- **Appearance** — System / Light / Dark, with System following macOS live.
+- **Git** — auto-fetch interval, fetch on launch, default branch for empty repos.
+- **Data** — state-file location, reveal in Finder, reset preferences.
+- **About** — version, build, Git, system and architecture diagnostics, plus copyable diagnostics and links.
+
+Sidebar state is remembered automatically. Preferences are stored separately from the legacy v1 settings, which remain untouched.
+
 ### Light and dark
 
-The whole interface has first-class light and dark themes, switchable from the sidebar footer. Both use the same layout and palette tokens.
+The whole interface has first-class light and dark themes. The theme setting supports System, Light and Dark; the sidebar footer remains a quick light/dark toggle.
 
 ---
 
@@ -148,6 +160,7 @@ standard shortcuts.
 | Add a repository | Click **Add Repository**, or `Cmd+O` |
 | Refresh status | Click **Refresh Status**, or `Cmd+R` |
 | Switch views | `Cmd+1` All Repositories, `Cmd+2` Needs Attention, `Cmd+3` Pending Changes |
+| Open Settings | `Cmd+,`, Vantage menu, or the sidebar gear |
 | Toggle the sidebar | Click the header button, or `Cmd+B` |
 | Toggle light/dark | Click the sidebar footer, or `Cmd+Shift+L` |
 | Full screen / minimize / close | `Ctrl+Cmd+F` / `Cmd+M` / `Cmd+W` |
