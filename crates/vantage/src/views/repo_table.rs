@@ -21,7 +21,6 @@ struct TableRow {
     id: String,
     name: String,
     workspace: String,
-    language: String,
     branch: String,
     sync: RepoSyncState,
     uncommitted: usize,
@@ -35,8 +34,6 @@ struct TableSection {
     key: String,
     label: String,
     rows: Vec<TableRow>,
-    uncommitted_total: usize,
-    ahead_total: i32,
 }
 
 fn cell(width: f32) -> Div {
@@ -48,7 +45,6 @@ fn make_row(repo: &crate::model::Repository) -> TableRow {
         id: repo.id.clone(),
         name: repo.name.clone(),
         workspace: repo.workspace.clone(),
-        language: repo.primary_language.clone(),
         branch: repo.current_branch.clone(),
         sync: repo.sync_state,
         uncommitted: repo.uncommitted_files.len(),
@@ -96,8 +92,6 @@ impl VantageApp {
             sections.push(TableSection {
                 key: group.clone(),
                 label: group,
-                uncommitted_total: items.iter().map(|r| r.uncommitted).sum(),
-                ahead_total: items.iter().map(|r| r.ahead).sum(),
                 rows: items,
             });
         }
@@ -107,14 +101,10 @@ impl VantageApp {
             }
             if let Some(existing) = sections.iter_mut().find(|s| s.key == row.workspace) {
                 existing.rows.push(clone_row(row));
-                existing.uncommitted_total += row.uncommitted;
-                existing.ahead_total += row.ahead;
             } else {
                 sections.push(TableSection {
                     key: row.workspace.clone(),
                     label: row.workspace.clone(),
-                    uncommitted_total: row.uncommitted,
-                    ahead_total: row.ahead,
                     rows: vec![clone_row(row)],
                 });
             }
@@ -122,75 +112,91 @@ impl VantageApp {
 
         let is_empty = sections.iter().all(|s| s.rows.is_empty());
 
-        let mut container = div()
-            .flex()
-            .flex_col()
-            .w_full()
-            .bg(theme.panel)
-            .border_1()
-            .border_color(theme.divider)
-            .rounded(px(12.0))
-            .overflow_hidden();
+        let mut table = div().flex().flex_col().w_full().gap(px(10.0));
 
         if self.is_refreshing {
-            container = container.child(self.render_skeleton());
-            return container;
-        }
-
-        if is_empty {
-            return container.child(
+            return table.child(
                 div()
                     .flex()
                     .flex_col()
-                    .items_center()
-                    .py(px(48.0))
-                    .px(px(24.0))
+                    .w_full()
+                    .bg(theme.panel)
+                    .border_1()
+                    .border_color(theme.divider)
+                    .rounded(px(12.0))
+                    .overflow_hidden()
+                    .child(self.render_skeleton()),
+            );
+        }
+
+        if is_empty {
+            return table.child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .w_full()
+                    .bg(theme.panel)
+                    .border_1()
+                    .border_color(theme.divider)
+                    .rounded(px(12.0))
+                    .overflow_hidden()
                     .child(
                         div()
-                            .xs()
-                            .fg(theme.label_muted)
-                            .child("No matching repositories."),
-                    )
-                    .child(
-                        div().mt(px(12.0)).child(
-                            primary_button(&theme, "Reset filters", None)
-                                .id("reset-filters")
-                                .on_click(cx.listener(|this, _e, _w, cx| {
-                                    this.reset_filters(cx);
-                                })),
-                        ),
+                            .flex()
+                            .flex_col()
+                            .items_center()
+                            .py(px(48.0))
+                            .px(px(24.0))
+                            .child(
+                                div()
+                                    .xs()
+                                    .fg(theme.label_muted)
+                                    .child("No matching repositories."),
+                            )
+                            .child(
+                                div().mt(px(12.0)).child(
+                                    primary_button(&theme, "Reset filters", None)
+                                        .id("reset-filters")
+                                        .on_click(cx.listener(|this, _e, _w, cx| {
+                                            this.reset_filters(cx);
+                                        })),
+                                ),
+                            ),
                     ),
             );
         }
 
-        container = container.child(self.render_table_head(theme, wide));
-
-        let mut body = div().flex().flex_col().w_full();
-        let mut first = true;
+        table = table.child(self.render_table_head(theme, wide));
 
         for section in &sections {
-            body = body.child(self.render_group_header(theme, section, first, cx));
-            first = false;
+            let mut card = div()
+                .flex()
+                .flex_col()
+                .w_full()
+                .bg(theme.panel)
+                .border_1()
+                .border_color(theme.divider)
+                .rounded(px(12.0))
+                .overflow_hidden()
+                .child(self.render_group_header(theme, section, cx));
 
-            if self.collapsed_groups.contains(&section.key) {
-                continue;
+            if !self.collapsed_groups.contains(&section.key) {
+                for row in &section.rows {
+                    card = card.child(self.render_row(
+                        theme,
+                        row,
+                        wide,
+                        latest_width,
+                        branch_width,
+                        cx,
+                    ));
+                }
             }
 
-            for row in &section.rows {
-                body = body.child(self.render_row(
-                    theme,
-                    row,
-                    first,
-                    wide,
-                    latest_width,
-                    branch_width,
-                    cx,
-                ));
-                first = false;
-            }
+            table = table.child(card);
         }
 
-        container.child(body)
+        table
     }
 
     fn render_table_head(&self, theme: Theme, wide: bool) -> impl IntoElement {
@@ -199,9 +205,6 @@ impl VantageApp {
             .items_center()
             .w_full()
             .flex_shrink_0()
-            .border_b_1()
-            .border_color(theme.divider)
-            .bg(theme.table_head_bg)
             .xs()
             .medium()
             .fg(theme.label_muted);
@@ -265,31 +268,17 @@ impl VantageApp {
         &self,
         theme: Theme,
         section: &TableSection,
-        first: bool,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
         let collapsed = self.collapsed_groups.contains(&section.key);
         let key = section.key.clone();
         let count = section.rows.len();
-        let summary = if section.uncommitted_total > 0 {
-            format!("{} uncommitted", section.uncommitted_total)
-        } else {
-            "Clean tree".to_string()
-        };
-        let summary = if section.ahead_total > 0 {
-            format!("{summary} · {} unpushed", section.ahead_total)
-        } else {
-            summary
-        };
 
         div()
             .flex()
             .items_center()
             .w_full()
-            .px(px(20.0))
-            .py(px(8.0))
             .bg(theme.group_head_bg)
-            .when(!first, |d| d.border_t_1().border_color(theme.divider))
             .child(
                 div()
                     .id(gpui::SharedString::from(format!("group-toggle-{key}")))
@@ -298,7 +287,10 @@ impl VantageApp {
                     .justify_between()
                     .gap(px(16.0))
                     .w_full()
+                    .px(px(20.0))
+                    .py(px(9.0))
                     .cursor_pointer()
+                    .hover(move |s| s.bg(theme.nav_hover_bg))
                     .on_click(cx.listener(move |this, _e, _w, cx| {
                         this.toggle_group_collapsed(key.clone(), cx);
                     }))
@@ -307,15 +299,6 @@ impl VantageApp {
                             .flex()
                             .items_center()
                             .gap(px(8.0))
-                            .child(icon(
-                                if collapsed {
-                                    "chevron-right"
-                                } else {
-                                    "chevron-down"
-                                },
-                                14.0,
-                                theme.icon_idle,
-                            ))
                             .child(
                                 div()
                                     .display_xs()
@@ -330,13 +313,15 @@ impl VantageApp {
                                     .child(format!("({count})")),
                             ),
                     )
-                    .child(
-                        div()
-                            .xs()
-                            .fg(theme.label_muted)
-                            .whitespace_nowrap()
-                            .child(summary),
-                    ),
+                    .child(icon(
+                        if collapsed {
+                            "chevron-right"
+                        } else {
+                            "chevron-down"
+                        },
+                        14.0,
+                        theme.icon_idle,
+                    )),
             )
     }
 
@@ -345,7 +330,6 @@ impl VantageApp {
         &self,
         theme: Theme,
         row: &TableRow,
-        first: bool,
         wide: bool,
         latest_width: gpui::Pixels,
         branch_width: gpui::Pixels,
@@ -362,7 +346,8 @@ impl VantageApp {
             .items_center()
             .w_full()
             .cursor_pointer()
-            .when(!first, |d| d.border_t_1().border_color(theme.row_border))
+            .border_t_1()
+            .border_color(theme.row_border)
             .bg(if selected {
                 theme.accent_soft
             } else {
@@ -375,15 +360,15 @@ impl VantageApp {
                 this.select_repo(repo_id.clone(), cx);
             }));
 
-        // Repository: name + stack
+        // Repository name only: a repository can contain several languages,
+        // so a single stack label would be misleading.
         line = line.child(
             cell(COL_REPO)
                 .py(px(12.0))
                 .pl(px(20.0))
                 .pr(px(16.0))
                 .flex()
-                .flex_col()
-                .justify_center()
+                .items_center()
                 .child(
                     div()
                         .sm()
@@ -391,17 +376,6 @@ impl VantageApp {
                         .fg(theme.text_app)
                         .whitespace_nowrap()
                         .child(row.name.clone()),
-                )
-                .child(
-                    div()
-                        .mt(px(2.0))
-                        .flex()
-                        .items_center()
-                        .gap(px(6.0))
-                        .xs()
-                        .fg(theme.label_muted)
-                        .whitespace_nowrap()
-                        .child(row.language.clone()),
                 ),
         );
 
@@ -567,7 +541,6 @@ fn clone_row(row: &TableRow) -> TableRow {
         id: row.id.clone(),
         name: row.name.clone(),
         workspace: row.workspace.clone(),
-        language: row.language.clone(),
         branch: row.branch.clone(),
         sync: row.sync,
         uncommitted: row.uncommitted,
