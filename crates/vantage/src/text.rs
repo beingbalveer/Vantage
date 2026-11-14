@@ -53,9 +53,3 @@ pub fn column_width(container_width: Pixels, fraction: f32, padding: f32) -> Pix
     let width = content * fraction - px(padding * 2.0);
     width.max(px(0.0))
 }
-
-/// Width of the content area of a table: `min(1440, viewport - sidebar) - px-6`.
-pub fn container_width(viewport_width: Pixels) -> Pixels {
-    let usable = (viewport_width - px(256.0)).max(px(0.0));
-    (usable.min(px(1440.0)) - px(48.0)).max(px(0.0))
-}

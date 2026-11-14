@@ -22,16 +22,33 @@ impl VantageApp {
             match self.active_section {
                 NavSection::Changes => self.render_pending_changes(cx).into_any_element(),
                 NavSection::Overview | NavSection::Attention => {
-                    self.render_repo_table(window, cx).into_any_element()
+                    let full = f32::from(window.bounds().size.width);
+                    let sidebar = if self.sidebar_collapsed { 56.0 } else { 256.0 };
+                    let splitter = if self.settings.right_panel_open {
+                        4.0
+                    } else {
+                        0.0
+                    };
+                    let panel = if self.settings.right_panel_open {
+                        (full - sidebar - splitter).max(0.0) * self.settings.right_panel_fraction
+                    } else {
+                        0.0
+                    };
+                    let content_width = (full - sidebar - splitter - panel).max(0.0);
+                    self.render_repo_table(cx, px(content_width))
+                        .into_any_element()
                 }
             }
         };
 
         div()
             .flex_1()
+            .min_w(px(0.0))
             .min_h(px(0.0))
-            .w_full()
-            .id("viewport-scroll")
+            .id(gpui::SharedString::from(format!(
+                "viewport-scroll-{}-{:.3}",
+                self.settings.right_panel_open, self.settings.right_panel_fraction
+            )))
             .overflow_y_scroll()
             .child(
                 div()

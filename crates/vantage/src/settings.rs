@@ -193,6 +193,10 @@ pub struct UiSettings {
     pub default_branch: String,
     pub remember_window: bool,
     pub window_bounds: Option<WindowBounds>,
+    /// Repository detail pane visibility and width as a fraction of the
+    /// content area (sidebar excluded).
+    pub right_panel_open: bool,
+    pub right_panel_fraction: f32,
 }
 
 impl Default for UiSettings {
@@ -208,6 +212,8 @@ impl Default for UiSettings {
             default_branch: "main".to_string(),
             remember_window: true,
             window_bounds: None,
+            right_panel_open: false,
+            right_panel_fraction: 0.5,
         }
     }
 }
@@ -262,6 +268,10 @@ impl UiSettings {
                 self.window_bounds = None;
             }
         }
+        if !self.right_panel_fraction.is_finite() {
+            self.right_panel_fraction = 0.5;
+        }
+        self.right_panel_fraction = self.right_panel_fraction.clamp(0.3, 0.7);
         self
     }
 }
@@ -296,6 +306,8 @@ mod tests {
         assert_eq!(settings.auto_fetch_minutes, 0);
         assert!(!settings.fetch_on_launch);
         assert!(settings.remember_window);
+        assert!(!settings.right_panel_open);
+        assert_eq!(settings.right_panel_fraction, 0.5);
     }
 
     #[test]

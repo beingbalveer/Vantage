@@ -1,4 +1,4 @@
-//! Right slide-over inspector — 576px panel, changes / branches / commits.
+//! Right repository detail pane — half of the content area, changes / branches / commits.
 
 use gpui::{deferred, div, prelude::*, px, relative, rgba, Context, IntoElement, Styled};
 
@@ -8,38 +8,29 @@ use crate::widgets::{checkbox, primary_button, secondary_button, status_text, Tx
 
 impl VantageApp {
     pub fn render_inspector(&mut self, cx: &mut Context<Self>) -> Option<gpui::AnyElement> {
-        let repo = self.selected_repo()?.clone();
-        let theme = self.theme;
+        if !self.settings.right_panel_open {
+            return None;
+        }
+        let Some(repo) = self.selected_repo().cloned() else {
+            return Some(self.render_empty_detail_panel(cx));
+        };
         let tab = self.inspector_tab;
         let expanded = self.expanded_file.clone();
         let copied = self.copied_path;
         let menu_open = self.group_menu_open;
-
-        let backdrop = div()
-            .absolute()
-            .top(crate::theme::HEADER_HEIGHT)
-            .left(px(0.0))
-            .w(relative(1.0))
-            .bottom(px(0.0))
-            .bg(theme.overlay)
-            .id("inspector-backdrop")
-            .on_click(cx.listener(|this, _e, _w, cx| this.close_inspector(cx)));
+        let theme = self.theme;
 
         let panel = div()
-            // Keep clicks on the panel's labels and padding from reaching the
-            // full-screen backdrop, which closes the inspector.
-            .occlude()
-            .relative()
+            .id("repository-detail")
             .flex()
             .flex_col()
-            .w(px(576.0))
+            .w(relative(self.settings.right_panel_fraction))
+            .min_w(px(420.0))
             .h_full()
+            .flex_shrink_0()
             .bg(theme.panel)
             .border_l_1()
             .border_color(theme.divider)
-            .shadow_xl();
-
-        let panel = panel
             .child(self.render_inspector_header(&repo, copied, cx))
             .child(self.render_inspector_meta(&repo, menu_open, cx))
             .child(self.render_inspector_tabs(&repo, cx))
@@ -63,22 +54,77 @@ impl VantageApp {
             )
             .child(self.render_inspector_footer(&repo, cx));
 
-        if menu_open {
-            // The menu lives in the meta bar; nothing extra to layer here.
-        }
+        Some(panel.into_any_element())
+    }
 
-        let overlay = div()
-            .absolute()
-            .top(crate::theme::HEADER_HEIGHT)
-            .left(px(0.0))
-            .w(relative(1.0))
-            .bottom(px(0.0))
+    fn render_empty_detail_panel(&self, cx: &mut Context<Self>) -> gpui::AnyElement {
+        let theme = self.theme;
+        div()
+            .id("repository-detail-empty")
             .flex()
-            .justify_end()
-            .child(backdrop)
-            .child(panel);
-
-        Some(overlay.into_any_element())
+            .flex_col()
+            .w(relative(self.settings.right_panel_fraction))
+            .min_w(px(420.0))
+            .h_full()
+            .flex_shrink_0()
+            .bg(theme.panel)
+            .border_l_1()
+            .border_color(theme.divider)
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .justify_between()
+                    .px(px(20.0))
+                    .py(px(16.0))
+                    .border_b_1()
+                    .border_color(theme.divider)
+                    .child(
+                        div()
+                            .display_sm()
+                            .semibold()
+                            .fg(theme.text_app)
+                            .child("Repository Details"),
+                    )
+                    .child(
+                        div()
+                            .id("close-right-panel")
+                            .flex()
+                            .items_center()
+                            .justify_center()
+                            .w(px(32.0))
+                            .h(px(32.0))
+                            .rounded(px(8.0))
+                            .cursor_pointer()
+                            .hover(move |s| s.bg(theme.nav_hover_bg))
+                            .on_click(cx.listener(|this, _e, _w, cx| this.close_right_panel(cx)))
+                            .child(icon("x", 16.0, theme.label_muted)),
+                    ),
+            )
+            .child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .items_center()
+                    .justify_center()
+                    .flex_1()
+                    .gap(px(6.0))
+                    .child(icon("panel-right", 28.0, theme.text_dim))
+                    .child(
+                        div()
+                            .sm()
+                            .medium()
+                            .fg(theme.text_body)
+                            .child("Select a repository"),
+                    )
+                    .child(
+                        div()
+                            .xs()
+                            .fg(theme.label_muted)
+                            .child("Its changes, branches and commits will appear here."),
+                    ),
+            )
+            .into_any_element()
     }
 
     fn render_inspector_header(
@@ -174,7 +220,7 @@ impl VantageApp {
                     .rounded(px(8.0))
                     .cursor_pointer()
                     .hover(move |s| s.bg(theme.nav_hover_bg))
-                    .on_click(cx.listener(|this, _e, _w, cx| this.close_inspector(cx)))
+                    .on_click(cx.listener(|this, _e, _w, cx| this.close_right_panel(cx)))
                     .child(icon("x", 16.0, theme.label_muted)),
             )
     }

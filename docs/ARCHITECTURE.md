@@ -39,7 +39,9 @@ vantage (GPUI) ──> vantage-core (no UI dependencies)
 3. `views/` renders the sidebar, top bar, overview, pending changes and
    inspector from that state.
 4. User actions call `Backend` on a background executor, then rescan and repaint.
-5. `watcher.rs` reports changed repository roots; only those roots are re-read with
+5. Selecting a repository opens the right detail pane beside the overview. The pane is
+   resizable, remembered in settings, and can be hidden from the top-right panel button.
+6. `watcher.rs` reports changed repository roots; only those roots are re-read with
    `Backend::snapshot_subset`, so a large workspace does not pay for a full scan on every
    file event.
 

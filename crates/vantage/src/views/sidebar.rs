@@ -1,12 +1,11 @@
 //! Left sidebar — 256px expanded, 56px icon rail collapsed.
-//! Views, Groups, theme toggle. Toggle from the app header or `Mod+B`.
+//! Views, Groups and the Settings entry. Toggle from the app header or `Mod+B`.
 
-use gpui::{div, prelude::*, px, rgb, Context, Div, IntoElement, MouseButton, Styled, Window};
+use gpui::{div, prelude::*, px, Context, Div, IntoElement, MouseButton, Styled, Window};
 
 use crate::app::{FieldId, VantageApp};
 use crate::icons::icon;
 use crate::model::NavSection;
-use crate::theme::{AMBER_400, SLATE_500};
 use crate::widgets::{FieldVariant, Txt};
 
 const SIDEBAR_WIDTH: f32 = 256.0;
@@ -416,101 +415,45 @@ impl VantageApp {
 
     fn render_sidebar_footer(&mut self, cx: &mut Context<Self>) -> Div {
         let theme = self.theme;
-        let is_dark = theme.is_dark;
         let collapsed = self.sidebar_collapsed;
-        let icon_name = if is_dark { "sun" } else { "moon" };
-        let icon_color = if is_dark {
-            rgb(AMBER_400)
-        } else {
-            rgb(SLATE_500)
-        };
 
-        let toggle = if collapsed {
-            div()
-                .id("theme-toggle")
-                .flex()
-                .items_center()
-                .justify_center()
-                .w_full()
-                .py(px(8.0))
-                .rounded(px(8.0))
-                .border_1()
-                .border_color(theme.secondary_border)
-                .bg(theme.subtle_bg)
-                .cursor_pointer()
-                .hover(move |s| s.bg(theme.secondary_bg_hover))
-                .on_click(cx.listener(|this, _e, _w, cx| this.toggle_theme(cx)))
-                .child(icon(icon_name, 16.0, icon_color))
-        } else {
-            div()
-                .id("theme-toggle")
-                .flex()
-                .items_center()
-                .justify_between()
-                .w_full()
-                .px(px(12.0))
-                .py(px(8.0))
-                .rounded(px(8.0))
-                .border_1()
-                .border_color(theme.secondary_border)
-                .bg(theme.subtle_bg)
-                .cursor_pointer()
-                .xs()
-                .medium()
-                .fg(theme.secondary_text)
-                .hover(move |s| s.bg(theme.secondary_bg_hover))
-                .on_click(cx.listener(|this, _e, _w, cx| this.toggle_theme(cx)))
-                .child(
-                    div()
-                        .flex()
-                        .items_center()
-                        .gap(px(8.0))
-                        .whitespace_nowrap()
-                        .flex_shrink_0()
-                        .child(icon(icon_name, 14.0, icon_color))
-                        .child(div().child(if is_dark {
-                            "Switch to Light Mode"
-                        } else {
-                            "Switch to Dark Mode"
-                        })),
-                )
-        };
-
-        let settings_button = div()
+        let mut settings = div()
             .id("settings-open")
             .flex()
             .items_center()
-            .justify_center()
-            .w(px(32.0))
-            .h(px(32.0))
+            .w_full()
             .rounded(px(8.0))
+            .border_1()
+            .border_color(theme.secondary_border)
+            .bg(theme.subtle_bg)
             .cursor_pointer()
             .hover(move |s| s.bg(theme.secondary_bg_hover))
-            .on_click(cx.listener(|this, _e, _w, cx| this.open_settings(cx)))
-            .child(icon("settings", 16.0, theme.label_muted));
+            .on_click(cx.listener(|this, _e, _w, cx| this.open_settings(cx)));
 
-        let controls = if collapsed {
-            div()
-                .flex()
-                .flex_col()
-                .items_center()
-                .gap(px(8.0))
-                .child(toggle)
-                .child(settings_button)
+        if collapsed {
+            settings = settings.justify_center().py(px(8.0)).child(icon(
+                "settings",
+                16.0,
+                theme.label_muted,
+            ));
         } else {
-            div()
-                .flex()
-                .items_center()
+            settings = settings
                 .gap(px(8.0))
-                .child(div().flex_1().min_w(px(0.0)).child(toggle))
-                .child(settings_button)
-        };
+                .whitespace_nowrap()
+                .px(px(12.0))
+                .py(px(8.0))
+                .xs()
+                .medium()
+                .fg(theme.secondary_text)
+                .child(icon("settings", 14.0, theme.label_muted))
+                .child(div().child("Settings"));
+        }
 
         div()
             .flex_shrink_0()
             .p(px(if collapsed { 8.0 } else { 12.0 }))
             .border_t_1()
             .border_color(theme.divider)
-            .child(controls)
+            .child(settings)
     }
 }

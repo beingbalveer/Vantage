@@ -47,7 +47,7 @@ The **Pending Changes** view collects uncommitted work into one card per reposit
 
 ### Repository inspector
 
-The inspector is a right-hand slide-over with three tabs:
+The repository detail view is a resizable right-hand pane. Opening a repository splits the content area roughly 50/50; the top-right panel icon shows or hides it without losing the current selection. It has three tabs:
 
 - **Changes** — every changed file with its status, staged state and `+` / `-` counts. Tick a file to stage or unstage it, and click its path to expand a colour-coded diff preview.
 - **Branches** — local branches with ahead/behind counts, their current/default state and latest commit. Check out any branch that is not already current.
@@ -67,7 +67,7 @@ Vantage watches each repository and re-reads only the working trees that changed
 
 ### Settings
 
-**Settings** opens from the Vantage menu, `Cmd+,`, or the gear in the sidebar footer. It keeps only preferences that affect the current dashboard:
+**Settings** opens from the Vantage menu, `Cmd+,`, or the **Settings** entry in the sidebar footer. It keeps only preferences that affect the current dashboard:
 
 - **General** — default view, repository sort, window memory.
 - **Appearance** — System / Light / Dark, with System following macOS live.
@@ -79,7 +79,7 @@ Sidebar state is remembered automatically. Preferences are stored separately fro
 
 ### Light and dark
 
-The whole interface has first-class light and dark themes. The theme setting supports System, Light and Dark; the sidebar footer remains a quick light/dark toggle.
+The whole interface has first-class light and dark themes. The theme setting lives in **Settings → Appearance** and supports System, Light and Dark.
 
 ---
 
@@ -152,7 +152,9 @@ standard shortcuts.
 
 | Action | How |
 |---|---|
-| Open a repository inspector | Click a repository row |
+| Open the repository detail pane | Click a repository row |
+| Show or hide the right pane | Click the panel icon at the top right |
+| Resize the right pane | Drag the divider between the overview and detail pane |
 | Expand a file diff | Click the changed file's path |
 | Stage or unstage a file | Click its checkbox in **Changes** |
 | Check out a branch | Click **Checkout** in **Branches** |
@@ -160,9 +162,9 @@ standard shortcuts.
 | Add a repository | Click **Add Repository**, or `Cmd+O` |
 | Refresh status | Click **Refresh Status**, or `Cmd+R` |
 | Switch views | `Cmd+1` All Repositories, `Cmd+2` Needs Attention, `Cmd+3` Pending Changes |
-| Open Settings | `Cmd+,`, Vantage menu, or the sidebar gear |
+| Open Settings | `Cmd+,`, Vantage menu, or the sidebar **Settings** entry |
 | Toggle the sidebar | Click the header button, or `Cmd+B` |
-| Toggle light/dark | Click the sidebar footer, or `Cmd+Shift+L` |
+| Toggle light/dark | Open **Settings → Appearance**, or `Cmd+Shift+L` |
 | Full screen / minimize / close | `Ctrl+Cmd+F` / `Cmd+M` / `Cmd+W` |
 | Close the inspector or modal | Click outside it, or press `Esc` in a focused field |
 | Submit a group or add-repository field | Press `Enter` in the field |

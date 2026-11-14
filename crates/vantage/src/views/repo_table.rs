@@ -17,6 +17,30 @@ const COL_UPDATED: f32 = 0.075;
 const COL_LATEST: f32 = 1.0 - (COL_REPO + COL_BRANCH + COL_TREE + COL_SYNC + COL_UPDATED);
 const COL_LATEST_MAX: f32 = 320.0; // `max-w-xs` on the browser cell
 
+fn repo_column(compact: bool) -> f32 {
+    if compact {
+        0.42
+    } else {
+        COL_REPO
+    }
+}
+
+fn branch_column(compact: bool) -> f32 {
+    if compact {
+        0.30
+    } else {
+        COL_BRANCH
+    }
+}
+
+fn tree_column(compact: bool) -> f32 {
+    if compact {
+        0.28
+    } else {
+        COL_TREE
+    }
+}
+
 struct TableRow {
     id: String,
     name: String,
@@ -62,16 +86,18 @@ fn make_row(repo: &crate::model::Repository) -> TableRow {
 impl VantageApp {
     pub fn render_repo_table(
         &mut self,
-        window: &mut gpui::Window,
         cx: &mut Context<Self>,
+        viewport_width: gpui::Pixels,
     ) -> impl IntoElement {
         let theme = self.theme;
-        let wide = window.viewport_size().width >= px(1280.0);
-        let container_width = crate::text::container_width(window.viewport_size().width);
+        let wide = viewport_width >= px(1050.0);
+        let compact = viewport_width < px(900.0);
+        let container_width = (viewport_width - px(48.0)).max(px(0.0)).min(px(1440.0));
         let latest_width =
             crate::text::column_width(container_width, COL_LATEST, 16.0).min(px(COL_LATEST_MAX));
         let branch_width =
-            (crate::text::column_width(container_width, COL_BRANCH, 16.0) - px(20.0)).max(px(24.0));
+            (crate::text::column_width(container_width, branch_column(compact), 16.0) - px(20.0))
+                .max(px(24.0));
         let repos = self.filtered_repos();
         let rows: Vec<TableRow> = repos.iter().map(|r| make_row(r)).collect();
         drop(repos);
@@ -166,7 +192,7 @@ impl VantageApp {
             );
         }
 
-        table = table.child(self.render_table_head(theme, wide));
+        table = table.child(self.render_table_head(theme, wide, compact));
 
         for section in &sections {
             let mut card = div()
@@ -186,6 +212,7 @@ impl VantageApp {
                         theme,
                         row,
                         wide,
+                        compact,
                         latest_width,
                         branch_width,
                         cx,
@@ -199,7 +226,7 @@ impl VantageApp {
         table
     }
 
-    fn render_table_head(&self, theme: Theme, wide: bool) -> impl IntoElement {
+    fn render_table_head(&self, theme: Theme, wide: bool, compact: bool) -> impl IntoElement {
         let mut head = div()
             .flex()
             .items_center()
@@ -211,7 +238,7 @@ impl VantageApp {
 
         head = head
             .child(
-                cell(COL_REPO)
+                cell(repo_column(compact))
                     .py(px(10.0))
                     .pl(px(20.0))
                     .pr(px(16.0))
@@ -219,20 +246,22 @@ impl VantageApp {
                     .child("Repository"),
             )
             .child(
-                cell(COL_BRANCH)
+                cell(branch_column(compact))
                     .py(px(10.0))
                     .px(px(16.0))
                     .whitespace_nowrap()
                     .child("Current Branch"),
             )
             .child(
-                cell(COL_TREE)
+                cell(tree_column(compact))
                     .py(px(10.0))
                     .px(px(16.0))
                     .whitespace_nowrap()
                     .child("Working Tree"),
-            )
-            .child(
+            );
+
+        if !compact {
+            head = head.child(
                 cell(COL_SYNC)
                     .py(px(10.0))
                     .px(px(16.0))
@@ -240,6 +269,7 @@ impl VantageApp {
                     .whitespace_nowrap()
                     .child("Remote Sync"),
             );
+        }
 
         if wide {
             head = head.child(
@@ -253,15 +283,18 @@ impl VantageApp {
             );
         }
 
-        head.child(
-            cell(COL_UPDATED)
-                .py(px(10.0))
-                .pl(px(16.0))
-                .pr(px(20.0))
-                .text_right()
-                .whitespace_nowrap()
-                .child("Updated"),
-        )
+        if !compact {
+            head = head.child(
+                cell(COL_UPDATED)
+                    .py(px(10.0))
+                    .pl(px(16.0))
+                    .pr(px(20.0))
+                    .text_right()
+                    .whitespace_nowrap()
+                    .child("Updated"),
+            );
+        }
+        head
     }
 
     fn render_group_header(
@@ -331,6 +364,7 @@ impl VantageApp {
         theme: Theme,
         row: &TableRow,
         wide: bool,
+        compact: bool,
         latest_width: gpui::Pixels,
         branch_width: gpui::Pixels,
         cx: &mut Context<Self>,
@@ -356,14 +390,15 @@ impl VantageApp {
             .when(!selected, move |d| {
                 d.hover(move |s| s.bg(theme.row_hover_bg))
             })
-            .on_click(cx.listener(move |this, _e, _w, cx| {
+            .on_click(cx.listener(move |this, _e, window, cx| {
                 this.select_repo(repo_id.clone(), cx);
+                window.refresh();
             }));
 
         // Repository name only: a repository can contain several languages,
         // so a single stack label would be misleading.
         line = line.child(
-            cell(COL_REPO)
+            cell(repo_column(compact))
                 .py(px(12.0))
                 .pl(px(20.0))
                 .pr(px(16.0))
@@ -389,7 +424,7 @@ impl VantageApp {
             branch_width,
         );
         line = line.child(
-            cell(COL_BRANCH)
+            cell(branch_column(compact))
                 .py(px(12.0))
                 .px(px(16.0))
                 .overflow_hidden()
@@ -408,19 +443,22 @@ impl VantageApp {
         );
 
         // Working tree status
-        line = line.child(cell(COL_TREE).py(px(12.0)).px(px(16.0)).child(status_text(
-            &theme,
-            row.sync,
-            row.uncommitted,
-        )));
-
-        // Remote sync
         line = line.child(
-            cell(COL_SYNC)
+            cell(tree_column(compact))
                 .py(px(12.0))
                 .px(px(16.0))
-                .child(sync_arrows(&theme, row.ahead, row.behind)),
+                .child(status_text(&theme, row.sync, row.uncommitted)),
         );
+
+        // Remote sync
+        if !compact {
+            line = line.child(
+                cell(COL_SYNC)
+                    .py(px(12.0))
+                    .px(px(16.0))
+                    .child(sync_arrows(&theme, row.ahead, row.behind)),
+            );
+        }
 
         if wide {
             let latest = crate::text::ellipsize(
@@ -445,28 +483,30 @@ impl VantageApp {
         }
 
         // Updated + disclosure chevron
-        line = line.child(
-            cell(COL_UPDATED)
-                .py(px(14.0))
-                .pl(px(16.0))
-                .pr(px(20.0))
-                .child(
-                    div()
-                        .flex()
-                        .items_center()
-                        .justify_end()
-                        .gap(px(6.0))
-                        .xs()
-                        .fg(theme.label_muted)
-                        .whitespace_nowrap()
-                        .child(row.activity.clone())
-                        .child(
-                            div()
-                                .group_hover("repo-row", move |s| s.fg(activity_color))
-                                .child(icon("chevron-right", 14.0, theme.icon_idle)),
-                        ),
-                ),
-        );
+        if !compact {
+            line = line.child(
+                cell(COL_UPDATED)
+                    .py(px(14.0))
+                    .pl(px(16.0))
+                    .pr(px(20.0))
+                    .child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .justify_end()
+                            .gap(px(6.0))
+                            .xs()
+                            .fg(theme.label_muted)
+                            .whitespace_nowrap()
+                            .child(row.activity.clone())
+                            .child(
+                                div()
+                                    .group_hover("repo-row", move |s| s.fg(activity_color))
+                                    .child(icon("chevron-right", 14.0, theme.icon_idle)),
+                            ),
+                    ),
+            );
+        }
 
         line
     }

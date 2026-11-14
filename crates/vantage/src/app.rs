@@ -59,6 +59,8 @@ pub struct VantageApp {
     pub collapsed_groups: HashSet<String>,
     /// Left sidebar shrunk to its 56px icon rail.
     pub sidebar_collapsed: bool,
+    /// `(pointer x, starting fraction)` while the right splitter is dragged.
+    pub right_panel_drag_start: Option<(f32, f32)>,
 
     // Sidebar: inline "new group" input
     pub is_adding_group: bool,
@@ -133,6 +135,7 @@ impl VantageApp {
             toast_seq: 0,
             collapsed_groups: HashSet::new(),
             sidebar_collapsed: settings.sidebar_collapsed,
+            right_panel_drag_start: None,
 
             is_adding_group: false,
             group_field: FieldState::new(),
@@ -485,13 +488,30 @@ impl VantageApp {
             self.copied_path = false;
         }
         self.selected_repo_id = Some(id);
+        self.settings.right_panel_open = true;
+        self.save_settings(cx);
+        cx.notify();
+    }
+
+    pub fn toggle_right_panel(&mut self, cx: &mut Context<Self>) {
+        self.settings.right_panel_open = !self.settings.right_panel_open;
+        self.save_settings(cx);
+        cx.notify();
+    }
+
+    pub fn close_right_panel(&mut self, cx: &mut Context<Self>) {
+        self.settings.right_panel_open = false;
+        self.group_menu_open = false;
+        self.save_settings(cx);
         cx.notify();
     }
 
     pub fn close_inspector(&mut self, cx: &mut Context<Self>) {
+        self.settings.right_panel_open = false;
         self.selected_repo_id = None;
         self.group_menu_open = false;
         self.expanded_file = None;
+        self.save_settings(cx);
         cx.notify();
     }
 
@@ -1070,6 +1090,7 @@ impl VantageApp {
                         app.repos.retain(|repo| repo.id != repository.id);
                         app.repos.insert(0, repository.clone());
                         app.selected_repo_id = Some(repository.id.clone());
+                        app.settings.right_panel_open = true;
 
                         app.modal_path.clear();
                         app.modal_custom_group.clear();
@@ -1078,6 +1099,7 @@ impl VantageApp {
                         app.modal_group_menu_open = false;
 
                         app.persist(cx);
+                        app.save_settings(cx);
                         app.show_toast(
                             format!("Added {} to {}", repository.name, resolved_group),
                             cx,
@@ -1317,6 +1339,81 @@ impl Render for VantageApp {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = self.theme;
 
+        let viewport = self.render_viewport(window, cx).into_any_element();
+        let inspector = self.render_inspector(cx);
+
+        let mut main = div()
+            .flex()
+            .flex_1()
+            .min_w(px(0.0))
+            .min_h(px(0.0))
+            .h_full()
+            .child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .flex_1()
+                    .min_w(px(0.0))
+                    .min_h(px(0.0))
+                    .h_full()
+                    .child(viewport),
+            );
+
+        if let Some(panel) = inspector {
+            let sidebar_width = if self.sidebar_collapsed { 56.0 } else { 256.0 };
+            let splitter = div()
+                .id("right-panel-splitter")
+                .w(px(4.0))
+                .h_full()
+                .flex_shrink_0()
+                .cursor(gpui::CursorStyle::ResizeColumn)
+                .bg(theme.divider)
+                .hover(move |s| s.bg(theme.accent))
+                .on_mouse_down(
+                    MouseButton::Left,
+                    cx.listener(move |this, event: &gpui::MouseDownEvent, _w, _cx| {
+                        this.right_panel_drag_start = Some((
+                            f32::from(event.position.x),
+                            this.settings.right_panel_fraction,
+                        ));
+                    }),
+                );
+            main = main
+                .child(splitter)
+                .child(panel)
+                .on_mouse_move(cx.listener(
+                    move |this, event: &gpui::MouseMoveEvent, window, cx| {
+                        let Some((start_x, start_fraction)) = this.right_panel_drag_start else {
+                            return;
+                        };
+                        let content_width = f32::from(window.bounds().size.width) - sidebar_width;
+                        if content_width <= 0.0 {
+                            return;
+                        }
+                        let delta = (f32::from(event.position.x) - start_x) / content_width;
+                        this.settings.right_panel_fraction =
+                            (start_fraction - delta).clamp(0.3, 0.7);
+                        cx.notify();
+                    },
+                ))
+                .on_mouse_up(
+                    MouseButton::Left,
+                    cx.listener(|this, _event: &gpui::MouseUpEvent, _window, cx| {
+                        if this.right_panel_drag_start.take().is_some() {
+                            this.save_settings(cx);
+                        }
+                    }),
+                );
+        }
+
+        let content = div()
+            .flex()
+            .flex_1()
+            .min_h(px(0.0))
+            .w_full()
+            .child(self.render_sidebar(window, cx))
+            .child(main);
+
         let mut root = div()
             .relative()
             .flex()
@@ -1328,27 +1425,8 @@ impl Render for VantageApp {
             .text_size(px(crate::theme::TEXT_SM))
             .line_height(crate::theme::LH_SM)
             .child(self.render_top_bar(window, cx))
-            .child(
-                div()
-                    .flex()
-                    .flex_1()
-                    .min_h(px(0.0))
-                    .child(self.render_sidebar(window, cx))
-                    .child(
-                        div()
-                            .flex()
-                            .flex_col()
-                            .flex_1()
-                            .min_w(px(0.0))
-                            .min_h(px(0.0))
-                            .h_full()
-                            .child(self.render_viewport(window, cx)),
-                    ),
-            );
+            .child(content);
 
-        if let Some(panel) = self.render_inspector(cx) {
-            root = root.child(panel);
-        }
         if self.is_add_modal_open {
             root = root.child(self.render_add_repo_modal(window, cx));
         }
