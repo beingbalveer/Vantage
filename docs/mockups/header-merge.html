@@ -1,0 +1,1247 @@
+<!doctype html>
+<html lang="en" data-theme="light">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Vantage — merged header preview</title>
+<style>
+  @font-face {
+    font-family: "Public Sans";
+    src: url("../../crates/vantage/assets/fonts/PublicSans-400.ttf") format("truetype");
+    font-weight: 400;
+    font-display: swap;
+  }
+  @font-face {
+    font-family: "Public Sans";
+    src: url("../../crates/vantage/assets/fonts/PublicSans-500.ttf") format("truetype");
+    font-weight: 500;
+    font-display: swap;
+  }
+  @font-face {
+    font-family: "Public Sans";
+    src: url("../../crates/vantage/assets/fonts/PublicSans-600.ttf") format("truetype");
+    font-weight: 600;
+    font-display: swap;
+  }
+  @font-face {
+    font-family: "Plus Jakarta Sans";
+    src: url("../../crates/vantage/assets/fonts/PlusJakartaSans-700.ttf") format("truetype");
+    font-weight: 700;
+    font-display: swap;
+  }
+  @font-face {
+    font-family: "JetBrains Mono";
+    src: url("../../crates/vantage/assets/fonts/JetBrainsMono-400.ttf") format("truetype");
+    font-weight: 400;
+    font-display: swap;
+  }
+  @font-face {
+    font-family: "JetBrains Mono";
+    src: url("../../crates/vantage/assets/fonts/JetBrainsMono-500.ttf") format("truetype");
+    font-weight: 500;
+    font-display: swap;
+  }
+
+  :root {
+    color-scheme: light;
+    --page-bg: #0a0d13;
+    --page-panel: #121722;
+    --page-border: #222a38;
+    --page-text: #e8eef8;
+    --page-muted: #8b9bb4;
+
+    --bg-app: #f8fafc;
+    --panel: #ffffff;
+    --header: rgba(255, 255, 255, 0.95);
+    --divider: #e2e8f0;
+    --border-strong: #cad5e2;
+    --text: #0f172b;
+    --text-soft: #1d293d;
+    --text-body: #45556c;
+    --muted: #62748e;
+    --dim: #90a1b9;
+    --icon: #90a1b9;
+
+    --nav-idle: #45556c;
+    --nav-active-bg: #f1f5f9;
+    --nav-hover: #f8fafc;
+
+    --accent: #155dfc;
+    --accent-text: #1447e6;
+    --accent-soft: rgba(239, 246, 255, 0.6);
+
+    --primary-bg: #0f172b;
+    --primary-hover: #1d293d;
+    --primary-text: #ffffff;
+    --secondary-bg: #ffffff;
+    --secondary-border: #e2e8f0;
+    --secondary-text: #314158;
+    --secondary-hover: #f8fafc;
+
+    --table-head: rgba(248, 250, 252, 0.7);
+    --group-head: rgba(248, 250, 252, 0.9);
+    --row-border: #e2e8f0;
+    --row-hover: #f8fafc;
+
+    --amber: #bb4d00;
+    --red: #c10007;
+    --blue: #1447e6;
+    --green: #007a55;
+
+    --titlebar: #f3f5f8;
+    --window-shadow: 0 30px 90px rgba(0, 0, 0, 0.55), 0 2px 10px rgba(0, 0, 0, 0.4);
+    --window-border: rgba(255, 255, 255, 0.16);
+    --anno: #51a2ff;
+  }
+
+  html[data-theme="dark"] {
+    color-scheme: dark;
+    --bg-app: #020618;
+    --panel: #0f172b;
+    --header: rgba(15, 23, 43, 0.95);
+    --divider: #1d293d;
+    --border-strong: #314158;
+    --text: #f1f5f9;
+    --text-soft: #e2e8f0;
+    --text-body: #cad5e2;
+    --muted: #90a1b9;
+    --dim: #62748e;
+    --icon: #62748e;
+
+    --nav-idle: #90a1b9;
+    --nav-active-bg: #1d293d;
+    --nav-hover: rgba(29, 41, 61, 0.5);
+
+    --accent: #51a2ff;
+    --accent-text: #51a2ff;
+    --accent-soft: rgba(22, 36, 86, 0.3);
+
+    --primary-bg: #155dfc;
+    --primary-hover: #2b7fff;
+    --primary-text: #ffffff;
+    --secondary-bg: #1d293d;
+    --secondary-border: #314158;
+    --secondary-text: #e2e8f0;
+    --secondary-hover: #314158;
+
+    --table-head: rgba(15, 23, 43, 0.5);
+    --group-head: rgba(29, 41, 61, 0.5);
+    --row-border: #1d293d;
+    --row-hover: rgba(29, 41, 61, 0.5);
+
+    --amber: #ffb900;
+    --red: #ff6467;
+    --blue: #51a2ff;
+    --green: #00d492;
+
+    --titlebar: #0b1220;
+    --window-border: rgba(255, 255, 255, 0.12);
+  }
+
+  * { box-sizing: border-box; }
+  html, body { margin: 0; min-height: 100%; }
+  body {
+    background: var(--background, var(--page-bg));
+    color: var(--foreground, var(--page-text));
+    font-family: "Public Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    font-size: 14px;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  .page {
+    max-width: 1520px;
+    margin: 0 auto;
+    padding: 24px 28px 44px;
+  }
+
+  .page-head {
+    display: flex;
+    align-items: flex-end;
+    justify-content: space-between;
+    gap: 24px;
+    margin-bottom: 18px;
+  }
+  .eyebrow {
+    font-size: 11px;
+    font-weight: 500;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--muted-foreground, var(--page-muted));
+    margin-bottom: 6px;
+  }
+  h1 {
+    margin: 0;
+    font-family: "Plus Jakarta Sans", "Public Sans", sans-serif;
+    font-size: 24px;
+    line-height: 1.2;
+    font-weight: 700;
+    letter-spacing: -0.01em;
+  }
+  .sub {
+    margin: 7px 0 0;
+    color: var(--muted-foreground, var(--page-muted));
+    font-size: 13px;
+    line-height: 1.55;
+    max-width: 660px;
+  }
+
+  .controls {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+  }
+  .seg {
+    display: inline-flex;
+    align-items: center;
+    padding: 3px;
+    gap: 2px;
+    border: 1px solid var(--border, var(--page-border));
+    background: var(--card, var(--page-panel));
+    border-radius: 9px;
+  }
+  .seg button {
+    appearance: none;
+    border: 0;
+    background: transparent;
+    color: var(--muted-foreground, var(--page-muted));
+    font: 500 12px/1 "Public Sans", sans-serif;
+    padding: 7px 11px;
+    border-radius: 6px;
+    cursor: pointer;
+    white-space: nowrap;
+  }
+  .seg button:hover { color: var(--page-text); }
+  .seg button[aria-pressed="true"] {
+    background: var(--secondary, #243049);
+    color: var(--foreground, #fff);
+    box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.06);
+  }
+  .seg button:disabled { opacity: 0.35; cursor: default; }
+  .toggle {
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+    height: 34px;
+    padding: 0 11px;
+    border: 1px solid var(--border, var(--page-border));
+    background: var(--card, var(--page-panel));
+    color: var(--muted-foreground, var(--page-muted));
+    border-radius: 9px;
+    font-size: 12px;
+    font-weight: 500;
+    cursor: pointer;
+    user-select: none;
+  }
+  .toggle:hover { color: var(--foreground, var(--page-text)); }
+  .toggle input { accent-color: #2b7fff; margin: 0; }
+  .toggle.on { color: var(--foreground, var(--page-text)); border-color: var(--border, #33415c); }
+
+  .stage-line {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+    margin: 0 0 10px;
+    color: var(--muted-foreground, var(--page-muted));
+    font-size: 12px;
+  }
+  .stage-line .mode-label {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    font-weight: 500;
+    color: var(--foreground, var(--page-text));
+  }
+  .stage-line .dot {
+    width: 6px; height: 6px; border-radius: 50%;
+    background: var(--accent);
+    box-shadow: 0 0 0 3px rgba(81, 162, 255, 0.15);
+  }
+  .mono { font-family: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace; }
+
+  /* ---- window frame -------------------------------------------------- */
+
+  .stage {
+    position: relative;
+    width: 100%;
+  }
+  .window-shell {
+    position: relative;
+    width: 1440px;
+    height: 900px;
+    transform-origin: top left;
+  }
+  .window {
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    width: 1440px;
+    height: 900px;
+    overflow: hidden;
+    background: var(--bg-app);
+    border: 1px solid var(--window-border);
+    border-radius: 13px;
+    box-shadow: var(--window-shadow);
+    color: var(--text);
+  }
+
+  /* ---- native titlebar (Before) -------------------------------------- */
+
+  .native-bar {
+    position: relative;
+    display: flex;
+    align-items: center;
+    flex: 0 0 28px;
+    height: 28px;
+    padding: 0 20px;
+    background: var(--titlebar);
+    border-bottom: 1px solid var(--divider);
+  }
+  .window[data-mode="after"] .native-bar { display: none; }
+
+  .lights { display: flex; align-items: center; gap: 8px; flex: 0 0 auto; }
+  .tl {
+    width: 12px;
+    height: 12px;
+    border-radius: 50%;
+    box-shadow: inset 0 0 0 0.5px rgba(0, 0, 0, 0.22);
+  }
+  .tl.close { background: #ff5f57; }
+  .tl.min { background: #febc2e; }
+  .tl.max { background: #28c840; }
+
+  .native-title {
+    position: absolute;
+    left: 50%;
+    transform: translateX(-50%);
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--muted);
+    letter-spacing: 0.01em;
+  }
+  .window[data-mode="after"] .native-title { display: none; }
+
+  /* ---- merged header (After) ----------------------------------------- */
+
+  .merged-bar {
+    display: none;
+    align-items: center;
+    gap: 14px;
+    flex: 0 0 42px;
+    height: 42px;
+    padding: 0 18px 0 20px;
+    background: var(--header);
+    border-bottom: 1px solid var(--divider);
+  }
+  .window[data-mode="after"] .merged-bar { display: flex; }
+  .window[data-mode="after"][data-h="56"] .merged-bar { flex-basis: 56px; height: 56px; }
+
+  .merged-brand {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex: 0 0 auto;
+    min-width: 0;
+  }
+  .merged-brand .logo { width: 22px; height: 22px; border-radius: 5px; }
+  .window[data-h="56"] .merged-brand .logo { width: 26px; height: 26px; }
+  .merged-brand .wordmark {
+    font-family: "Plus Jakarta Sans", "Public Sans", sans-serif;
+    font-weight: 700;
+    font-size: 15px;
+    letter-spacing: -0.005em;
+    color: var(--text);
+    white-space: nowrap;
+  }
+  .window[data-h="56"] .merged-brand .wordmark { font-size: 16px; }
+
+  .collapse-btn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 24px;
+    height: 24px;
+    border-radius: 6px;
+    color: var(--muted);
+    flex: 0 0 auto;
+  }
+  .collapse-btn:hover { background: var(--nav-hover); color: var(--text); }
+
+  .crumb {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    min-width: 0;
+    flex: 1 1 auto;
+    font-size: 14px;
+    line-height: 20px;
+    margin-left: 6px;
+  }
+  .crumb .grp { color: var(--muted); white-space: nowrap; }
+  .crumb .slash { color: var(--border-strong); }
+  .crumb .view {
+    font-family: "Plus Jakarta Sans", "Public Sans", sans-serif;
+    font-weight: 600;
+    font-size: 14px;
+    color: var(--text);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .actions {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex: 0 0 auto;
+  }
+  .btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    height: 28px;
+    padding: 0 12px;
+    border-radius: 8px;
+    font-size: 12px;
+    line-height: 16px;
+    font-weight: 500;
+    white-space: nowrap;
+    border: 1px solid transparent;
+    cursor: default;
+  }
+  .btn .ic { width: 14px; height: 14px; }
+  .btn.secondary {
+    color: var(--secondary-text);
+    background: var(--secondary-bg);
+    border-color: var(--secondary-border);
+  }
+  .btn.primary {
+    color: var(--primary-text);
+    background: var(--primary-bg);
+  }
+  .window[data-mode="after"][data-h="56"] .btn { height: 30px; }
+
+  /* ---- body shell ---------------------------------------------------- */
+
+  .body-row {
+    display: flex;
+    flex: 1 1 auto;
+    min-height: 0;
+  }
+
+  .sidebar {
+    display: flex;
+    flex-direction: column;
+    justify-content: space-between;
+    width: 256px;
+    flex: 0 0 256px;
+    min-height: 0;
+    background: var(--panel);
+    border-right: 1px solid var(--divider);
+  }
+
+  .side-brand {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    flex: 0 0 56px;
+    height: 56px;
+    padding: 0 20px;
+    border-bottom: 1px solid var(--divider);
+  }
+  .window[data-mode="after"] .side-brand { display: none; }
+  .side-brand .left { display: flex; align-items: center; gap: 8px; }
+  .side-brand .logo { width: 28px; height: 28px; border-radius: 6px; }
+  .side-brand .wordmark {
+    font-family: "Plus Jakarta Sans", "Public Sans", sans-serif;
+    font-weight: 700;
+    font-size: 16px;
+    color: var(--text);
+    letter-spacing: -0.005em;
+  }
+  .icon-btn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 24px;
+    height: 24px;
+    border-radius: 6px;
+    color: var(--muted);
+  }
+  .icon-btn:hover { background: var(--nav-hover); }
+  .icon-btn .ic { width: 16px; height: 16px; }
+
+  .side-scroll {
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow: hidden;
+    padding: 20px 12px;
+    display: flex;
+    flex-direction: column;
+    gap: 24px;
+  }
+
+  .nav-section { display: flex; flex-direction: column; }
+  .nav-label {
+    padding: 0 10px 8px;
+    font-size: 12px;
+    line-height: 16px;
+    font-weight: 500;
+    color: var(--muted);
+  }
+  .nav-item {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    height: 34px;
+    padding: 8px 10px;
+    margin-bottom: 4px;
+    border-radius: 8px;
+    color: var(--nav-idle);
+    font-size: 14px;
+    line-height: 20px;
+    font-weight: 500;
+  }
+  .nav-item .left { display: flex; align-items: center; gap: 10px; min-width: 0; }
+  .nav-item .left span { white-space: nowrap; }
+  .nav-item .ic { width: 16px; height: 16px; color: var(--icon); flex: 0 0 auto; }
+  .nav-item .count {
+    font-family: "JetBrains Mono", monospace;
+    font-size: 12px;
+    line-height: 16px;
+    font-weight: 400;
+    color: var(--muted);
+  }
+  .nav-item:hover { background: var(--nav-hover); color: var(--text); }
+  .nav-item.active { background: var(--nav-active-bg); color: var(--text); font-weight: 600; }
+  .nav-item.active .ic { color: var(--accent); }
+
+  .groups-block {
+    padding-top: 16px;
+    border-top: 1px solid var(--divider);
+  }
+  .groups-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0 10px 8px;
+    gap: 12px;
+  }
+  .groups-head .label {
+    font-size: 12px;
+    line-height: 16px;
+    font-weight: 500;
+    color: var(--muted);
+  }
+  .new-group {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    font-size: 12px;
+    line-height: 16px;
+    font-weight: 500;
+    color: var(--accent-text);
+    white-space: nowrap;
+  }
+  .new-group .ic { width: 12px; height: 12px; }
+
+  .side-footer {
+    flex: 0 0 auto;
+    padding: 12px;
+    border-top: 1px solid var(--divider);
+  }
+  .theme-toggle {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 12px;
+    border: 1px solid var(--secondary-border);
+    border-radius: 8px;
+    background: var(--bg-app);
+    color: var(--secondary-text);
+    font-size: 12px;
+    line-height: 16px;
+    font-weight: 500;
+  }
+  .theme-toggle .ic { width: 14px; height: 14px; color: var(--muted); }
+
+  /* ---- main ---------------------------------------------------------- */
+
+  .main {
+    display: flex;
+    flex-direction: column;
+    flex: 1 1 auto;
+    min-width: 0;
+    min-height: 0;
+  }
+
+  .main-topbar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+    flex: 0 0 56px;
+    height: 56px;
+    padding: 0 24px;
+    background: var(--header);
+    border-bottom: 1px solid var(--divider);
+  }
+  .window[data-mode="after"] .main-topbar { display: none; }
+
+  .viewport {
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow: hidden;
+    padding: 20px 24px;
+  }
+
+  .table {
+    display: flex;
+    flex-direction: column;
+    width: 100%;
+    background: var(--panel);
+    border: 1px solid var(--divider);
+    border-radius: 12px;
+    overflow: hidden;
+  }
+
+  .tr {
+    display: grid;
+    grid-template-columns: 17% 19% 16.5% 8.5% minmax(0, 1fr) 122px;
+    align-items: center;
+    width: 100%;
+  }
+  .th {
+    height: 37px;
+    background: var(--table-head);
+    border-bottom: 1px solid var(--divider);
+    font-size: 12px;
+    line-height: 16px;
+    font-weight: 500;
+    color: var(--muted);
+  }
+  .th > div { padding: 10px 16px; white-space: nowrap; }
+  .th > div:first-child { padding-left: 20px; }
+  .th > div:last-child { padding-right: 20px; text-align: right; }
+
+  .group {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+    height: 34px;
+    padding: 8px 20px;
+    background: var(--group-head);
+    border-bottom: 1px solid var(--divider);
+  }
+  .group + .group { border-top: 1px solid var(--divider); }
+  .group .left { display: flex; align-items: center; gap: 8px; }
+  .group .ic { width: 14px; height: 14px; color: var(--icon); }
+  .group .name {
+    font-family: "Plus Jakarta Sans", "Public Sans", sans-serif;
+    font-size: 12px;
+    line-height: 16px;
+    font-weight: 600;
+    color: var(--text-soft);
+  }
+  .group .n {
+    font-family: "JetBrains Mono", monospace;
+    font-size: 12px;
+    line-height: 16px;
+    color: var(--muted);
+  }
+  .group .summary { font-size: 12px; line-height: 16px; color: var(--muted); white-space: nowrap; }
+
+  .row {
+    min-height: 58px;
+    border-bottom: 1px solid var(--row-border);
+    background: var(--panel);
+  }
+  .row:last-child { border-bottom: 0; }
+  .row:hover { background: var(--row-hover); }
+
+  .cell { padding: 10px 16px; min-width: 0; }
+  .cell:first-child { padding-left: 20px; }
+  .cell:last-child { padding-right: 20px; }
+
+  .repo-name {
+    font-size: 14px;
+    line-height: 20px;
+    font-weight: 500;
+    color: var(--text);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .repo-meta {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin-top: 2px;
+    font-size: 12px;
+    line-height: 16px;
+    color: var(--muted);
+    white-space: nowrap;
+    overflow: hidden;
+  }
+  .repo-meta .sep { color: var(--dim); }
+
+  .branch {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    min-width: 0;
+    font-family: "JetBrains Mono", monospace;
+    font-size: 12px;
+    line-height: 16px;
+    font-weight: 500;
+    color: var(--text-soft);
+  }
+  .branch .ic { width: 14px; height: 14px; color: var(--icon); flex: 0 0 auto; }
+  .branch span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+  .status {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 12px;
+    line-height: 16px;
+    font-weight: 500;
+    white-space: nowrap;
+  }
+  .status .ic { width: 14px; height: 14px; flex: 0 0 auto; }
+  .st-amber { color: var(--amber); }
+  .st-red { color: var(--red); }
+  .st-blue { color: var(--blue); }
+  .st-green { color: var(--green); }
+
+  .sync {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-family: "JetBrains Mono", monospace;
+    font-size: 12px;
+    line-height: 16px;
+    font-weight: 500;
+    white-space: nowrap;
+  }
+  .sync .up { color: var(--blue); }
+  .sync .down { color: var(--red); }
+  .sync .zero { color: var(--dim); }
+
+  .latest {
+    font-size: 12px;
+    line-height: 16px;
+    color: var(--text-body);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .updated {
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 6px;
+    font-size: 12px;
+    line-height: 16px;
+    color: var(--muted);
+    white-space: nowrap;
+  }
+  .updated .ic { width: 14px; height: 14px; color: var(--icon); }
+
+  .fade-bottom {
+    position: absolute;
+    left: 256px;
+    right: 0;
+    bottom: 0;
+    height: 56px;
+    background: linear-gradient(to bottom, transparent, var(--bg-app));
+    pointer-events: none;
+  }
+
+  /* ---- annotations --------------------------------------------------- */
+
+  .annos { position: absolute; inset: 0; pointer-events: none; display: none; }
+  .window[data-annos="1"] .annos { display: block; }
+  .anno {
+    position: absolute;
+    border: 1px dashed var(--anno);
+    border-radius: 6px;
+    background: rgba(81, 162, 255, 0.08);
+    box-shadow: 0 0 0 1px rgba(81, 162, 255, 0.08);
+  }
+  .window[data-mode="after"] .anno-before,
+  .window[data-mode="before"] .anno-after { display: none; }
+
+  /* ---- captions ------------------------------------------------------ */
+
+  .notes {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 12px;
+    margin-top: 18px;
+  }
+  .note {
+    border: 1px solid var(--border, var(--page-border));
+    background: var(--card, rgba(18, 23, 34, 0.72));
+    border-radius: 11px;
+    padding: 14px 16px;
+  }
+  .note .k {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.07em;
+    text-transform: uppercase;
+    color: var(--muted-foreground, var(--page-muted));
+    margin-bottom: 8px;
+  }
+  .note .k .num {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 18px;
+    height: 18px;
+    border-radius: 5px;
+    background: var(--secondary, #1b2433);
+    color: var(--muted-foreground, #9fb3cf);
+    font-size: 10px;
+    letter-spacing: 0;
+  }
+  .note p { margin: 0; color: var(--muted-foreground, #c3cfe0); font-size: 13px; line-height: 1.58; }
+  .note strong { color: var(--foreground, #eef4fc); font-weight: 600; }
+  .note code {
+    font-family: "JetBrains Mono", monospace;
+    font-size: 11.5px;
+    background: var(--code-background, #1a2230);
+    border: 1px solid var(--border, #263142);
+    border-radius: 4px;
+    padding: 1px 4px;
+    color: #cfe1ff;
+  }
+  .warn { color: #ffd479; }
+
+  @media (max-width: 900px) {
+    .notes { grid-template-columns: 1fr; }
+    .page-head { align-items: flex-start; flex-direction: column; }
+    .controls { justify-content: flex-start; }
+  }
+</style>
+</head>
+<body>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <defs>
+    <symbol id="i-layers" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m12.83 2.18a2 2 0 0 0-1.66 0L2.6 6.08a1 1 0 0 0 0 1.83l8.58 3.91a2 2 0 0 0 1.66 0l8.58-3.9a1 1 0 0 0 0-1.83Z"/><path d="m22 17.65-9.17 4.16a2 2 0 0 1-1.66 0L2 17.65"/><path d="m22 12.65-9.17 4.16a2 2 0 0 1-1.66 0L2 12.65"/></symbol>
+    <symbol id="i-folder" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 20H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h3.9a2 2 0 0 1 1.69.9l.81 1.2a2 2 0 0 0 1.67.9H20a2 2 0 0 1 2 2v5"/><circle cx="13" cy="12" r="2"/><path d="M18 19c-2.8 0-5-2.2-5-5v8"/><circle cx="20" cy="19" r="2"/></symbol>
+    <symbol id="i-alert-circle" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" x2="12" y1="8" y2="12"/><line x1="12" x2="12.01" y1="16" y2="16"/></symbol>
+    <symbol id="i-branch" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="6" x2="6" y1="3" y2="15"/><circle cx="18" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><path d="M18 9a9 9 0 0 1-9 9"/></symbol>
+    <symbol id="i-diff" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"/><path d="M9 10h6"/><path d="M12 13V7"/><path d="M9 17h6"/></symbol>
+    <symbol id="i-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z"/></symbol>
+    <symbol id="i-panel-close" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="18" height="18" x="3" y="3" rx="2"/><path d="M9 3v18"/><path d="m16 15-3-3 3-3"/></symbol>
+    <symbol id="i-chevron-down" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></symbol>
+    <symbol id="i-chevron-right" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m9 18 6-6-6-6"/></symbol>
+    <symbol id="i-check-circle" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21.801 10A10 10 0 1 1 17 3.335"/><path d="m9 11 3 3L22 4"/></symbol>
+    <symbol id="i-arrow-up" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m5 12 7-7 7 7"/><path d="M12 19V5"/></symbol>
+    <symbol id="i-arrow-down" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14"/><path d="m19 12-7 7-7-7"/></symbol>
+    <symbol id="i-alert-tri" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3"/><path d="M12 9v4"/><path d="M12 17h.01"/></symbol>
+    <symbol id="i-commit" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><line x1="3" x2="9" y1="12" y2="12"/><line x1="15" x2="21" y1="12" y2="12"/></symbol>
+    <symbol id="i-plus" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14"/><path d="M12 5v14"/></symbol>
+    <symbol id="i-refresh" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/><path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"/><path d="M8 16H3v5"/></symbol>
+  </defs>
+</svg>
+
+<div class="page">
+  <header class="page-head">
+    <div>
+      <div class="eyebrow">Vantage · window chrome</div>
+      <h1>Merged header preview</h1>
+      <p class="sub">One continuous 42px bar instead of the macOS titlebar plus the app header. Toggle the variants to compare, and flip annotations to see which regions collapse.</p>
+    </div>
+    <div class="controls">
+      <div class="seg" role="group" aria-label="Mode">
+        <button type="button" id="modeBefore" aria-pressed="false">Before</button>
+        <button type="button" id="modeAfter" aria-pressed="true">After</button>
+      </div>
+      <div class="seg" role="group" aria-label="Header height">
+        <button type="button" id="h42" aria-pressed="true">42px</button>
+        <button type="button" id="h56" aria-pressed="false">56px</button>
+      </div>
+      <div class="seg" role="group" aria-label="Theme">
+        <button type="button" id="themeLight" aria-pressed="true">Light</button>
+        <button type="button" id="themeDark" aria-pressed="false">Dark</button>
+      </div>
+      <label class="toggle" id="annosToggle">
+        <input type="checkbox" id="annos"> Annotations
+      </label>
+    </div>
+  </header>
+
+  <div class="stage-line">
+    <span class="mode-label"><span class="dot"></span><span id="modeCaption">After — one 42px header</span></span>
+    <span>1440 × 900 · scaled <span id="scaleLabel" class="mono">100%</span></span>
+  </div>
+
+  <div class="stage" id="stage">
+    <div class="window-shell" id="shell">
+      <div class="window" id="win" data-mode="after" data-h="42" data-annos="0">
+
+        <!-- Before: native macOS titlebar -->
+        <div class="native-bar">
+          <div class="lights">
+            <span class="tl close"></span><span class="tl min"></span><span class="tl max"></span>
+          </div>
+          <div class="native-title">Vantage</div>
+        </div>
+
+        <!-- After: merged header -->
+        <div class="merged-bar">
+          <div class="lights">
+            <span class="tl close"></span><span class="tl min"></span><span class="tl max"></span>
+          </div>
+          <div class="collapse-btn" title="Collapse sidebar">
+            <svg class="ic" width="16" height="16"><use href="#i-panel-close"/></svg>
+          </div>
+          <div class="crumb">
+            <span class="grp">All Groups</span>
+            <span class="slash">/</span>
+            <span class="view">All Repositories</span>
+          </div>
+          <div class="actions">
+            <span class="btn secondary"><svg class="ic"><use href="#i-refresh"/></svg>Refresh Status</span>
+            <span class="btn primary"><svg class="ic"><use href="#i-plus"/></svg>Add Repository</span>
+          </div>
+        </div>
+
+        <div class="body-row">
+          <aside class="sidebar">
+            <div class="side-brand">
+              <div class="left">
+                <img class="logo" src="data:image/png;base64,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" alt="">
+                <span class="wordmark">Vantage</span>
+              </div>
+              <span class="icon-btn" title="Collapse sidebar">
+                <svg class="ic"><use href="#i-panel-close"/></svg>
+              </span>
+            </div>
+
+            <div class="side-scroll">
+              <div class="nav-section">
+                <div class="nav-label">Views</div>
+                <div class="nav-item active">
+                  <span class="left"><svg class="ic"><use href="#i-folder"/></svg><span>All Repositories</span></span>
+                  <span class="count">8</span>
+                </div>
+                <div class="nav-item">
+                  <span class="left"><svg class="ic"><use href="#i-alert-circle"/></svg><span>Needs Attention</span></span>
+                  <span class="count">3</span>
+                </div>
+                <div class="nav-item">
+                  <span class="left"><svg class="ic"><use href="#i-branch"/></svg><span>Branch Matrix</span></span>
+                  <span class="count">14</span>
+                </div>
+                <div class="nav-item">
+                  <span class="left"><svg class="ic"><use href="#i-diff"/></svg><span>Pending Changes</span></span>
+                  <span class="count">4</span>
+                </div>
+              </div>
+
+              <div class="nav-section groups-block">
+                <div class="groups-head">
+                  <span class="label">Groups</span>
+                  <span class="new-group"><svg class="ic"><use href="#i-plus"/></svg>New group</span>
+                </div>
+                <div class="nav-item active">
+                  <span class="left"><svg class="ic"><use href="#i-layers"/></svg><span>All Groups</span></span>
+                  <span class="count">8</span>
+                </div>
+                <div class="nav-item">
+                  <span class="left"><svg class="ic" style="visibility:hidden"><use href="#i-layers"/></svg><span>SE</span></span>
+                  <span class="count">3</span>
+                </div>
+                <div class="nav-item">
+                  <span class="left"><svg class="ic" style="visibility:hidden"><use href="#i-layers"/></svg><span>Client</span></span>
+                  <span class="count">2</span>
+                </div>
+                <div class="nav-item">
+                  <span class="left"><svg class="ic" style="visibility:hidden"><use href="#i-layers"/></svg><span>Ungrouped</span></span>
+                  <span class="count">3</span>
+                </div>
+              </div>
+            </div>
+
+            <div class="side-footer">
+              <div class="theme-toggle">
+                <svg class="ic"><use href="#i-moon"/></svg>
+                <span id="themeToggleLabel">Switch to Dark Mode</span>
+              </div>
+            </div>
+          </aside>
+
+          <div class="main">
+            <div class="main-topbar">
+              <div class="crumb">
+                <span class="grp">All Groups</span>
+                <span class="slash">/</span>
+                <span class="view">All Repositories</span>
+              </div>
+              <div class="actions">
+                <span class="btn secondary"><svg class="ic"><use href="#i-refresh"/></svg>Refresh Status</span>
+                <span class="btn primary"><svg class="ic"><use href="#i-plus"/></svg>Add Repository</span>
+              </div>
+            </div>
+
+            <div class="viewport">
+              <div class="table">
+                <div class="tr th">
+                  <div>Repository</div>
+                  <div>Current Branch</div>
+                  <div>Working Tree</div>
+                  <div>Remote Sync</div>
+                  <div>Latest Commit</div>
+                  <div>Updated</div>
+                </div>
+
+                <div class="group">
+                  <span class="left">
+                    <svg class="ic"><use href="#i-chevron-down"/></svg>
+                    <span class="name">SE</span>
+                    <span class="n">(3)</span>
+                  </span>
+                  <span class="summary">4 uncommitted · 2 unpushed</span>
+                </div>
+
+                <div class="row tr">
+                  <div class="cell">
+                    <div class="repo-name">Point-App</div>
+                    <div class="repo-meta">SE <span class="sep">·</span> TypeScript</div>
+                  </div>
+                  <div class="cell branch"><svg class="ic"><use href="#i-branch"/></svg><span>feature/khales-card-provider</span></div>
+                  <div class="cell"><span class="status st-amber"><svg class="ic"><use href="#i-diff"/></svg>3 uncommitted</span></div>
+                  <div class="cell sync"><span class="up">↑ 2</span><span class="zero">↓ 0</span></div>
+                  <div class="cell latest">feat: add Khales card provider</div>
+                  <div class="cell updated">12m ago <svg class="ic"><use href="#i-chevron-right"/></svg></div>
+                </div>
+
+                <div class="row tr">
+                  <div class="cell">
+                    <div class="repo-name">gas-subsidy-collector-app</div>
+                    <div class="repo-meta">SE <span class="sep">·</span> Kotlin</div>
+                  </div>
+                  <div class="cell branch"><svg class="ic"><use href="#i-branch"/></svg><span>feature/burn-carbon-prospect</span></div>
+                  <div class="cell"><span class="status st-green"><svg class="ic"><use href="#i-check-circle"/></svg>Clean &amp; synced</span></div>
+                  <div class="cell sync"><span class="zero">↑ 0</span><span class="zero">↓ 0</span></div>
+                  <div class="cell latest">fix: normalize carbon prospect payload</div>
+                  <div class="cell updated">1h ago <svg class="ic"><use href="#i-chevron-right"/></svg></div>
+                </div>
+
+                <div class="row tr">
+                  <div class="cell">
+                    <div class="repo-name">api-gateway</div>
+                    <div class="repo-meta">SE <span class="sep">·</span> Go</div>
+                  </div>
+                  <div class="cell branch"><svg class="ic"><use href="#i-branch"/></svg><span>main</span></div>
+                  <div class="cell"><span class="status st-red"><svg class="ic"><use href="#i-arrow-down"/></svg>Behind origin</span></div>
+                  <div class="cell sync"><span class="zero">↑ 0</span><span class="down">↓ 4</span></div>
+                  <div class="cell latest">chore: bump dependencies</div>
+                  <div class="cell updated">2h ago <svg class="ic"><use href="#i-chevron-right"/></svg></div>
+                </div>
+
+                <div class="group">
+                  <span class="left">
+                    <svg class="ic"><use href="#i-chevron-down"/></svg>
+                    <span class="name">Client</span>
+                    <span class="n">(2)</span>
+                  </span>
+                  <span class="summary">0 uncommitted · 3 unpushed</span>
+                </div>
+
+                <div class="row tr">
+                  <div class="cell">
+                    <div class="repo-name">design-system</div>
+                    <div class="repo-meta">Client <span class="sep">·</span> TypeScript</div>
+                  </div>
+                  <div class="cell branch"><svg class="ic"><use href="#i-branch"/></svg><span>release/2.4</span></div>
+                  <div class="cell"><span class="status st-blue"><svg class="ic"><use href="#i-arrow-up"/></svg>Unpushed commits</span></div>
+                  <div class="cell sync"><span class="up">↑ 3</span><span class="zero">↓ 0</span></div>
+                  <div class="cell latest">feat: add token sheet</div>
+                  <div class="cell updated">25m ago <svg class="ic"><use href="#i-chevron-right"/></svg></div>
+                </div>
+
+                <div class="row tr">
+                  <div class="cell">
+                    <div class="repo-name">marketing-site</div>
+                    <div class="repo-meta">Client <span class="sep">·</span> Astro</div>
+                  </div>
+                  <div class="cell branch"><svg class="ic"><use href="#i-branch"/></svg><span>main</span></div>
+                  <div class="cell"><span class="status st-green"><svg class="ic"><use href="#i-check-circle"/></svg>Clean &amp; synced</span></div>
+                  <div class="cell sync"><span class="zero">↑ 0</span><span class="zero">↓ 0</span></div>
+                  <div class="cell latest">content: update pricing copy</div>
+                  <div class="cell updated">3h ago <svg class="ic"><use href="#i-chevron-right"/></svg></div>
+                </div>
+
+                <div class="group">
+                  <span class="left">
+                    <svg class="ic"><use href="#i-chevron-down"/></svg>
+                    <span class="name">Ungrouped</span>
+                    <span class="n">(3)</span>
+                  </span>
+                  <span class="summary">7 uncommitted · 1 unpushed</span>
+                </div>
+
+                <div class="row tr">
+                  <div class="cell">
+                    <div class="repo-name">infra</div>
+                    <div class="repo-meta">Ungrouped <span class="sep">·</span> HCL</div>
+                  </div>
+                  <div class="cell branch"><svg class="ic"><use href="#i-branch"/></svg><span>main</span></div>
+                  <div class="cell"><span class="status st-amber"><svg class="ic"><use href="#i-diff"/></svg>1 uncommitted</span></div>
+                  <div class="cell sync"><span class="up">↑ 1</span><span class="down">↓ 1</span></div>
+                  <div class="cell latest">infra: pin runner image</div>
+                  <div class="cell updated">5h ago <svg class="ic"><use href="#i-chevron-right"/></svg></div>
+                </div>
+
+                <div class="row tr">
+                  <div class="cell">
+                    <div class="repo-name">notes</div>
+                    <div class="repo-meta">Ungrouped <span class="sep">·</span> Markdown</div>
+                  </div>
+                  <div class="cell branch"><svg class="ic"><use href="#i-branch"/></svg><span>main</span></div>
+                  <div class="cell"><span class="status st-green"><svg class="ic"><use href="#i-check-circle"/></svg>Clean &amp; synced</span></div>
+                  <div class="cell sync"><span class="zero">↑ 0</span><span class="zero">↓ 0</span></div>
+                  <div class="cell latest">docs: weekly log</div>
+                  <div class="cell updated">yesterday <svg class="ic"><use href="#i-chevron-right"/></svg></div>
+                </div>
+
+                <div class="row tr">
+                  <div class="cell">
+                    <div class="repo-name">scratchpad</div>
+                    <div class="repo-meta">Ungrouped <span class="sep">·</span> Rust</div>
+                  </div>
+                  <div class="cell branch"><svg class="ic"><use href="#i-branch"/></svg><span>experiment/gpui</span></div>
+                  <div class="cell"><span class="status st-amber"><svg class="ic"><use href="#i-diff"/></svg>6 uncommitted</span></div>
+                  <div class="cell sync"><span class="zero">↑ 0</span><span class="zero">↓ 0</span></div>
+                  <div class="cell latest">wip: titlebar experiment</div>
+                  <div class="cell updated">2d ago <svg class="ic"><use href="#i-chevron-right"/></svg></div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="fade-bottom"></div>
+
+        <div class="annos">
+          <!-- before bands -->
+          <div class="anno anno-before" style="left:0;right:0;top:0;height:28px"></div>
+          <div class="anno anno-before" style="left:0;width:256px;top:28px;height:56px"></div>
+          <div class="anno anno-before" style="left:256px;right:0;top:28px;height:56px"></div>
+          <!-- after band -->
+          <div class="anno anno-after" style="left:0;right:0;top:0;height:42px"></div>
+          <div class="anno anno-after" style="left:0;right:0;top:0;height:56px;display:none"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="notes">
+    <div class="note">
+      <div class="k"><span class="num">1</span> What collapses</div>
+      <p><strong>Before:</strong> native macOS titlebar <code>28px</code> + app header <code>56px</code> = <code>84px</code>. <strong>After:</strong> one shared bar, <code>42px</code>, with the traffic lights inside it. The table gains <strong>42px</strong> of height.</p>
+    </div>
+    <div class="note">
+      <div class="k"><span class="num">2</span> What stays put</div>
+      <p>The lights remain native controls, the window stays draggable, and double-click still zooms. The collapse button, breadcrumb and actions simply move into the same row.</p>
+    </div>
+    <div class="note">
+      <div class="k"><span class="num">3</span> The one caveat</div>
+      <p><span class="warn">42px fits natively.</span> GPUI 0.2.2 can only move the lights inside a ~28px container; the 56px option would need a small native titlebar-container resize shim. Dragging needs a <code>performWindowDragWithEvent</code> shim either way.</p>
+    </div>
+  </div>
+</div>
+
+<script>
+  const win = document.getElementById('win');
+  const stage = document.getElementById('stage');
+  const shell = document.getElementById('shell');
+  const modeBefore = document.getElementById('modeBefore');
+  const modeAfter = document.getElementById('modeAfter');
+  const h42 = document.getElementById('h42');
+  const h56 = document.getElementById('h56');
+  const themeLight = document.getElementById('themeLight');
+  const themeDark = document.getElementById('themeDark');
+  const annos = document.getElementById('annos');
+  const annosToggle = document.getElementById('annosToggle');
+  const modeCaption = document.getElementById('modeCaption');
+  const scaleLabel = document.getElementById('scaleLabel');
+  const themeToggleLabel = document.getElementById('themeToggleLabel');
+  const afterAnno56 = win.querySelector('.anno-after[style*="height:56px"]');
+
+  let mode = 'after';
+  let height = 42;
+  let theme = 'light';
+
+  function setPressed(button, value) {
+    button.setAttribute('aria-pressed', value ? 'true' : 'false');
+  }
+
+  function render() {
+    win.dataset.mode = mode;
+    win.dataset.h = String(height);
+    document.documentElement.dataset.theme = theme;
+
+    setPressed(modeBefore, mode === 'before');
+    setPressed(modeAfter, mode === 'after');
+    setPressed(h42, height === 42);
+    setPressed(h56, height === 56);
+    setPressed(themeLight, theme === 'light');
+    setPressed(themeDark, theme === 'dark');
+    h42.disabled = mode === 'before';
+    h56.disabled = mode === 'before';
+
+    if (afterAnno56) {
+      afterAnno56.style.display = (mode === 'after' && height === 56) ? 'block' : 'none';
+    }
+
+    themeToggleLabel.textContent = theme === 'dark' ? 'Switch to Light Mode' : 'Switch to Dark Mode';
+
+    if (mode === 'before') {
+      modeCaption.textContent = 'Before — native titlebar + two 56px bars';
+    } else {
+      modeCaption.textContent = height === 42
+        ? 'After — one 42px header'
+        : 'After — one 56px header (native shim required)';
+    }
+  }
+
+  modeBefore.addEventListener('click', () => { mode = 'before'; render(); });
+  modeAfter.addEventListener('click', () => { mode = 'after'; render(); });
+  h42.addEventListener('click', () => { if (mode === 'after') { height = 42; render(); } });
+  h56.addEventListener('click', () => { if (mode === 'after') { height = 56; render(); } });
+  themeLight.addEventListener('click', () => { theme = 'light'; render(); });
+  themeDark.addEventListener('click', () => { theme = 'dark'; render(); });
+  annos.addEventListener('change', () => {
+    win.dataset.annos = annos.checked ? '1' : '0';
+    annosToggle.classList.toggle('on', annos.checked);
+  });
+
+  function fit() {
+    const available = stage.clientWidth;
+    const scale = Math.min(1, available / 1440);
+    shell.style.transform = `scale(${scale})`;
+    shell.style.width = '1440px';
+    stage.style.height = `${900 * scale}px`;
+    scaleLabel.textContent = `${Math.round(scale * 100)}%`;
+  }
+
+  window.addEventListener('resize', fit);
+  render();
+  fit();
+</script>
+</body>
+</html>

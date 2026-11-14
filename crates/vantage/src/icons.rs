@@ -58,9 +58,6 @@ images! {
 
 pub struct Assets;
 
-/// Path under which the Vantage mark is embedded (for `gpui::img`).
-pub const VANTAGE_ICON: &str = "images/vantage-icon.png";
-
 impl AssetSource for Assets {
     fn load(&self, path: &str) -> Result<Option<Cow<'static, [u8]>>> {
         if let Some(name) = path

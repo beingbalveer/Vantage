@@ -66,7 +66,6 @@ pub const HEADER_HEIGHT: Pixels = px(42.0);
 pub const W_REGULAR: FontWeight = FontWeight(400.0);
 pub const W_MEDIUM: FontWeight = FontWeight(500.0);
 pub const W_SEMIBOLD: FontWeight = FontWeight(600.0);
-pub const W_BOLD: FontWeight = FontWeight(700.0);
 
 /// Semantic colour roles resolved per appearance. Each one is the light-mode
 /// class from the React source paired with its `dark:` counterpart.

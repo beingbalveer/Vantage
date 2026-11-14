@@ -1,13 +1,13 @@
 //! Merged app header — 42px, full window width.
 //!
 //! On macOS this row shares space with the native traffic lights, so it keeps
-//! an ~84px left inset; the rest of the header is the brand, breadcrumb and the
-//! two primary actions.
+//! an ~84px left inset. The app name lives in the macOS menu bar, so the header
+//! starts with the sidebar toggle and breadcrumb instead of a second wordmark.
 
-use gpui::{div, img, prelude::*, px, rgb, Context, IntoElement, MouseButton, Styled, Window};
+use gpui::{div, prelude::*, px, rgb, Context, IntoElement, MouseButton, Styled, Window};
 
 use crate::app::{FieldId, VantageApp};
-use crate::icons::{icon, VANTAGE_ICON};
+use crate::icons::icon;
 use crate::theme::{SLATE_300, SLATE_700};
 use crate::widgets::{primary_button, secondary_button, Txt};
 
@@ -74,22 +74,6 @@ impl VantageApp {
             )
             .child(
                 div()
-                    .flex()
-                    .items_center()
-                    .gap(px(8.0))
-                    .flex_shrink_0()
-                    .child(img(VANTAGE_ICON).flex_shrink_0().w(px(22.0)).h(px(22.0)))
-                    .child(
-                        div()
-                            .fam(crate::theme::FONT_DISPLAY, 15.0, px(20.0))
-                            .bold()
-                            .whitespace_nowrap()
-                            .fg(theme.text_app)
-                            .child("Vantage"),
-                    ),
-            )
-            .child(
-                div()
                     .id("sidebar-toggle")
                     .flex()
                     .items_center()
@@ -118,7 +102,6 @@ impl VantageApp {
                     .gap(px(8.0))
                     .flex_1()
                     .min_w(px(0.0))
-                    .ml(px(2.0))
                     .sm()
                     .child(
                         div()

@@ -7,7 +7,7 @@ use crate::icons::icon;
 use crate::model::RepoSyncState;
 use crate::theme::{
     Theme, FONT_DISPLAY, FONT_MONO, FONT_SANS, LH_BASE, LH_LG, LH_SM, LH_XS, TEXT_BASE, TEXT_LG,
-    TEXT_SM, TEXT_XS, W_BOLD, W_MEDIUM, W_SEMIBOLD,
+    TEXT_SM, TEXT_XS, W_MEDIUM, W_SEMIBOLD,
 };
 
 /// Type-scale helpers; these cascade to child text like CSS does.
@@ -58,9 +58,6 @@ pub trait Txt: Styled + Sized {
     }
     fn semibold(self) -> Self {
         self.font_weight(W_SEMIBOLD)
-    }
-    fn bold(self) -> Self {
-        self.font_weight(W_BOLD)
     }
     fn fg(self, color: Rgba) -> Self {
         self.text_color(color)
