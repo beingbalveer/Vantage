@@ -1,12 +1,18 @@
-//! Left sidebar — 256px fixed, 56px header, Views, Groups, theme toggle.
+//! Left sidebar — 256px expanded, 56px icon rail collapsed, 56px header,
+//! Views, Groups, theme toggle. Toggle with the header button or `Mod+B`.
 
-use gpui::{div, img, prelude::*, px, rgb, Context, IntoElement, MouseButton, Styled, Window};
+use gpui::{
+    div, img, prelude::*, px, rgb, Context, Div, IntoElement, MouseButton, Stateful, Styled, Window,
+};
 
 use crate::app::{FieldId, VantageApp};
 use crate::icons::{icon, VANTAGE_ICON};
 use crate::model::NavSection;
-use crate::theme::{alpha, Theme, AMBER_400, SLATE_500};
+use crate::theme::{AMBER_400, SLATE_500};
 use crate::widgets::{FieldVariant, Txt};
+
+const SIDEBAR_WIDTH: f32 = 256.0;
+const SIDEBAR_COLLAPSED_WIDTH: f32 = 56.0;
 
 impl VantageApp {
     pub fn render_sidebar(
@@ -15,12 +21,17 @@ impl VantageApp {
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
         let theme = self.theme;
+        let collapsed = self.sidebar_collapsed;
 
         div()
             .flex()
             .flex_col()
             .justify_between()
-            .w(px(256.0))
+            .w(px(if collapsed {
+                SIDEBAR_COLLAPSED_WIDTH
+            } else {
+                SIDEBAR_WIDTH
+            }))
             .h_full()
             .flex_shrink_0()
             .bg(theme.panel)
@@ -34,15 +45,37 @@ impl VantageApp {
                     .min_h(px(0.0))
                     .id("sidebar-scroll")
                     .overflow_y_scroll()
-                    .child(self.render_sidebar_header())
+                    .child(self.render_sidebar_header(cx))
                     .child(self.render_sidebar_nav(window, cx)),
             )
             .child(self.render_sidebar_footer(cx))
     }
 
-    fn render_sidebar_header(&self) -> impl IntoElement {
+    fn render_sidebar_header(&self, cx: &mut Context<Self>) -> Stateful<Div> {
         let theme = self.theme;
+        let collapsed = self.sidebar_collapsed;
+
+        if collapsed {
+            return div()
+                .id("sidebar-expand")
+                .flex()
+                .flex_col()
+                .items_center()
+                .justify_center()
+                .gap(px(2.0))
+                .h(px(56.0))
+                .flex_shrink_0()
+                .border_b_1()
+                .border_color(theme.divider)
+                .cursor_pointer()
+                .hover(move |s| s.bg(theme.nav_hover_bg))
+                .on_click(cx.listener(|this, _e, _w, cx| this.toggle_sidebar(cx)))
+                .child(img(VANTAGE_ICON).flex_shrink_0().w(px(28.0)).h(px(28.0)))
+                .child(icon("panel-left-open", 14.0, theme.label_muted));
+        }
+
         div()
+            .id("sidebar-header")
             .flex()
             .items_center()
             .justify_between()
@@ -68,14 +101,26 @@ impl VantageApp {
                             .child("Vantage"),
                     ),
             )
+            .child(
+                div()
+                    .id("sidebar-collapse")
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .w(px(24.0))
+                    .h(px(24.0))
+                    .rounded(px(6.0))
+                    .flex_shrink_0()
+                    .cursor_pointer()
+                    .hover(move |s| s.bg(theme.nav_hover_bg))
+                    .on_click(cx.listener(|this, _e, _w, cx| this.toggle_sidebar(cx)))
+                    .child(icon("panel-left-close", 16.0, theme.label_muted)),
+            )
     }
 
-    fn render_sidebar_nav(
-        &mut self,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) -> impl IntoElement {
+    fn render_sidebar_nav(&mut self, window: &mut Window, cx: &mut Context<Self>) -> Div {
         let theme = self.theme;
+        let collapsed = self.sidebar_collapsed;
 
         let nav_items: [(NavSection, &'static str, &'static str, usize); 4] = [
             (
@@ -120,31 +165,38 @@ impl VantageApp {
             let hover_color = theme.nav_hover_text;
             let hover_bg = theme.nav_hover_bg;
 
-            views_list = views_list.child(
-                div()
-                    .id(gpui::ElementId::named_usize("nav", section as u8 as usize))
-                    .flex()
-                    .items_center()
+            let mut item = div()
+                .id(gpui::ElementId::named_usize("nav", section as u8 as usize))
+                .flex()
+                .items_center()
+                .w_full()
+                .rounded(px(8.0))
+                .cursor_pointer()
+                .bg(if active {
+                    theme.nav_active_bg
+                } else {
+                    theme.panel
+                })
+                .sm()
+                .medium()
+                .fg(text_color)
+                .when(!active, move |d| {
+                    d.hover(move |s| s.bg(hover_bg).fg(hover_color))
+                })
+                .on_click(cx.listener(move |this, _e, _w, cx| {
+                    this.select_section(section, cx);
+                }));
+
+            if collapsed {
+                item = item
+                    .justify_center()
+                    .py(px(8.0))
+                    .child(icon(icon_name, 18.0, icon_color));
+            } else {
+                item = item
                     .justify_between()
-                    .w_full()
                     .px(px(10.0))
                     .py(px(8.0))
-                    .rounded(px(8.0))
-                    .cursor_pointer()
-                    .bg(if active {
-                        theme.nav_active_bg
-                    } else {
-                        theme.panel
-                    })
-                    .sm()
-                    .medium()
-                    .fg(text_color)
-                    .when(!active, move |d| {
-                        d.hover(move |s| s.bg(hover_bg).fg(hover_color))
-                    })
-                    .on_click(cx.listener(move |this, _e, _w, cx| {
-                        this.select_section(section, cx);
-                    }))
                     .child(
                         div()
                             .flex()
@@ -162,32 +214,42 @@ impl VantageApp {
                             .line_height(crate::theme::LH_XS)
                             .fg(theme.label_muted)
                             .child(count.to_string()),
-                    ),
-            );
+                    );
+            }
+
+            views_list = views_list.child(item);
         }
 
-        div()
+        let mut nav = div()
             .flex()
             .flex_col()
-            .px(px(12.0))
-            .py(px(20.0))
-            .gap(px(24.0))
+            .px(px(if collapsed { 8.0 } else { 12.0 }))
+            .py(px(if collapsed { 12.0 } else { 20.0 }))
+            .gap(px(if collapsed { 8.0 } else { 24.0 }))
             .child(
                 div()
                     .flex()
                     .flex_col()
-                    .child(
-                        div()
-                            .px(px(10.0))
-                            .pb(px(8.0))
-                            .xs()
-                            .medium()
-                            .fg(theme.label_muted)
-                            .child("Views"),
-                    )
+                    .when(!collapsed, |d| {
+                        d.child(
+                            div()
+                                .px(px(10.0))
+                                .pb(px(8.0))
+                                .xs()
+                                .medium()
+                                .fg(theme.label_muted)
+                                .child("Views"),
+                        )
+                    })
                     .child(views_list),
-            )
-            .child(self.render_groups_block(window, cx))
+            );
+
+        // The groups rail needs its labels to be usable, so it is only drawn
+        // in the expanded sidebar.
+        if !collapsed {
+            nav = nav.child(self.render_groups_block(window, cx));
+        }
+        nav
     }
 
     fn render_groups_block(
@@ -428,61 +490,73 @@ impl VantageApp {
         block.child(list)
     }
 
-    fn render_sidebar_footer(&mut self, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render_sidebar_footer(&mut self, cx: &mut Context<Self>) -> Div {
         let theme = self.theme;
         let is_dark = theme.is_dark;
+        let collapsed = self.sidebar_collapsed;
+        let icon_name = if is_dark { "sun" } else { "moon" };
+        let icon_color = if is_dark {
+            rgb(AMBER_400)
+        } else {
+            rgb(SLATE_500)
+        };
+
+        let toggle = if collapsed {
+            div()
+                .id("theme-toggle")
+                .flex()
+                .items_center()
+                .justify_center()
+                .w_full()
+                .py(px(8.0))
+                .rounded(px(8.0))
+                .border_1()
+                .border_color(theme.secondary_border)
+                .bg(theme.subtle_bg)
+                .cursor_pointer()
+                .hover(move |s| s.bg(theme.secondary_bg_hover))
+                .on_click(cx.listener(|this, _e, _w, cx| this.toggle_theme(cx)))
+                .child(icon(icon_name, 16.0, icon_color))
+        } else {
+            div()
+                .id("theme-toggle")
+                .flex()
+                .items_center()
+                .justify_between()
+                .w_full()
+                .px(px(12.0))
+                .py(px(8.0))
+                .rounded(px(8.0))
+                .border_1()
+                .border_color(theme.secondary_border)
+                .bg(theme.subtle_bg)
+                .cursor_pointer()
+                .xs()
+                .medium()
+                .fg(theme.secondary_text)
+                .hover(move |s| s.bg(theme.secondary_bg_hover))
+                .on_click(cx.listener(|this, _e, _w, cx| this.toggle_theme(cx)))
+                .child(
+                    div()
+                        .flex()
+                        .items_center()
+                        .gap(px(8.0))
+                        .whitespace_nowrap()
+                        .flex_shrink_0()
+                        .child(icon(icon_name, 14.0, icon_color))
+                        .child(div().child(if is_dark {
+                            "Switch to Light Mode"
+                        } else {
+                            "Switch to Dark Mode"
+                        })),
+                )
+        };
 
         div()
             .flex_shrink_0()
-            .p(px(12.0))
+            .p(px(if collapsed { 8.0 } else { 12.0 }))
             .border_t_1()
             .border_color(theme.divider)
-            .child(
-                div()
-                    .id("theme-toggle")
-                    .flex()
-                    .items_center()
-                    .justify_between()
-                    .w_full()
-                    .px(px(12.0))
-                    .py(px(8.0))
-                    .rounded(px(8.0))
-                    .border_1()
-                    .border_color(theme.secondary_border)
-                    .bg(theme.subtle_bg)
-                    .cursor_pointer()
-                    .xs()
-                    .medium()
-                    .fg(theme.secondary_text)
-                    .hover(move |s| s.bg(theme.secondary_bg_hover))
-                    .on_click(cx.listener(|this, _e, _w, cx| this.toggle_theme(cx)))
-                    .child(
-                        div()
-                            .flex()
-                            .items_center()
-                            .gap(px(8.0))
-                            .whitespace_nowrap()
-                            .flex_shrink_0()
-                            .child(icon(
-                                if is_dark { "sun" } else { "moon" },
-                                14.0,
-                                if is_dark {
-                                    rgb(AMBER_400)
-                                } else {
-                                    rgb(SLATE_500)
-                                },
-                            ))
-                            .child(div().child(if is_dark {
-                                "Switch to Light Mode"
-                            } else {
-                                "Switch to Dark Mode"
-                            })),
-                    ),
-            )
+            .child(toggle)
     }
-}
-
-#[allow(dead_code)]
-fn _unused(theme: &Theme) -> gpui::Rgba {
-    alpha(theme.panel, 1.0)
 }

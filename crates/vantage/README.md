@@ -35,7 +35,7 @@ Groups and per-repo group assignments are persisted inside Vantage's own
 ## Dev flags
 
 ```sh
-VANTAGE_STATE=dark,section:branches,inspector:first,itab:branches,modal cargo run -p vantage
+VANTAGE_STATE=dark,sidebar,section:branches,inspector:first,itab:branches,modal cargo run -p vantage
 cargo run -p vantage -- --print-fonts
 ```
 

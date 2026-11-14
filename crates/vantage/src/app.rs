@@ -73,6 +73,8 @@ pub struct VantageApp {
     pub toast: Option<String>,
     toast_seq: u64,
     pub collapsed_groups: HashSet<String>,
+    /// Left sidebar shrunk to its 56px icon rail.
+    pub sidebar_collapsed: bool,
 
     // Sidebar: inline "new group" input
     pub is_adding_group: bool,
@@ -133,6 +135,7 @@ impl VantageApp {
             toast: None,
             toast_seq: 0,
             collapsed_groups: HashSet::new(),
+            sidebar_collapsed: false,
 
             is_adding_group: false,
             group_field: FieldState::new(),
@@ -521,6 +524,11 @@ impl VantageApp {
         } else {
             Theme::dark()
         };
+        cx.notify();
+    }
+
+    pub fn toggle_sidebar(&mut self, cx: &mut Context<Self>) {
+        self.sidebar_collapsed = !self.sidebar_collapsed;
         cx.notify();
     }
 

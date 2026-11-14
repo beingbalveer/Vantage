@@ -54,7 +54,7 @@ fn register_fonts(cx: &App) {
         .expect("register bundled fonts");
 }
 
-/// Dev/QA helper: `VANTAGE_STATE=dark,section:branches,inspector:first,modal,newgroup`
+/// Dev/QA helper: `VANTAGE_STATE=dark,sidebar,section:branches,inspector:first,modal,newgroup`
 /// drives the UI into a given state so screenshots can be taken without scripting.
 fn apply_env_state(entity: &gpui::Entity<VantageApp>, cx: &mut App) {
     let Ok(state) = std::env::var("VANTAGE_STATE") else {
@@ -74,6 +74,7 @@ fn apply_env_state(entity: &gpui::Entity<VantageApp>, cx: &mut App) {
                     }
                 }
                 "newgroup" => app.is_adding_group = true,
+                "sidebar" => app.sidebar_collapsed = true,
                 other => {
                     if let Some(path) = other.strip_prefix("modalpath:") {
                         app.open_add_modal(cx);

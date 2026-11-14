@@ -43,6 +43,8 @@ icons! {
     "git-commit-horizontal" => "git-commit-horizontal.svg",
     "layers" => "layers.svg",
     "moon" => "moon.svg",
+    "panel-left-close" => "panel-left-close.svg",
+    "panel-left-open" => "panel-left-open.svg",
     "plus" => "plus.svg",
     "refresh-cw" => "refresh-cw.svg",
     "search" => "search.svg",

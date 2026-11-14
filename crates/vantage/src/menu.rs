@@ -16,6 +16,7 @@ actions!(
         AddRepository,
         RefreshStatus,
         FetchOrigin,
+        ToggleSidebar,
         ToggleTheme,
         ToggleFullscreen,
         Minimize,
@@ -42,6 +43,7 @@ pub fn install(cx: &mut App, app: Entity<VantageApp>) {
         KeyBinding::new("cmd-o", AddRepository, None),
         KeyBinding::new("cmd-r", RefreshStatus, None),
         KeyBinding::new("cmd-shift-f", FetchOrigin, None),
+        KeyBinding::new("cmd-b", ToggleSidebar, None),
         KeyBinding::new("cmd-shift-l", ToggleTheme, None),
         KeyBinding::new("ctrl-cmd-f", ToggleFullscreen, None),
         KeyBinding::new("cmd-m", Minimize, None),
@@ -80,6 +82,12 @@ pub fn install(cx: &mut App, app: Entity<VantageApp>) {
         let app = app.clone();
         move |_: &FetchOrigin, cx: &mut App| {
             app.update(cx, |app, cx| app.fetch_selected(cx));
+        }
+    });
+    cx.on_action({
+        let app = app.clone();
+        move |_: &ToggleSidebar, cx: &mut App| {
+            app.update(cx, |app, cx| app.toggle_sidebar(cx));
         }
     });
     cx.on_action({
@@ -171,6 +179,7 @@ pub fn install(cx: &mut App, app: Entity<VantageApp>) {
                 MenuItem::action("Branch Matrix", SectionBranches),
                 MenuItem::action("Pending Changes", SectionChanges),
                 MenuItem::separator(),
+                MenuItem::action("Toggle Sidebar", ToggleSidebar),
                 MenuItem::action("Toggle Light/Dark Mode", ToggleTheme),
                 MenuItem::action("Toggle Full Screen", ToggleFullscreen),
             ],
