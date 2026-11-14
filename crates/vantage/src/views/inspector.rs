@@ -1,13 +1,18 @@
 //! Right repository detail pane — half of the content area, changes / branches / commits.
 
-use gpui::{deferred, div, prelude::*, px, relative, rgba, Context, IntoElement, Styled};
+use gpui::{deferred, div, prelude::*, px, relative, Context, IntoElement, Styled, Window};
 
 use crate::app::{InspectorTab, VantageApp};
-use crate::icons::icon;
-use crate::widgets::{checkbox, primary_button, secondary_button, status_text, Txt};
+use crate::ui::{checkbox, secondary_button, Txt};
+use crate::ui::{icon, IconSize};
+use crate::widgets::status_text;
 
 impl VantageApp {
-    pub fn render_inspector(&mut self, cx: &mut Context<Self>) -> Option<gpui::AnyElement> {
+    pub fn render_inspector(
+        &mut self,
+        window: &Window,
+        cx: &mut Context<Self>,
+    ) -> Option<gpui::AnyElement> {
         if !self.settings.right_panel_open {
             return None;
         }
@@ -49,7 +54,9 @@ impl VantageApp {
                         InspectorTab::Branches => {
                             self.render_branches_tab(&repo, cx).into_any_element()
                         }
-                        InspectorTab::Commits => self.render_commits_tab(&repo).into_any_element(),
+                        InspectorTab::Commits => self
+                            .render_commits_tab(&repo, window, cx)
+                            .into_any_element(),
                     }),
             )
             .child(self.render_inspector_footer(&repo, cx));
@@ -87,18 +94,9 @@ impl VantageApp {
                             .child("Repository Details"),
                     )
                     .child(
-                        div()
+                        crate::ui::icon_button(&theme, "x")
                             .id("close-right-panel")
-                            .flex()
-                            .items_center()
-                            .justify_center()
-                            .w(px(32.0))
-                            .h(px(32.0))
-                            .rounded(px(8.0))
-                            .cursor_pointer()
-                            .hover(move |s| s.bg(theme.nav_hover_bg))
-                            .on_click(cx.listener(|this, _e, _w, cx| this.close_right_panel(cx)))
-                            .child(icon("x", 16.0, theme.label_muted)),
+                            .on_click(cx.listener(|this, _e, _w, cx| this.close_right_panel(cx))),
                     ),
             )
             .child(
@@ -109,7 +107,7 @@ impl VantageApp {
                     .justify_center()
                     .flex_1()
                     .gap(px(6.0))
-                    .child(icon("panel-right", 28.0, theme.text_dim))
+                    .child(icon("panel-right", IconSize::Xl, theme.text_dim))
                     .child(
                         div()
                             .sm()
@@ -198,7 +196,7 @@ impl VantageApp {
                                     .child(div().truncate().child(repo.local_path.clone()))
                                     .child(icon(
                                         if copied { "check" } else { "copy" },
-                                        12.0,
+                                        IconSize::Xs,
                                         if copied {
                                             theme.status_green
                                         } else {
@@ -209,19 +207,9 @@ impl VantageApp {
                     ),
             )
             .child(
-                div()
+                crate::ui::icon_button(&theme, "x")
                     .id("close-inspector")
-                    .flex()
-                    .items_center()
-                    .justify_center()
-                    .flex_shrink_0()
-                    .w(px(32.0))
-                    .h(px(32.0))
-                    .rounded(px(8.0))
-                    .cursor_pointer()
-                    .hover(move |s| s.bg(theme.nav_hover_bg))
-                    .on_click(cx.listener(|this, _e, _w, cx| this.close_right_panel(cx)))
-                    .child(icon("x", 16.0, theme.label_muted)),
+                    .on_click(cx.listener(|this, _e, _w, cx| this.close_right_panel(cx))),
             )
     }
 
@@ -262,7 +250,7 @@ impl VantageApp {
                     .gap(px(8.0))
                     .mono_xs()
                     .fg(theme.text_soft)
-                    .child(icon("git-branch", 14.0, theme.icon_idle))
+                    .child(icon("git-branch", IconSize::Sm, theme.icon_idle))
                     .child(repo.current_branch.clone()),
             )
             .child(
@@ -283,7 +271,7 @@ impl VantageApp {
                                     .gap(px(2.0))
                                     .fg(ahead_color)
                                     .when(repo.ahead_count > 0, |d| d.medium())
-                                    .child(icon("arrow-up", 12.0, ahead_color))
+                                    .child(icon("arrow-up", IconSize::Xs, ahead_color))
                                     .child(repo.ahead_count.to_string()),
                             )
                             .child(
@@ -293,7 +281,7 @@ impl VantageApp {
                                     .gap(px(2.0))
                                     .fg(behind_color)
                                     .when(repo.behind_count > 0, |d| d.medium())
-                                    .child(icon("arrow-down", 12.0, behind_color))
+                                    .child(icon("arrow-down", IconSize::Xs, behind_color))
                                     .child(repo.behind_count.to_string()),
                             ),
                     )
@@ -345,7 +333,7 @@ impl VantageApp {
                         cx.notify();
                     }))
                     .child(current.clone())
-                    .child(icon("chevron-down", 12.0, theme.icon_idle)),
+                    .child(icon("chevron-down", IconSize::Xs, theme.icon_idle)),
             );
 
         if menu_open {
@@ -387,7 +375,9 @@ impl VantageApp {
                             this.move_repo_group(&group_id, group_name.clone(), cx);
                         }))
                         .child(group.clone())
-                        .when(selected, |d| d.child(icon("check", 12.0, theme.accent))),
+                        .when(selected, |d| {
+                            d.child(icon("check", IconSize::Xs, theme.accent))
+                        }),
                 );
             }
             // Deferred so the menu paints above the body and its hitboxes win
@@ -431,31 +421,11 @@ impl VantageApp {
         for (tab, label) in tabs {
             let active = self.inspector_tab == tab;
             row = row.child(
-                div()
-                    .id(("inspector-tab", tab as u8 as usize))
-                    .pb(px(10.0))
-                    .border_b_2()
-                    .border_color(if active {
-                        theme.accent
-                    } else {
-                        rgba(0x00000000)
-                    })
-                    .cursor_pointer()
-                    .whitespace_nowrap()
-                    .flex_shrink_0()
-                    .xs()
-                    .medium()
-                    .fg(if active {
-                        theme.text_app
-                    } else {
-                        theme.label_muted
-                    })
-                    .when(!active, move |d| d.hover(move |s| s.fg(theme.text_soft)))
+                crate::ui::tab(&theme, label, active, ("inspector-tab", tab as u8 as usize))
                     .on_click(cx.listener(move |this, _e, _w, cx| {
                         this.inspector_tab = tab;
                         cx.notify();
-                    }))
-                    .child(label),
+                    })),
             );
         }
         row
@@ -732,7 +702,7 @@ impl VantageApp {
                                     .flex()
                                     .items_center()
                                     .gap(px(8.0))
-                                    .child(icon("git-branch", 14.0, theme.icon_idle))
+                                    .child(icon("git-branch", IconSize::Sm, theme.icon_idle))
                                     .child(
                                         div()
                                             .mono_xs()
@@ -781,8 +751,18 @@ impl VantageApp {
         list
     }
 
-    fn render_commits_tab(&self, repo: &crate::model::Repository) -> impl IntoElement {
+    fn render_commits_tab(
+        &self,
+        repo: &crate::model::Repository,
+        window: &Window,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
         let theme = self.theme;
+        let sidebar_width = if self.sidebar_collapsed { 56.0 } else { 256.0 };
+        let content_width = f32::from(window.viewport_size().width) - sidebar_width;
+        let panel_width = (content_width * self.settings.right_panel_fraction).max(420.0);
+        let message_width =
+            (px(panel_width) - px(24.0 * 2.0 + 16.0 * 2.0 + 16.0 + 12.0)).max(px(40.0));
         let mut list = div()
             .flex()
             .flex_col()
@@ -793,67 +773,82 @@ impl VantageApp {
             .overflow_hidden();
 
         for (index, commit) in repo.recent_commits.iter().enumerate() {
+            let short_sha: String = commit.sha.chars().take(7).collect();
+            let message = crate::text::ellipsize(
+                cx,
+                &commit.message,
+                crate::theme::FONT_SANS,
+                crate::theme::W_MEDIUM,
+                crate::theme::TEXT_XS,
+                message_width,
+            );
+
             list = list.child(
                 div()
                     .flex()
-                    .items_start()
-                    .justify_between()
-                    .gap(px(16.0))
+                    .items_center()
+                    .gap(px(12.0))
                     .px(px(16.0))
-                    .py(px(12.0))
+                    .py(px(10.0))
                     .w_full()
                     .bg(theme.panel)
                     .when(index > 0, |d| d.border_t_1().border_color(theme.row_border))
                     .child(
                         div()
                             .flex()
+                            .justify_center()
+                            .w(px(16.0))
+                            .flex_shrink_0()
+                            .child(icon("git-commit-horizontal", IconSize::Sm, theme.icon_idle)),
+                    )
+                    .child(
+                        div()
+                            .flex()
                             .flex_col()
                             .flex_1()
                             .min_w(px(0.0))
+                            .gap(px(2.0))
                             .child(
                                 div()
-                                    .flex()
-                                    .items_center()
-                                    .gap(px(8.0))
-                                    .child(icon("git-commit-horizontal", 14.0, theme.icon_idle))
-                                    .child(
-                                        div()
-                                            .xs()
-                                            .medium()
-                                            .fg(theme.text_app)
-                                            .child(commit.message.clone()),
-                                    ),
+                                    .xs()
+                                    .medium()
+                                    .fg(theme.text_app)
+                                    .whitespace_nowrap()
+                                    .child(message),
                             )
                             .child(
                                 div()
-                                    .mt(px(4.0))
                                     .flex()
                                     .items_center()
-                                    .gap(px(8.0))
+                                    .justify_between()
+                                    .gap(px(12.0))
+                                    .w_full()
+                                    .min_w(px(0.0))
                                     .xs()
                                     .fg(theme.label_muted)
                                     .child(
                                         div()
-                                            .font_family(crate::theme::FONT_MONO)
-                                            .child(commit.sha.clone()),
+                                            .flex()
+                                            .items_center()
+                                            .gap(px(6.0))
+                                            .flex_1()
+                                            .min_w(px(0.0))
+                                            .child(
+                                                div()
+                                                    .font_family(crate::theme::FONT_MONO)
+                                                    .flex_shrink_0()
+                                                    .child(short_sha),
+                                            )
+                                            .child(div().flex_shrink_0().child("·"))
+                                            .child(div().truncate().child(commit.author.clone())),
                                     )
-                                    .child(div().child("·"))
-                                    .child(div().child(commit.author.clone()))
-                                    .child(div().child("·"))
                                     .child(
                                         div()
-                                            .font_family(crate::theme::FONT_MONO)
-                                            .child(commit.branch.clone()),
+                                            .flex_shrink_0()
+                                            .whitespace_nowrap()
+                                            .child(commit.relative_time.clone()),
                                     ),
                             ),
-                    )
-                    .child(
-                        div()
-                            .xs()
-                            .fg(theme.label_muted)
-                            .whitespace_nowrap()
-                            .flex_shrink_0()
-                            .child(commit.relative_time.clone()),
                     ),
             );
         }
@@ -909,16 +904,6 @@ impl VantageApp {
                                     return;
                                 };
                                 this.fetch_repo(&repo, cx);
-                            })),
-                    )
-                    .child(
-                        primary_button(&theme, "Open in GitHub Desktop", Some("external-link"))
-                            .id("open-desktop")
-                            .on_click(cx.listener(|this, _e, _w, cx| {
-                                let Some(repo) = this.selected_repo().cloned() else {
-                                    return;
-                                };
-                                this.open_in_desktop(&repo, cx);
                             })),
                     ),
             )

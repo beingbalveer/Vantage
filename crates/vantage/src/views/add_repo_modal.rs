@@ -4,9 +4,9 @@
 use gpui::{deferred, div, prelude::*, px, relative, Context, IntoElement, Styled, Window};
 
 use crate::app::{FieldId, VantageApp};
-use crate::icons::icon;
 use crate::theme::{FONT_SANS, LH_SM, TEXT_SM};
-use crate::widgets::{secondary_button, FieldVariant, Txt};
+use crate::ui::{icon, IconSize};
+use crate::ui::{secondary_button, FieldVariant, Txt};
 
 impl VantageApp {
     pub fn render_add_repo_modal(
@@ -61,18 +61,9 @@ impl VantageApp {
                             .child("Add Local Repository"),
                     )
                     .child(
-                        div()
+                        crate::ui::icon_button(&theme, "x")
                             .id("close-modal")
-                            .flex()
-                            .items_center()
-                            .justify_center()
-                            .w(px(32.0))
-                            .h(px(32.0))
-                            .rounded(px(8.0))
-                            .cursor_pointer()
-                            .hover(move |s| s.bg(theme.nav_hover_bg))
-                            .on_click(cx.listener(|this, _e, _w, cx| this.close_add_modal(cx)))
-                            .child(icon("x", 16.0, theme.label_muted)),
+                            .on_click(cx.listener(|this, _e, _w, cx| this.close_add_modal(cx))),
                     ),
             );
 
@@ -114,7 +105,7 @@ impl VantageApp {
                 .flex()
                 .items_center()
                 .gap(px(6.0))
-                .child(icon("check", 12.0, theme.status_green))
+                .child(icon("check", IconSize::Xs, theme.status_green))
                 .child(
                     div()
                         .x11()
@@ -274,7 +265,7 @@ impl VantageApp {
                         .truncate()
                         .child(current_label),
                 )
-                .child(icon("chevron-down", 14.0, theme.icon_idle)),
+                .child(icon("chevron-down", IconSize::Sm, theme.icon_idle)),
         );
 
         if self.modal_group_menu_open {
@@ -325,7 +316,9 @@ impl VantageApp {
                             cx.notify();
                         }))
                         .child(label)
-                        .when(selected, |d| d.child(icon("check", 12.0, theme.accent))),
+                        .when(selected, |d| {
+                            d.child(icon("check", IconSize::Xs, theme.accent))
+                        }),
                 );
             }
             // Deferred so the menu paints above the footer, and its hitboxes

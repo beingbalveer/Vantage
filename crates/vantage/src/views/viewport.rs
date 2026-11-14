@@ -4,7 +4,7 @@ use gpui::{div, prelude::*, px, Context, IntoElement, Styled, Window};
 
 use crate::app::VantageApp;
 use crate::model::NavSection;
-use crate::widgets::{primary_button, Txt};
+use crate::ui::{primary_button, Txt};
 
 /// Errors listed before the rest collapse into a "+N more" line.
 const MAX_SCAN_ERRORS: usize = 5;

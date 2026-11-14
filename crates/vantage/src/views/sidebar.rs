@@ -4,9 +4,9 @@
 use gpui::{div, prelude::*, px, Context, Div, IntoElement, MouseButton, Styled, Window};
 
 use crate::app::{FieldId, VantageApp};
-use crate::icons::icon;
 use crate::model::NavSection;
-use crate::widgets::{FieldVariant, Txt};
+use crate::ui::{icon, IconSize};
+use crate::ui::{FieldVariant, Txt};
 
 const SIDEBAR_WIDTH: f32 = 256.0;
 const SIDEBAR_COLLAPSED_WIDTH: f32 = 56.0;
@@ -111,10 +111,11 @@ impl VantageApp {
                 }));
 
             if collapsed {
-                item = item
-                    .justify_center()
-                    .py(px(8.0))
-                    .child(icon(icon_name, 18.0, icon_color));
+                item = item.justify_center().py(px(8.0)).child(icon(
+                    icon_name,
+                    IconSize::Lg,
+                    icon_color,
+                ));
             } else {
                 item = item
                     .justify_between()
@@ -127,7 +128,7 @@ impl VantageApp {
                             .gap(px(10.0))
                             .flex_shrink_0()
                             .whitespace_nowrap()
-                            .child(icon(icon_name, 16.0, icon_color))
+                            .child(icon(icon_name, IconSize::Md, icon_color))
                             .child(div().child(label)),
                     )
                     .child(
@@ -216,7 +217,7 @@ impl VantageApp {
                                 }
                                 cx.notify();
                             }))
-                            .child(icon("plus", 12.0, theme.accent_text))
+                            .child(icon("plus", IconSize::Xs, theme.accent_text))
                             .child(div().child("New group")),
                     ),
             );
@@ -301,7 +302,7 @@ impl VantageApp {
                         .gap(px(10.0))
                         .flex_shrink_0()
                         .whitespace_nowrap()
-                        .child(icon("layers", 14.0, theme.icon_idle))
+                        .child(icon("layers", IconSize::Sm, theme.icon_idle))
                         .child(div().child("All Groups")),
                 )
                 .child(
@@ -360,7 +361,7 @@ impl VantageApp {
                         .items_center()
                         .gap(px(10.0))
                         .min_w(px(0.0))
-                        .child(icon("layers", 14.0, theme.icon_idle))
+                        .child(icon("layers", IconSize::Sm, theme.icon_idle))
                         .child(
                             div()
                                 .flex_1()
@@ -403,7 +404,7 @@ impl VantageApp {
                                 this.delete_group(group_name.clone(), cx);
                             }),
                         )
-                        .child(icon("x", 12.0, theme.label_muted)),
+                        .child(icon("x", IconSize::Xs, theme.label_muted)),
                 );
             }
 
@@ -433,7 +434,7 @@ impl VantageApp {
         if collapsed {
             settings = settings.justify_center().py(px(8.0)).child(icon(
                 "settings",
-                16.0,
+                IconSize::Md,
                 theme.label_muted,
             ));
         } else {
@@ -445,7 +446,7 @@ impl VantageApp {
                 .xs()
                 .medium()
                 .fg(theme.secondary_text)
-                .child(icon("settings", 14.0, theme.label_muted))
+                .child(icon("settings", IconSize::Sm, theme.label_muted))
                 .child(div().child("Settings"));
         }
 

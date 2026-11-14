@@ -63,7 +63,7 @@ Groups are managed from the sidebar: create a group, move repositories into it, 
 
 ### Live working trees
 
-Vantage watches each repository and re-reads only the working trees that changed, so the dashboard stays current while agents commit and edit around you. **Refresh Status** forces a full rescan. Scan failures are shown as a banner instead of blanking the dashboard.
+Vantage watches each repository and re-reads only the working trees that changed, so the dashboard stays current while agents commit and edit around you. Whenever Vantage becomes active again, it also refreshes the whole workspace silently in the background, so switching back to the app shows the latest status without a scanning state. **Refresh Status** forces a visible full rescan. Scan failures are shown as a banner instead of blanking the dashboard.
 
 ### Settings
 

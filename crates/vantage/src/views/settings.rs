@@ -5,7 +5,7 @@ use gpui::{div, prelude::*, px, relative, Context, Div, IntoElement, Styled, Win
 use crate::app::{FieldId, VantageApp};
 use crate::settings::{DefaultView, SettingsSection, SortOrder, ThemeChoice};
 use crate::theme::{Theme, FONT_MONO, LH_SM, TEXT_SM};
-use crate::widgets::{primary_button, secondary_button, FieldVariant, Txt};
+use crate::ui::{primary_button, secondary_button, FieldVariant, Txt};
 
 impl VantageApp {
     pub fn render_settings_modal(
@@ -59,18 +59,9 @@ impl VantageApp {
                             .child("Settings"),
                     )
                     .child(
-                        div()
+                        crate::ui::icon_button(&theme, "x")
                             .id("settings-close")
-                            .flex()
-                            .items_center()
-                            .justify_center()
-                            .w(px(32.0))
-                            .h(px(32.0))
-                            .rounded(px(8.0))
-                            .cursor_pointer()
-                            .hover(move |s| s.bg(theme.nav_hover_bg))
-                            .on_click(cx.listener(|this, _e, _w, cx| this.close_settings(cx)))
-                            .child(crate::icons::icon("x", 16.0, theme.label_muted)),
+                            .on_click(cx.listener(|this, _e, _w, cx| this.close_settings(cx))),
                     ),
             )
             .child(
@@ -187,7 +178,7 @@ impl VantageApp {
         {
             let selected = current_view == view;
             view_choices = view_choices.child(
-                option_button(&theme, label, selected, format!("settings-view-{index}"))
+                crate::ui::choice_button(&theme, label, selected, format!("settings-view-{index}"))
                     .on_click(cx.listener(move |this, _e, _w, cx| this.set_default_view(view, cx))),
             );
         }
@@ -204,29 +195,29 @@ impl VantageApp {
         {
             let selected = current_sort == sort;
             sort_choices = sort_choices.child(
-                option_button(&theme, label, selected, format!("settings-sort-{index}"))
+                crate::ui::choice_button(&theme, label, selected, format!("settings-sort-{index}"))
                     .on_click(cx.listener(move |this, _e, _w, cx| this.set_sort(sort, cx))),
             );
         }
 
         let remember_window = self.settings.remember_window;
-        let mut window_choices = div().flex().gap(px(6.0));
-        for (index, (enabled, label)) in [(true, "Remember"), (false, "Always center")]
-            .into_iter()
-            .enumerate()
-        {
-            window_choices = window_choices.child(
-                option_button(
-                    &theme,
-                    label,
-                    remember_window == enabled,
-                    format!("settings-window-{index}"),
-                )
-                .on_click(
-                    cx.listener(move |this, _e, _w, cx| this.set_remember_window(enabled, cx)),
-                ),
+        let window_control = div()
+            .flex()
+            .items_center()
+            .gap(px(10.0))
+            .child(div().xs().fg(theme.label_muted).child(if remember_window {
+                "Remember"
+            } else {
+                "Always center"
+            }))
+            .child(
+                crate::ui::switch(&theme, remember_window)
+                    .id("settings-remember-window")
+                    .on_click(cx.listener(|this, _e, _w, cx| {
+                        let next = !this.settings.remember_window;
+                        this.set_remember_window(next, cx);
+                    })),
             );
-        }
 
         vec![
             setting_row(
@@ -247,7 +238,7 @@ impl VantageApp {
                 &theme,
                 "Window memory",
                 "Restore the last normal window size and position.",
-                window_choices,
+                window_control,
             )
             .into_any_element(),
             setting_row(
@@ -280,7 +271,7 @@ impl VantageApp {
         .enumerate()
         {
             choices = choices.child(
-                option_button(
+                crate::ui::choice_button(
                     &theme,
                     label,
                     current == choice,
@@ -321,7 +312,7 @@ impl VantageApp {
         .enumerate()
         {
             intervals = intervals.child(
-                option_button(
+                crate::ui::choice_button(
                     &theme,
                     label,
                     current == minutes,
@@ -333,23 +324,24 @@ impl VantageApp {
             );
         }
 
-        let mut launch_choices = div().flex().gap(px(6.0));
-        for (index, (enabled, label)) in [(true, "Fetch on launch"), (false, "Do not fetch")]
-            .into_iter()
-            .enumerate()
-        {
-            launch_choices = launch_choices.child(
-                option_button(
-                    &theme,
-                    label,
-                    self.settings.fetch_on_launch == enabled,
-                    format!("settings-launch-fetch-{index}"),
-                )
-                .on_click(
-                    cx.listener(move |this, _e, _w, cx| this.set_fetch_on_launch(enabled, cx)),
-                ),
+        let fetch_on_launch = self.settings.fetch_on_launch;
+        let launch_control = div()
+            .flex()
+            .items_center()
+            .gap(px(10.0))
+            .child(div().xs().fg(theme.label_muted).child(if fetch_on_launch {
+                "Fetch on launch"
+            } else {
+                "Do not fetch"
+            }))
+            .child(
+                crate::ui::switch(&theme, fetch_on_launch)
+                    .id("settings-launch-fetch")
+                    .on_click(cx.listener(|this, _e, _w, cx| {
+                        let next = !this.settings.fetch_on_launch;
+                        this.set_fetch_on_launch(next, cx);
+                    })),
             );
-        }
 
         let branch = self.text_field(
             FieldId::SettingsBranch,
@@ -371,7 +363,7 @@ impl VantageApp {
                 &theme,
                 "On launch",
                 "Fetch all repositories once after the first scan.",
-                launch_choices,
+                launch_control,
             )
             .into_any_element(),
             setting_row(
@@ -589,42 +581,6 @@ impl VantageApp {
             )
             .into_any_element()]
     }
-}
-
-fn option_button(
-    theme: &Theme,
-    label: &'static str,
-    selected: bool,
-    id: String,
-) -> gpui::Stateful<Div> {
-    div()
-        .id(gpui::SharedString::from(id))
-        .px(px(10.0))
-        .py(px(6.0))
-        .rounded(px(7.0))
-        .border_1()
-        .border_color(if selected {
-            theme.accent
-        } else {
-            theme.secondary_border
-        })
-        .bg(if selected {
-            theme.accent_soft
-        } else {
-            theme.field_bg
-        })
-        .fg(if selected {
-            theme.accent_text
-        } else {
-            theme.secondary_text
-        })
-        .cursor_pointer()
-        .xs()
-        .medium()
-        .when(!selected, move |d| {
-            d.hover(move |s| s.bg(theme.secondary_bg_hover))
-        })
-        .child(label)
 }
 
 fn setting_row(

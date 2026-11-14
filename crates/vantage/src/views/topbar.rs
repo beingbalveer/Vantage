@@ -4,12 +4,12 @@
 //! an ~84px left inset. The app name lives in the macOS menu bar, so the header
 //! starts with the sidebar toggle and breadcrumb instead of a second wordmark.
 
-use gpui::{div, prelude::*, px, rgb, Context, Div, IntoElement, MouseButton, Styled, Window};
+use gpui::{div, prelude::*, px, rgb, Context, IntoElement, MouseButton, Styled, Window};
 
 use crate::app::{FieldId, VantageApp};
-use crate::icons::icon;
-use crate::theme::{Theme, SLATE_300, SLATE_700};
-use crate::widgets::Txt;
+use crate::theme::{SLATE_300, SLATE_700};
+use crate::ui::icon_button;
+use crate::ui::Txt;
 
 impl VantageApp {
     pub fn render_top_bar(
@@ -72,7 +72,7 @@ impl VantageApp {
                     })),
             )
             .child(
-                header_action(&theme, "panel-left")
+                icon_button(&theme, "panel-left")
                     .id("sidebar-toggle")
                     .on_click(cx.listener(|this, _e, _w, cx| this.toggle_sidebar(cx))),
             )
@@ -108,12 +108,12 @@ impl VantageApp {
                     .gap(px(10.0))
                     .flex_shrink_0()
                     .child(
-                        header_action(&theme, "refresh-cw")
+                        icon_button(&theme, "refresh-cw")
                             .id("refresh-status")
                             .on_click(cx.listener(|this, _e, _w, cx| this.refresh(cx))),
                     )
                     .child(
-                        header_action(&theme, "plus")
+                        icon_button(&theme, "plus")
                             .id("add-repository")
                             .on_click(cx.listener(|this, _e, window, cx| {
                                 this.open_add_modal(cx);
@@ -121,7 +121,7 @@ impl VantageApp {
                             })),
                     )
                     .child(
-                        header_action(&theme, "panel-right")
+                        icon_button(&theme, "panel-right")
                             .id("right-panel-toggle")
                             .on_click(cx.listener(|this, _e, window, cx| {
                                 this.toggle_right_panel(cx);
@@ -130,21 +130,4 @@ impl VantageApp {
                     ),
             )
     }
-}
-
-/// Uniform icon-only action for the header.
-fn header_action(theme: &Theme, icon_name: &'static str) -> Div {
-    let hover = theme.nav_hover_bg;
-
-    div()
-        .flex()
-        .items_center()
-        .justify_center()
-        .w(px(30.0))
-        .h(px(30.0))
-        .rounded(px(8.0))
-        .flex_shrink_0()
-        .cursor_pointer()
-        .hover(move |s| s.bg(hover))
-        .child(icon(icon_name, 16.0, theme.label_muted))
 }

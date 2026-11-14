@@ -63,7 +63,6 @@ pub struct CommitEntry {
     pub message: String,
     pub author: String,
     pub relative_time: String,
-    pub branch: String,
 }
 
 #[derive(Clone, Debug)]

@@ -7,7 +7,7 @@ use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
 use gpui::{
-    div, prelude::*, px, ClipboardItem, Context, FocusHandle, IntoElement, KeyDownEvent,
+    div, prelude::*, px, rgba, ClipboardItem, Context, FocusHandle, IntoElement, KeyDownEvent,
     MouseButton, PathPromptOptions, Window, WindowAppearance,
 };
 
@@ -17,7 +17,7 @@ use crate::settings::{
     DefaultView, Diagnostics, SettingsSection, SortOrder, ThemeChoice, UiSettings,
 };
 use crate::theme::Theme;
-use crate::widgets::{apply_field_key, FieldKey, FieldState, Txt};
+use crate::ui::{apply_field_key, FieldKey, FieldState, Txt};
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum InspectorTab {
@@ -61,6 +61,8 @@ pub struct VantageApp {
     pub sidebar_collapsed: bool,
     /// `(pointer x, starting fraction)` while the right splitter is dragged.
     pub right_panel_drag_start: Option<(f32, f32)>,
+    /// Throttle activation-triggered background rescans.
+    last_focus_refresh: Option<Instant>,
 
     // Sidebar: inline "new group" input
     pub is_adding_group: bool,
@@ -136,6 +138,7 @@ impl VantageApp {
             collapsed_groups: HashSet::new(),
             sidebar_collapsed: settings.sidebar_collapsed,
             right_panel_drag_start: None,
+            last_focus_refresh: Some(Instant::now()),
 
             is_adding_group: false,
             group_field: FieldState::new(),
@@ -171,16 +174,35 @@ impl VantageApp {
 
     /// Re-read every repo through Vantage's git engine (background thread).
     pub fn start_scan(&mut self, cx: &mut Context<Self>) {
-        self.begin_scan(None, cx);
+        self.begin_scan(None, false, cx);
+    }
+
+    /// Re-read every repo without surfacing the scanning state.
+    pub fn start_scan_silent(&mut self, cx: &mut Context<Self>) {
+        self.begin_scan(None, true, cx);
+    }
+
+    /// Refresh whenever the app becomes active. This is deliberately silent:
+    /// the current rows remain visible until the fresh snapshot arrives.
+    pub fn refresh_on_focus(&mut self, cx: &mut Context<Self>) {
+        let now = Instant::now();
+        if self
+            .last_focus_refresh
+            .is_some_and(|last| now.duration_since(last) < Duration::from_secs(2))
+        {
+            return;
+        }
+        self.last_focus_refresh = Some(now);
+        self.start_scan_silent(cx);
     }
 
     /// Re-read only the working trees the watcher reported as changed, leaving
     /// every other row untouched.
     pub fn start_scan_dirty(&mut self, roots: Vec<PathBuf>, cx: &mut Context<Self>) {
-        self.begin_scan(Some(roots), cx);
+        self.begin_scan(Some(roots), false, cx);
     }
 
-    fn begin_scan(&mut self, roots: Option<Vec<PathBuf>>, cx: &mut Context<Self>) {
+    fn begin_scan(&mut self, roots: Option<Vec<PathBuf>>, silent: bool, cx: &mut Context<Self>) {
         let Some(backend) = self.backend.clone() else {
             self.scan_errors = vec!["vantage-core engine unavailable".to_string()];
             cx.notify();
@@ -189,8 +211,10 @@ impl VantageApp {
 
         self.scan_seq = self.scan_seq.wrapping_add(1);
         let seq = self.scan_seq;
-        self.is_scanning = true;
-        cx.notify();
+        if !silent {
+            self.is_scanning = true;
+            cx.notify();
+        }
 
         let dirty = roots.is_some();
         cx.spawn(async move |this, cx| {
@@ -1293,7 +1317,7 @@ impl VantageApp {
         &self,
         id: FieldId,
         placeholder: &'static str,
-        variant: crate::widgets::FieldVariant,
+        variant: crate::ui::FieldVariant,
         window: &Window,
         cx: &mut Context<Self>,
     ) -> gpui::Stateful<gpui::Div> {
@@ -1302,7 +1326,7 @@ impl VantageApp {
         let state = self.field_state(id).clone();
         let theme = self.theme;
 
-        let mut row = crate::widgets::field(&theme, &state, placeholder, focused, variant)
+        let row = crate::ui::field(&theme, &state, placeholder, focused, variant)
             .id(gpui::ElementId::named_usize("field", id as u8 as usize))
             .track_focus(&focus)
             .cursor_text()
@@ -1322,15 +1346,6 @@ impl VantageApp {
                 this.handle_field_key(id, event, window, cx);
             }));
 
-        if variant == crate::widgets::FieldVariant::Search {
-            row = row.relative().child(
-                div()
-                    .absolute()
-                    .left(px(12.0))
-                    .top(px(8.0))
-                    .child(crate::icons::icon("search", 14.0, theme.text_dim)),
-            );
-        }
         row
     }
 }
@@ -1340,7 +1355,7 @@ impl Render for VantageApp {
         let theme = self.theme;
 
         let viewport = self.render_viewport(window, cx).into_any_element();
-        let inspector = self.render_inspector(cx);
+        let inspector = self.render_inspector(window, cx);
 
         let mut main = div()
             .flex()
@@ -1427,6 +1442,24 @@ impl Render for VantageApp {
             .child(self.render_top_bar(window, cx))
             .child(content);
 
+        // A transparent full-window catcher behind the deferred group menu:
+        // any press outside the menu closes it. The menu itself is painted in
+        // the deferred layer, so its own options still receive the click.
+        if self.group_menu_open {
+            root = root.child(
+                div()
+                    .id("group-menu-dismiss")
+                    .absolute()
+                    .top(px(0.0))
+                    .left(px(0.0))
+                    .size_full()
+                    .bg(rgba(0x00000000))
+                    .on_click(cx.listener(|this, _e, _w, cx| {
+                        this.group_menu_open = false;
+                        cx.notify();
+                    })),
+            );
+        }
         if self.is_add_modal_open {
             root = root.child(self.render_add_repo_modal(window, cx));
         }

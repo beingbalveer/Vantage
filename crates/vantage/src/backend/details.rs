@@ -190,7 +190,6 @@ pub fn commits(
                 commit.author_name
             },
             relative_time: relative_iso_label(now, &commit.date),
-            branch: target.to_string(),
         })
         .collect()
 }

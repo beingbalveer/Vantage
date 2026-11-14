@@ -14,6 +14,7 @@ mod root;
 mod settings;
 mod text;
 mod theme;
+mod ui;
 mod views;
 mod watcher;
 mod widgets;
@@ -235,6 +236,12 @@ fn main() {
                         app.apply_theme(window.appearance());
                         cx.observe_window_appearance(window, |app, window, cx| {
                             app.on_appearance_changed(window, cx)
+                        })
+                        .detach();
+                        cx.observe_window_activation(window, |app, window, cx| {
+                            if window.is_window_active() {
+                                app.refresh_on_focus(cx);
+                            }
                         })
                         .detach();
                     });

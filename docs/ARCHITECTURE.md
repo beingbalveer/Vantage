@@ -17,7 +17,8 @@ crates/
         ├── model.rs     UI view model
         ├── path.rs      Path display helpers
         ├── theme.rs     Light and dark palettes
-        ├── widgets.rs   Shared controls and text-field editing
+        ├── ui/          Design system: icons, buttons, inputs, tabs, switches
+        ├── widgets.rs   View-specific status and sync helpers
         ├── text.rs      GPUI text fitting helpers
         ├── icons.rs     Embedded SVG/PNG asset source
         ├── watcher.rs   Repository filesystem watcher
@@ -31,6 +32,21 @@ The dependency direction is one way:
 vantage (GPUI) ──> vantage-core (no UI dependencies)
 ```
 
+## Design system
+
+Shared visual primitives live in `src/ui/` so views do not hand-roll their own
+control chrome:
+
+- `ui/tokens.rs` — control heights, radii and the `IconSize` scale
+- `ui/icon.rs` — `icon()` plus the standard toolbar `icon_button()`
+- `ui/button.rs` — primary and secondary labeled buttons
+- `ui/input.rs` — single-line field state, key handling and chrome
+- `ui/tabs.rs` — underline tabs and segmented choice chips
+- `ui/toggle.rs` — checkbox and switch
+
+Views import from `crate::ui`. `widgets.rs` is reserved for view-specific helpers
+such as repository status text and sync arrows.
+
 ## Runtime flow
 
 1. `Backend::snapshot()` reads the persisted workspace, asks `vantage-core` for each
@@ -43,7 +59,8 @@ vantage (GPUI) ──> vantage-core (no UI dependencies)
    resizable, remembered in settings, and can be hidden from the top-right panel button.
 6. `watcher.rs` reports changed repository roots; only those roots are re-read with
    `Backend::snapshot_subset`, so a large workspace does not pay for a full scan on every
-   file event.
+   file event. Window activation also triggers a throttled, silent full refresh that
+   leaves the current rows on screen until the new snapshot arrives.
 
 Full scans always replace the repository list, including when it becomes empty. Scan
 failures are returned separately and shown in the viewport banner, so one broken work

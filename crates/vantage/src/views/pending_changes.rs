@@ -3,10 +3,10 @@
 use gpui::{div, prelude::*, px, Context, IntoElement, Styled};
 
 use crate::app::VantageApp;
-use crate::icons::icon;
 use crate::model::{file_status_code, FileChangeStatus};
 use crate::theme::{FONT_MONO, LH_XS, TEXT_XS};
-use crate::widgets::Txt;
+use crate::ui::Txt;
+use crate::ui::{icon, IconSize};
 
 struct PendingFile {
     path: String,
@@ -129,7 +129,7 @@ impl VantageApp {
                                         .gap(px(4.0))
                                         .mono_xs()
                                         .fg(theme.text_body)
-                                        .child(icon("git-branch", 14.0, theme.icon_idle))
+                                        .child(icon("git-branch", IconSize::Sm, theme.icon_idle))
                                         .child(repo.branch.clone()),
                                 )
                                 .child(div().fg(theme.text_dim).child("·"))
@@ -166,7 +166,7 @@ impl VantageApp {
                                     this.select_repo(repo_id.clone(), cx);
                                 }))
                                 .child("Open inspector")
-                                .child(icon("chevron-right", 14.0, theme.accent_text)),
+                                .child(icon("chevron-right", IconSize::Sm, theme.accent_text)),
                         ),
                 );
 

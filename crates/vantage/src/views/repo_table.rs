@@ -4,10 +4,11 @@
 use gpui::{div, prelude::*, px, relative, Context, Div, IntoElement, Styled};
 
 use crate::app::VantageApp;
-use crate::icons::icon;
 use crate::model::RepoSyncState;
 use crate::theme::Theme;
-use crate::widgets::{primary_button, status_text, sync_arrows, Txt};
+use crate::ui::{icon, IconSize};
+use crate::ui::{primary_button, Txt};
+use crate::widgets::{status_text, sync_arrows};
 
 const COL_REPO: f32 = 0.17;
 const COL_BRANCH: f32 = 0.19;
@@ -352,7 +353,7 @@ impl VantageApp {
                         } else {
                             "chevron-down"
                         },
-                        14.0,
+                        IconSize::Sm,
                         theme.icon_idle,
                     )),
             )
@@ -437,7 +438,7 @@ impl VantageApp {
                         .medium()
                         .fg(theme.text_soft)
                         .whitespace_nowrap()
-                        .child(icon("git-branch", 14.0, theme.icon_idle))
+                        .child(icon("git-branch", IconSize::Sm, theme.icon_idle))
                         .child(branch),
                 ),
         );
@@ -502,7 +503,7 @@ impl VantageApp {
                             .child(
                                 div()
                                     .group_hover("repo-row", move |s| s.fg(activity_color))
-                                    .child(icon("chevron-right", 14.0, theme.icon_idle)),
+                                    .child(icon("chevron-right", IconSize::Sm, theme.icon_idle)),
                             ),
                     ),
             );
