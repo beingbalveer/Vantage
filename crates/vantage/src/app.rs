@@ -1376,14 +1376,14 @@ impl Render for VantageApp {
 
         if let Some(panel) = inspector {
             let sidebar_width = if self.sidebar_collapsed { 56.0 } else { 256.0 };
+            // Invisible 4px drag target: the panel's own 1px left border is the
+            // visible divider, so the splitter does not add a thicker bar.
             let splitter = div()
                 .id("right-panel-splitter")
                 .w(px(4.0))
                 .h_full()
                 .flex_shrink_0()
                 .cursor(gpui::CursorStyle::ResizeColumn)
-                .bg(theme.divider)
-                .hover(move |s| s.bg(theme.accent))
                 .on_mouse_down(
                     MouseButton::Left,
                     cx.listener(move |this, event: &gpui::MouseDownEvent, _w, _cx| {
