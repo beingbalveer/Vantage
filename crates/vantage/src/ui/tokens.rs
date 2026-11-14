@@ -14,7 +14,6 @@ pub enum IconSize {
     Xs,
     Sm,
     Md,
-    Lg,
     Xl,
 }
 
@@ -25,7 +24,6 @@ impl IconSize {
             Self::Xs => 12.0,
             Self::Sm => 14.0,
             Self::Md => 16.0,
-            Self::Lg => 18.0,
             Self::Xl => 28.0,
         }
     }

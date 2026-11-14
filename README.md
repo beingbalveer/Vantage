@@ -53,7 +53,7 @@ The repository detail view is a resizable right-hand pane. Opening a repository 
 - **Branches** — local branches with ahead/behind counts, their current/default state and latest commit. Check out any branch that is not already current.
 - **Commits** — recent commits with SHA, author, branch and relative time.
 
-The inspector header shows the repository status, language and path (click to copy), plus a group selector for moving the repository between groups. The footer contains **Fetch Origin** and, on macOS, **Open in GitHub Desktop** for work that belongs in a full Git client.
+The detail pane header shows the repository status, language and path (click to copy), plus a group selector for moving the repository between groups. The footer contains **Fetch Origin**.
 
 ### Repository management
 

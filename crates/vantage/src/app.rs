@@ -444,14 +444,6 @@ impl VantageApp {
         list
     }
 
-    pub fn attention_count(&self) -> usize {
-        self.repos.iter().filter(|r| r.needs_attention()).count()
-    }
-
-    pub fn changed_file_count(&self) -> usize {
-        self.repos.iter().map(|r| r.uncommitted_files.len()).sum()
-    }
-
     pub fn group_count(&self, group: &str) -> usize {
         if group == "All" {
             self.repos.len()
@@ -1010,19 +1002,6 @@ impl VantageApp {
             .ok();
         })
         .detach();
-    }
-
-    /// Phase 2: hand the folder to GitHub Desktop.
-    pub fn open_in_desktop(&mut self, repo: &Repository, cx: &mut Context<Self>) {
-        let name = repo.name.clone();
-        let opened = match &self.backend {
-            Some(backend) => backend.open_in_github_desktop(&repo.id),
-            None => Err(anyhow::anyhow!("engine unavailable")),
-        };
-        match opened {
-            Ok(()) => self.show_toast(format!("Opening {name} in GitHub Desktop"), cx),
-            Err(error) => self.show_toast(format!("Could not open {name}: {error}"), cx),
-        }
     }
 
     pub fn copy_local_path(&mut self, path: String, cx: &mut Context<Self>) {

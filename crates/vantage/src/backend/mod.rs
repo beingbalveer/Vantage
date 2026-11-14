@@ -15,7 +15,7 @@ pub mod repo_map;
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
-use anyhow::{anyhow, bail, Context, Result};
+use anyhow::{anyhow, Context, Result};
 use tokio::runtime::Runtime;
 use vantage_core::git::ops;
 use vantage_core::git::refs::{checkout_branch, sync_fetch};
@@ -35,7 +35,6 @@ const EXTRA_KEY: &str = "vantage";
 const LEGACY_EXTRA_KEY: &str = "branchdeck";
 /// Workspace of a repository the user has not assigned to a group.
 const UNGROUPED: &str = "Ungrouped";
-const GITHUB_DESKTOP: &str = "GitHub Desktop";
 
 pub struct Backend {
     /// Private engine runtime: every `block_on` in this module runs on it.
@@ -201,12 +200,6 @@ impl Backend {
         })
     }
 
-    /// `open -a "GitHub Desktop" <path>`.
-    pub fn open_in_github_desktop(&self, repo_id: &str) -> Result<()> {
-        let path = self.known_path(repo_id)?;
-        launch_github_desktop(&path)
-    }
-
     /// Vantage groups live in `PersistedState.extra` under [`EXTRA_KEY`]:
     /// an ordered group list plus `repo id -> group name` assignments. A state
     /// file saved before the rename reads from [`LEGACY_EXTRA_KEY`] until the
@@ -298,29 +291,6 @@ impl Backend {
             group,
         ))
     }
-}
-
-#[cfg(target_os = "macos")]
-fn launch_github_desktop(path: &Path) -> Result<()> {
-    let status = std::process::Command::new("open")
-        .arg("-a")
-        .arg(GITHUB_DESKTOP)
-        .arg(path)
-        .status()
-        .context("launch GitHub Desktop")?;
-    if !status.success() {
-        bail!(
-            "`open -a \"{GITHUB_DESKTOP}\" {}` failed: {status}",
-            path.display()
-        );
-    }
-    Ok(())
-}
-
-#[cfg(not(target_os = "macos"))]
-fn launch_github_desktop(path: &Path) -> Result<()> {
-    let _ = path;
-    bail!("GitHub Desktop can only be opened on macOS")
 }
 
 fn group_of(assignments: &BTreeMap<String, String>, repo_id: &str) -> String {

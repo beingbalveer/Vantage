@@ -1,10 +1,9 @@
-//! Left sidebar — 256px expanded, 56px icon rail collapsed.
-//! Views, Groups and the Settings entry. Toggle from the app header or `Mod+B`.
+//! Left sidebar — groups and the Settings entry. Toggle from the app header
+//! or `Mod+B`; a collapsed sidebar keeps only an expand control and the footer.
 
 use gpui::{div, prelude::*, px, Context, Div, IntoElement, MouseButton, Styled, Window};
 
 use crate::app::{FieldId, VantageApp};
-use crate::model::NavSection;
 use crate::ui::{icon, IconSize};
 use crate::ui::{FieldVariant, Txt};
 
@@ -49,131 +48,21 @@ impl VantageApp {
 
     fn render_sidebar_nav(&mut self, window: &mut Window, cx: &mut Context<Self>) -> Div {
         let theme = self.theme;
-        let collapsed = self.sidebar_collapsed;
 
-        let nav_items: [(NavSection, &'static str, &'static str, usize); 3] = [
-            (
-                NavSection::Overview,
-                "All Repositories",
-                "folder-git-2",
-                self.repos.len(),
-            ),
-            (
-                NavSection::Attention,
-                "Needs Attention",
-                "alert-circle",
-                self.attention_count(),
-            ),
-            (
-                NavSection::Changes,
-                "Pending Changes",
-                "file-diff",
-                self.changed_file_count(),
-            ),
-        ];
-
-        let mut views_list = div().flex().flex_col().gap(px(4.0));
-        for (section, label, icon_name, count) in nav_items {
-            let active = self.active_section == section;
-            let icon_color = if active {
-                theme.accent
-            } else {
-                theme.icon_idle
-            };
-            let text_color = if active {
-                theme.nav_active_text
-            } else {
-                theme.nav_idle_text
-            };
-            let hover_color = theme.nav_hover_text;
-            let hover_bg = theme.nav_hover_bg;
-
-            let mut item = div()
-                .id(gpui::ElementId::named_usize("nav", section as u8 as usize))
+        if !self.sidebar_collapsed {
+            return div()
                 .flex()
-                .items_center()
-                .w_full()
-                .rounded(px(8.0))
-                .cursor_pointer()
-                .bg(if active {
-                    theme.nav_active_bg
-                } else {
-                    theme.panel
-                })
-                .sm()
-                .medium()
-                .fg(text_color)
-                .when(!active, move |d| {
-                    d.hover(move |s| s.bg(hover_bg).fg(hover_color))
-                })
-                .on_click(cx.listener(move |this, _e, _w, cx| {
-                    this.select_section(section, cx);
-                }));
-
-            if collapsed {
-                item = item.justify_center().py(px(8.0)).child(icon(
-                    icon_name,
-                    IconSize::Lg,
-                    icon_color,
-                ));
-            } else {
-                item = item
-                    .justify_between()
-                    .px(px(10.0))
-                    .py(px(8.0))
-                    .child(
-                        div()
-                            .flex()
-                            .items_center()
-                            .gap(px(10.0))
-                            .flex_shrink_0()
-                            .whitespace_nowrap()
-                            .child(icon(icon_name, IconSize::Md, icon_color))
-                            .child(div().child(label)),
-                    )
-                    .child(
-                        div()
-                            .font_family(crate::theme::FONT_MONO)
-                            .text_size(px(crate::theme::TEXT_XS))
-                            .line_height(crate::theme::LH_XS)
-                            .fg(theme.label_muted)
-                            .child(count.to_string()),
-                    );
-            }
-
-            views_list = views_list.child(item);
+                .flex_col()
+                .px(px(12.0))
+                .py(px(20.0))
+                .child(self.render_groups_block(window, cx));
         }
 
-        let mut nav = div()
-            .flex()
-            .flex_col()
-            .px(px(if collapsed { 8.0 } else { 12.0 }))
-            .py(px(if collapsed { 12.0 } else { 20.0 }))
-            .gap(px(if collapsed { 8.0 } else { 24.0 }))
-            .child(
-                div()
-                    .flex()
-                    .flex_col()
-                    .when(!collapsed, |d| {
-                        d.child(
-                            div()
-                                .px(px(10.0))
-                                .pb(px(8.0))
-                                .xs()
-                                .medium()
-                                .fg(theme.label_muted)
-                                .child("Views"),
-                        )
-                    })
-                    .child(views_list),
-            );
-
-        // The groups rail needs its labels to be usable, so it is only drawn
-        // in the expanded sidebar.
-        if !collapsed {
-            nav = nav.child(self.render_groups_block(window, cx));
-        }
-        nav
+        div().flex().flex_col().items_center().py(px(12.0)).child(
+            crate::ui::icon_button(&theme, "panel-left")
+                .id("sidebar-expand")
+                .on_click(cx.listener(|this, _e, _w, cx| this.toggle_sidebar(cx))),
+        )
     }
 
     fn render_groups_block(
@@ -183,44 +72,38 @@ impl VantageApp {
     ) -> impl IntoElement {
         let theme = self.theme;
 
-        let mut block = div()
-            .flex()
-            .flex_col()
-            .pt(px(16.0))
-            .border_t_1()
-            .border_color(theme.divider)
-            .child(
-                div()
-                    .px(px(10.0))
-                    .pb(px(8.0))
-                    .flex()
-                    .items_center()
-                    .justify_between()
-                    .child(div().xs().medium().fg(theme.label_muted).child("Groups"))
-                    .child(
-                        div()
-                            .id("new-group-toggle")
-                            .flex()
-                            .items_center()
-                            .gap(px(4.0))
-                            .cursor_pointer()
-                            .whitespace_nowrap()
-                            .flex_shrink_0()
-                            .xs()
-                            .medium()
-                            .fg(theme.accent_text)
-                            .hover(|s| s.opacity(0.75))
-                            .on_click(cx.listener(|this, _e, _w, cx| {
-                                this.is_adding_group = !this.is_adding_group;
-                                if !this.is_adding_group {
-                                    this.group_field.clear();
-                                }
-                                cx.notify();
-                            }))
-                            .child(icon("plus", IconSize::Xs, theme.accent_text))
-                            .child(div().child("New group")),
-                    ),
-            );
+        let mut block = div().flex().flex_col().child(
+            div()
+                .px(px(10.0))
+                .pb(px(8.0))
+                .flex()
+                .items_center()
+                .justify_between()
+                .child(div().xs().medium().fg(theme.label_muted).child("Groups"))
+                .child(
+                    div()
+                        .id("new-group-toggle")
+                        .flex()
+                        .items_center()
+                        .gap(px(4.0))
+                        .cursor_pointer()
+                        .whitespace_nowrap()
+                        .flex_shrink_0()
+                        .xs()
+                        .medium()
+                        .fg(theme.accent_text)
+                        .hover(|s| s.opacity(0.75))
+                        .on_click(cx.listener(|this, _e, _w, cx| {
+                            this.is_adding_group = !this.is_adding_group;
+                            if !this.is_adding_group {
+                                this.group_field.clear();
+                            }
+                            cx.notify();
+                        }))
+                        .child(icon("plus", IconSize::Xs, theme.accent_text))
+                        .child(div().child("New group")),
+                ),
+        );
 
         if self.is_adding_group {
             let theme_local = theme;
