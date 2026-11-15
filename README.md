@@ -108,21 +108,24 @@ There is no file editor, no embedded terminal, no command palette, no fuzzy file
 
 ## Installation
 
-macOS 13 or newer on Apple silicon. Download the latest DMG from the
+macOS 13 or newer, Apple silicon or Intel. Download the latest DMG from the
 [releases page](https://github.com/beingbalveer/Vantage/releases), open it and
 drag **Vantage** into Applications.
 
-Each release publishes three files:
+Each release publishes four files:
 
 | Asset | What it is |
 |---|---|
-| `Vantage_<version>_arm64.dmg` | Drag-to-Applications installer |
-| `Vantage_<version>_arm64.app.zip` | The same bundle, zipped |
-| `vantage.rb` | Homebrew cask for that exact build, with its `sha256` |
+| `Vantage_<version>_universal.dmg` | Drag-to-Applications installer, arm64 + x86_64 |
+| `Vantage_<version>_universal.app.zip` | The same bundle, zipped |
+| `SHA256SUMS` | Checksums for both artifacts |
+| `vantage.rb` | Homebrew cask for that exact build, pinned to its `sha256` |
 
-The bundle is ad-hoc signed rather than notarized, so the first launch may need
-**right-click → Open** instead of a double click. Vantage has no account, no
-telemetry and no updater daemon: check the releases page for new versions.
+Release builds are signed with a Developer ID certificate and notarized by
+Apple when those credentials are configured; builds made without them are
+ad-hoc signed and need **right-click → Open** on first launch. Vantage has no
+account, no telemetry and no updater daemon: check the releases page for new
+versions.
 
 Linux builds from source (below); the release pipeline currently publishes
 macOS only.

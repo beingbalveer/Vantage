@@ -87,19 +87,27 @@ cargo build --release -p vantage --locked
 
 The compiled binary is written to `target/release/vantage`.
 
-To produce the macOS app bundle, DMG and a cask pinned to that DMG (macOS
-only — it uses `sips`, `iconutil`, `hdiutil` and `codesign` from the system):
+A distributable macOS app is **universal**. Build both slices, then let the
+packaging script assemble them (it uses `sips`, `iconutil`, `hdiutil`, `lipo`
+and `codesign` from the system):
 
 ```bash
+rustup target add aarch64-apple-darwin x86_64-apple-darwin
+cargo build --release -p vantage --locked --target aarch64-apple-darwin
+cargo build --release -p vantage --locked --target x86_64-apple-darwin
 ./scripts/bundle-macos.sh
 ```
 
-Everything lands in `dist/`: `Vantage.app`, `Vantage_<version>_arm64.dmg`,
-`Vantage_<version>_arm64.app.zip` and `vantage.rb`.
+Everything lands in `dist/`: `Vantage.app`, `Vantage_<version>_universal.dmg`,
+`Vantage_<version>_universal.app.zip`, `SHA256SUMS` and a `vantage.rb` cask
+pinned to that DMG's checksum.
 
 ---
 
 ## Releasing
+
+Releases are universal (arm64 + x86_64) signed DMGs, published from a tag by
+`.github/workflows/release.yml`.
 
 1. Bump `version` in the workspace `Cargo.toml`. Both crates inherit it, so
    there is exactly one number to change.
@@ -112,8 +120,24 @@ Everything lands in `dist/`: `Vantage.app`, `Vantage_<version>_arm64.dmg`,
    git push origin v0.6.0
    ```
 
-   The Release workflow refuses to build when the tag and the workspace version
-   disagree.
-5. Confirm the release has the DMG, the zipped bundle and `vantage.rb`, then
-   commit that `vantage.rb` into `Casks/` so Homebrew installs pin this build's
-   `sha256`.
+   The workflow refuses to build when the tag and the workspace version
+   disagree, cross-compiles both slices, packages the bundle, verifies
+   `codesign`/checksums and uploads the DMG, the zipped bundle, `SHA256SUMS`
+   and `vantage.rb`.
+5. The workflow then commits `Casks/vantage.rb` back to `main`, so the in-repo
+   cask always pins the published DMG.
+
+### Signing and notarization
+
+The workflow signs with a Developer ID and notarizes when these repository
+secrets exist; without them it falls back to ad-hoc signing and prints a
+warning, which is fine for local builds but not for distribution.
+
+| Secret | Contents |
+|---|---|
+| `APPLE_SIGNING_IDENTITY` | `Developer ID Application: Name (TEAMID)` |
+| `APPLE_CERTIFICATE` | base64 of the exported `.p12` |
+| `APPLE_CERTIFICATE_PASSWORD` | password for that `.p12` |
+| `APPLE_ID` | Apple ID email used for notarytool |
+| `APPLE_TEAM_ID` | Apple developer team id |
+| `APPLE_APP_PASSWORD` | app-specific password for notarytool |

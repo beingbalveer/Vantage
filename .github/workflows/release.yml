@@ -5,18 +5,36 @@ on:
     tags:
       - "v*"
 
+permissions:
+  contents: read
+
 jobs:
-  build-macos:
-    name: Build, package and publish
+  release-macos:
+    name: Build, notarize and publish
+    # Pinned image on Apple silicon: the runner is arm64 and cross-compiles the
+    # Intel slice, so the DMG is universal.
+    runs-on: macos-14
     permissions:
       contents: write
-    runs-on: macos-latest
+    env:
+      APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+      APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+      APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+      APPLE_ID: ${{ secrets.APPLE_ID }}
+      APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+      APPLE_APP_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
+
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
 
-      - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
+      - name: Install Rust with both Apple targets
+        uses: dtolnay/rust-toolchain@39008827e6b4319a349e9a42dfc90579dd25f1ca # stable  # yamllint disable-line rule:line-length
+        with:
+          toolchain: stable
+          targets: aarch64-apple-darwin, x86_64-apple-darwin
 
       # A tag that disagrees with the crate version ships a bundle whose About
       # panel and CFBundleShortVersionString both lie, so fail before building.
@@ -30,29 +48,75 @@ jobs:
             exit 1
           fi
 
-      - name: Build release binary
-        run: cargo build --release -p vantage --locked
+      # Only needed when the signing secrets exist; without them the bundle is
+      # ad-hoc signed by the packaging script and distribution is local-only.
+      - name: Import the Developer ID certificate
+        if: env.APPLE_CERTIFICATE != ''
+        run: |
+          echo "$APPLE_CERTIFICATE" | base64 --decode >certificate.p12
+          KEYCHAIN=build.keychain
+          security create-keychain -p actions "$KEYCHAIN"
+          security default-keychain -s "$KEYCHAIN"
+          security unlock-keychain -p actions "$KEYCHAIN"
+          security import certificate.p12 -k "$KEYCHAIN" \
+            -P "$APPLE_CERTIFICATE_PASSWORD" \
+            -T /usr/bin/codesign
+          security set-key-partition-list -S apple-tool:,apple:,codesign: \
+            -s -k actions "$KEYCHAIN"
+          rm certificate.p12
 
-      # Produces dist/Vantage.app, the DMG, the zipped bundle and a cask whose
-      # sha256 is the real one for this build.
-      - name: Package app bundle, DMG and cask
+      - name: Build universal release binary
+        run: |
+          cargo build --release -p vantage --locked \
+            --target aarch64-apple-darwin
+          cargo build --release -p vantage --locked \
+            --target x86_64-apple-darwin
+
+      - name: Package app bundle, DMG, cask and checksums
         run: ./scripts/bundle-macos.sh "$GITHUB_REF_NAME"
 
       - name: Verify the artifacts
         run: |
           plutil -lint dist/Vantage.app/Contents/Info.plist
-          codesign --verify --deep --strict dist/Vantage.app
-          hdiutil attach -nobrowse -readonly dist/Vantage_*_arm64.dmg
+          codesign --verify --deep --strict --verbose=2 dist/Vantage.app
+          lipo -archs dist/Vantage.app/Contents/MacOS/vantage
+          hdiutil attach -nobrowse -readonly dist/Vantage_*_universal.dmg
           test -d /Volumes/Vantage/Vantage.app
           hdiutil detach /Volumes/Vantage
-          shasum -a 256 dist/Vantage_*_arm64.dmg
+          (cd dist && shasum -a 256 -c SHA256SUMS)
+          if [ -n "$APPLE_SIGNING_IDENTITY" ]; then
+            spctl --assess --type execute --verbose=2 dist/Vantage.app
+          fi
 
-      - name: Upload release assets
-        uses: softprops/action-gh-release@v2
-        with:
-          name: Vantage ${{ github.ref_name }}
-          generate_release_notes: true
-          files: |
-            dist/Vantage_*_arm64.dmg
-            dist/Vantage_*_arm64.app.zip
+      - name: Publish the release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" \
+            --title "Vantage $GITHUB_REF_NAME" \
+            --generate-notes \
+            dist/Vantage_*_universal.dmg \
+            dist/Vantage_*_universal.app.zip \
+            dist/SHA256SUMS \
             dist/vantage.rb
+
+      # Keeps the in-repo cask pinned to the build that was just published.
+      # A no-op when main already moved past this tag.
+      - name: Sync the cask back to main
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          mkdir -p Casks
+          cp dist/vantage.rb Casks/vantage.rb
+          if git diff --quiet -- Casks/vantage.rb; then
+            echo "cask already current"
+            exit 0
+          fi
+          gh auth setup-git
+          bot="41898282+github-actions[bot]@users.noreply.github.com"
+          git config user.name "github-actions[bot]"
+          git config user.email "$bot"
+          git add Casks/vantage.rb
+          git commit -m "chore(cask): pin $GITHUB_REF_NAME"
+          git push origin "HEAD:main"

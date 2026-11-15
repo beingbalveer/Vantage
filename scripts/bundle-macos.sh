@@ -1,20 +1,31 @@
 #!/usr/bin/env bash
 #
-# Package the release binary as a macOS app bundle, a DMG and a matching cask.
+# Package the release binaries as a universal macOS app bundle, a notarizable
+# DMG, a zipped bundle and a matching Homebrew cask.
 #
 #   scripts/bundle-macos.sh [version]
 #
 # `version` defaults to the workspace version in Cargo.toml, or to
-# `$GITHUB_REF_NAME` without its leading `v` when running in Actions.
+# `$GITHUB_REF_NAME` without its leading `v` in Actions.
 #
-# Output (in dist/):
-#   Vantage.app                        the bundle itself
-#   Vantage_<version>_arm64.dmg        drag-to-Applications installer
-#   Vantage_<version>_arm64.app.zip    zipped bundle (Homebrew / manual install)
-#   vantage.rb                         cask with the real sha256 filled in
+# Inputs: `target/{aarch64,x86_64}-apple-darwin/release/vantage`. Build them with
 #
-# Everything here uses tools that ship with macOS (sips, iconutil, hdiutil,
-# codesign, ditto), so the workflow needs no extra installer steps.
+#   cargo build --release -p vantage --locked --target aarch64-apple-darwin
+#   cargo build --release -p vantage --locked --target x86_64-apple-darwin
+#
+# The script falls back to `target/release/vantage` when only one architecture
+# exists locally, so a developer can smoke-test the packaging on its own.
+#
+# Signing (optional, from the environment):
+#   APPLE_SIGNING_IDENTITY   "Developer ID Application: Name (TEAMID)".
+#                            Without it the bundle is ad-hoc signed, which is
+#                            enough to run locally but not to distribute.
+#   APPLE_ID, APPLE_TEAM_ID, APPLE_APP_PASSWORD
+#                            notarytool credentials. When all three are set the
+#                            app and the DMG are notarized and stapled.
+#
+# Output (in dist/): Vantage.app, Vantage_<version>_universal.dmg,
+# Vantage_<version>_universal.app.zip, vantage.rb, SHA256SUMS.
 
 set -euo pipefail
 
@@ -22,13 +33,19 @@ cd "$(dirname "$0")/.."
 
 BUNDLE_ID="io.github.beingbalveer.vantage"
 APP_NAME="Vantage"
-BIN="target/release/vantage"
 ICON_SRC="assets/vantage-icon-1024.png"
 DIST="dist"
+ARM64_BIN="target/aarch64-apple-darwin/release/vantage"
+X86_64_BIN="target/x86_64-apple-darwin/release/vantage"
+HOST_BIN="target/release/vantage"
 
 die() {
     echo "bundle-macos: $*" >&2
     exit 1
+}
+
+step() {
+    echo "bundle-macos: $*"
 }
 
 # ---- version ---------------------------------------------------------------
@@ -37,23 +54,42 @@ version="${1:-}"
 if [ -z "$version" ]; then
     version="$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)"
 fi
-if [ -z "$version" ]; then
-    die "could not determine the version"
-fi
+[ -n "$version" ] || die "could not determine the version"
 # The release workflow passes the tag; accept both `0.6.0` and `v0.6.0`.
 version="${version#v}"
 
-# ---- preconditions ---------------------------------------------------------
+# ---- universal binary ------------------------------------------------------
 
-[ -f "$BIN" ] || die "$BIN is missing; run 'cargo build --release -p vantage' first"
+if [ -f "$ARM64_BIN" ] && [ -f "$X86_64_BIN" ]; then
+    work_dir="$(mktemp -d)"
+    universal="$work_dir/vantage"
+    lipo -create "$ARM64_BIN" "$X86_64_BIN" -output "$universal"
+    archs="universal"
+elif [ -f "$ARM64_BIN" ]; then
+    universal="$ARM64_BIN"
+    archs="arm64"
+elif [ -f "$X86_64_BIN" ]; then
+    universal="$X86_64_BIN"
+    archs="x86_64"
+elif [ -f "$HOST_BIN" ]; then
+    universal="$HOST_BIN"
+    archs="host"
+else
+    die "no release binary found; build with --target aarch64-apple-darwin and x86_64-apple-darwin"
+fi
 [ -f "$ICON_SRC" ] || die "$ICON_SRC is missing"
-arch="$(lipo -archs "$BIN")"
-echo "bundle-macos: packaging $APP_NAME $version ($arch)"
+[ "$archs" = "universal" ] || step "warning: packaging $archs only (one architecture was built)"
+step "packaging $APP_NAME $version ($(lipo -archs "$universal"))"
 
 rm -rf "$DIST/$APP_NAME.app" "$DIST/dmg"
 mkdir -p "$DIST"
 
-# ---- icon ------------------------------------------------------------------
+# ---- bundle ----------------------------------------------------------------
+
+mkdir -p "$DIST/$APP_NAME.app/Contents/MacOS" "$DIST/$APP_NAME.app/Contents/Resources"
+cp "$universal" "$DIST/$APP_NAME.app/Contents/MacOS/vantage"
+chmod +x "$DIST/$APP_NAME.app/Contents/MacOS/vantage"
+printf 'APPL????' >"$DIST/$APP_NAME.app/Contents/PkgInfo"
 
 iconset="$(mktemp -d)/Vantage.iconset"
 mkdir -p "$iconset"
@@ -62,15 +98,7 @@ for size in 16 32 128 256 512; do
     double=$((size * 2))
     sips -z "$double" "$double" "$ICON_SRC" --out "$iconset/icon_${size}x${size}@2x.png" >/dev/null
 done
-mkdir -p "$DIST/$APP_NAME.app/Contents/Resources"
 iconutil -c icns "$iconset" -o "$DIST/$APP_NAME.app/Contents/Resources/$APP_NAME.icns"
-
-# ---- bundle ----------------------------------------------------------------
-
-mkdir -p "$DIST/$APP_NAME.app/Contents/MacOS"
-cp "$BIN" "$DIST/$APP_NAME.app/Contents/MacOS/vantage"
-chmod +x "$DIST/$APP_NAME.app/Contents/MacOS/vantage"
-printf 'APPL????' >"$DIST/$APP_NAME.app/Contents/PkgInfo"
 
 cat >"$DIST/$APP_NAME.app/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
@@ -107,16 +135,53 @@ cat >"$DIST/$APP_NAME.app/Contents/Info.plist" <<PLIST
 </plist>
 PLIST
 
-# Ad-hoc signature: an unsigned bundle is refused outright by recent macOS,
-# and a self-signed one also lets `codesign --verify` gate the release.
-codesign --force --sign - --timestamp=none "$DIST/$APP_NAME.app" >/dev/null 2>&1 ||
-    echo "bundle-macos: warning: ad-hoc codesign failed (bundle left unsigned)"
+# ---- sign ------------------------------------------------------------------
 
-# ---- dmg + zip -------------------------------------------------------------
+sign_app() {
+    if [ -n "${APPLE_SIGNING_IDENTITY:-}" ]; then
+        step "signing with $APPLE_SIGNING_IDENTITY"
+        codesign --force --deep --options runtime --timestamp \
+            --sign "$APPLE_SIGNING_IDENTITY" "$DIST/$APP_NAME.app"
+    else
+        step "APPLE_SIGNING_IDENTITY unset: ad-hoc signing (not distributable)"
+        codesign --force --deep --sign - --timestamp=none "$DIST/$APP_NAME.app"
+    fi
+}
+sign_app
 
-dmg="Vantage_${version}_arm64.dmg"
-zip="Vantage_${version}_arm64.app.zip"
+notarize_ready() {
+    [ -n "${APPLE_ID:-}" ] && [ -n "${APPLE_TEAM_ID:-}" ] && [ -n "${APPLE_APP_PASSWORD:-}" ]
+}
 
+notarize() {
+    step "notarizing $1"
+    xcrun notarytool submit "$1" \
+        --apple-id "$APPLE_ID" \
+        --team-id "$APPLE_TEAM_ID" \
+        --password "$APPLE_APP_PASSWORD" \
+        --wait
+    xcrun stapler staple "$1"
+    xcrun stapler validate "$1"
+}
+
+# The app is submitted as a zip so the ticket can be stapled to the bundle; the
+# zip is rebuilt afterwards so it carries the stapled bundle.
+zip_app() {
+    ditto -c -k --sequesterRsrc --keepParent \
+        "$DIST/$APP_NAME.app" "$DIST/Vantage_${version}_universal.app.zip"
+}
+
+if notarize_ready && [ -n "${APPLE_SIGNING_IDENTITY:-}" ]; then
+    zip_app
+    notarize "$DIST/Vantage_${version}_universal.app.zip"
+else
+    step "notarytool credentials unset: skipping notarization (local build)"
+fi
+zip_app
+
+# ---- dmg -------------------------------------------------------------------
+
+dmg="Vantage_${version}_universal.dmg"
 mkdir -p "$DIST/dmg"
 cp -R "$DIST/$APP_NAME.app" "$DIST/dmg/"
 ln -s /Applications "$DIST/dmg/Applications"
@@ -127,23 +192,30 @@ hdiutil create \
     "$DIST/$dmg" >/dev/null
 rm -rf "$DIST/dmg"
 
-ditto -c -k --sequesterRsrc --keepParent "$DIST/$APP_NAME.app" "$DIST/$zip"
+if notarize_ready && [ -n "${APPLE_SIGNING_IDENTITY:-}" ]; then
+    notarize "$DIST/$dmg"
+fi
 
+# ---- checksums + cask ------------------------------------------------------
+
+(cd "$DIST" && shasum -a 256 "$dmg" "Vantage_${version}_universal.app.zip" >SHA256SUMS)
 dmg_sha="$(shasum -a 256 "$DIST/$dmg" | awk '{print $1}')"
-
-# ---- cask ------------------------------------------------------------------
 
 cat >"$DIST/vantage.rb" <<CASK
 cask "vantage" do
   version "$version"
   sha256 "$dmg_sha"
 
-  url "https://github.com/beingbalveer/Vantage/releases/download/v#{version}/Vantage_#{version}_arm64.dmg"
+  url "https://github.com/beingbalveer/Vantage/releases/download/v#{version}/Vantage_#{version}_universal.dmg"
   name "Vantage"
   desc "Multi-repo Git dashboard: branches, changes, commits and sync in one window"
   homepage "https://github.com/beingbalveer/Vantage"
 
-  depends_on arch: :arm64
+  livecheck do
+    url :url
+    strategy :github_latest
+  end
+
   depends_on macos: ">= :ventura"
 
   app "Vantage.app"
@@ -163,8 +235,9 @@ end
 CASK
 
 echo
-echo "bundle-macos: wrote"
+step "wrote"
 echo "  $DIST/$APP_NAME.app"
 echo "  $DIST/$dmg   (sha256 $dmg_sha)"
-echo "  $DIST/$zip"
+echo "  $DIST/Vantage_${version}_universal.app.zip"
+echo "  $DIST/SHA256SUMS"
 echo "  $DIST/vantage.rb"
