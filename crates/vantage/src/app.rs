@@ -1674,6 +1674,7 @@ impl VantageApp {
         name: &str,
         uncommitted: usize,
         stashes: usize,
+        with_changes: bool,
         x: f32,
         y: f32,
         cx: &mut Context<Self>,
@@ -1683,6 +1684,7 @@ impl VantageApp {
             name: name.to_string(),
             uncommitted,
             stashes,
+            with_changes,
             x,
             y,
         });
@@ -2960,7 +2962,7 @@ impl Render for VantageApp {
         if let Some(menu) = self.context_menu.clone() {
             let bounds = window.bounds();
             let width = 200.0;
-            let height = 96.0;
+            let height = 260.0;
             let (anchor_x, anchor_y, title, items) = match &menu {
                 ContextMenu::File { path, x, y, .. } => {
                     let name = path
@@ -2974,25 +2976,30 @@ impl Render for VantageApp {
                     name,
                     uncommitted,
                     stashes,
+                    with_changes,
                     x,
                     y,
                     ..
                 } => {
+                    // One menu, one subject: the working tree where it was
+                    // opened from the Changes header, the repository elsewhere.
                     let mut items: Vec<(&'static str, bool, u64)> = Vec::new();
-                    if *uncommitted > 0 {
-                        items.push(("Stash all changes", false, 0));
+                    if *with_changes {
+                        if *uncommitted > 0 {
+                            items.push(("Stash all changes", false, 0));
+                        }
+                        if *stashes > 0 {
+                            items.push(("Restore latest stash", false, 0));
+                        }
+                        if *uncommitted > 0 {
+                            items.push(("Discard all changes", true, 0));
+                        }
+                    } else {
+                        items.push(("Remove from list", true, 0));
+                        items.push(("Reveal in Finder", false, 0));
+                        items.push(("Open in Terminal", false, 0));
+                        items.push(("Open in editor", false, 0));
                     }
-                    if *stashes > 0 {
-                        items.push(("Restore latest stash", false, 0));
-                    }
-                    if *uncommitted > 0 {
-                        items.push(("Discard all changes", true, 0));
-                    }
-                    items.push(("Clone repository…", false, 0));
-                    items.push(("Remove from list", true, 0));
-                    items.push(("Reveal in Finder", false, 0));
-                    items.push(("Open in Terminal", false, 0));
-                    items.push(("Open in editor", false, 0));
                     (*x, *y, name.clone(), items)
                 }
                 ContextMenu::Branch {
@@ -3103,9 +3110,6 @@ impl Render for VantageApp {
                                 (ContextMenu::Repo { repo_id, .. }, "Discard all changes") => {
                                     let id = repo_id.clone();
                                     this.ask_discard_repo(&id, cx);
-                                }
-                                (ContextMenu::Repo { .. }, "Clone repository…") => {
-                                    this.open_clone_modal(cx);
                                 }
                                 (ContextMenu::Repo { repo_id, .. }, "Remove from list") => {
                                     let id = repo_id.clone();
@@ -3283,6 +3287,9 @@ pub enum ContextMenu {
         name: String,
         uncommitted: usize,
         stashes: usize,
+        /// Opened from the Changes header: stash/discard belong there; the
+        /// repository menu itself only carries repository actions.
+        with_changes: bool,
         x: f32,
         y: f32,
     },

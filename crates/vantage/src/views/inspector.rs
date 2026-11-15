@@ -248,9 +248,50 @@ impl VantageApp {
                     ),
             )
             .child(
-                crate::ui::icon_button(&theme, "x")
-                    .id("close-inspector")
-                    .on_click(cx.listener(|this, _e, _w, cx| this.close_right_panel(cx))),
+                div()
+                    .flex()
+                    .items_center()
+                    .gap(px(2.0))
+                    .flex_shrink_0()
+                    .child(
+                        div()
+                            .id("repo-menu")
+                            .flex()
+                            .items_center()
+                            .justify_center()
+                            .w(px(30.0))
+                            .h(px(30.0))
+                            .rounded(px(8.0))
+                            .cursor_pointer()
+                            .hover(move |s| s.bg(theme.nav_hover_bg))
+                            .child(icon("more-horizontal", IconSize::Sm, theme.icon_idle))
+                            .on_mouse_down(
+                                gpui::MouseButton::Left,
+                                cx.listener({
+                                    let menu_repo = repo.id.clone();
+                                    let menu_name = repo.name.clone();
+                                    let uncommitted = repo.uncommitted_files.len();
+                                    let stashes = repo.stash_count;
+                                    move |this, event: &gpui::MouseDownEvent, _w, cx| {
+                                        this.open_repo_menu(
+                                            &menu_repo,
+                                            &menu_name,
+                                            uncommitted,
+                                            stashes,
+                                            false,
+                                            f32::from(event.position.x),
+                                            f32::from(event.position.y),
+                                            cx,
+                                        );
+                                    }
+                                }),
+                            ),
+                    )
+                    .child(
+                        crate::ui::icon_button(&theme, "x")
+                            .id("close-inspector")
+                            .on_click(cx.listener(|this, _e, _w, cx| this.close_right_panel(cx))),
+                    ),
             )
     }
 
@@ -474,6 +515,7 @@ impl VantageApp {
                                     &menu_name,
                                     uncommitted,
                                     stashes,
+                                    true,
                                     f32::from(event.position.x),
                                     f32::from(event.position.y),
                                     cx,
@@ -556,6 +598,7 @@ impl VantageApp {
                                             &menu_name,
                                             uncommitted,
                                             stashes,
+                                            true,
                                             f32::from(event.position.x),
                                             f32::from(event.position.y),
                                             cx,
