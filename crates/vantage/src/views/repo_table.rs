@@ -1,44 +1,13 @@
-//! All Repositories / Needs Attention table: one bordered container, collapsible
-//! group headers, five columns plus a row action strip.
+//! All Repositories / Needs Attention list: one bordered container of compact
+//! two-line rows inside collapsible group headers.
 
-use gpui::{div, prelude::*, px, relative, Context, Div, IntoElement, Styled};
+use gpui::{div, prelude::*, px, relative, Context, Div, IntoElement, Rgba, Styled};
 
 use crate::app::{RepoOp, VantageApp};
 use crate::model::RepoSyncState;
 use crate::theme::Theme;
 use crate::ui::{icon, icon_button_sm, spinner, IconSize};
 use crate::ui::{primary_button, Txt};
-use crate::widgets::{status_text, sync_arrows};
-
-const COL_REPO: f32 = 0.17;
-const COL_BRANCH: f32 = 0.19;
-const COL_TREE: f32 = 0.165;
-const COL_SYNC: f32 = 0.085;
-const COL_UPDATED: f32 = 0.075;
-
-fn repo_column(compact: bool) -> f32 {
-    if compact {
-        0.42
-    } else {
-        COL_REPO
-    }
-}
-
-fn branch_column(compact: bool) -> f32 {
-    if compact {
-        0.30
-    } else {
-        COL_BRANCH
-    }
-}
-
-fn tree_column(compact: bool) -> f32 {
-    if compact {
-        0.28
-    } else {
-        COL_TREE
-    }
-}
 
 struct TableRow {
     id: String,
@@ -60,10 +29,6 @@ struct TableSection {
     rows: Vec<TableRow>,
 }
 
-fn cell(width: f32) -> Div {
-    div().w(relative(width)).flex_shrink_0()
-}
-
 fn make_row(repo: &crate::model::Repository) -> TableRow {
     TableRow {
         id: repo.id.clone(),
@@ -80,17 +45,8 @@ fn make_row(repo: &crate::model::Repository) -> TableRow {
 }
 
 impl VantageApp {
-    pub fn render_repo_table(
-        &mut self,
-        cx: &mut Context<Self>,
-        viewport_width: gpui::Pixels,
-    ) -> impl IntoElement {
+    pub fn render_repo_table(&mut self, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = self.theme;
-        let compact = viewport_width < px(900.0);
-        let container_width = (viewport_width - px(48.0)).max(px(0.0)).min(px(1440.0));
-        let branch_width =
-            (crate::text::column_width(container_width, branch_column(compact), 16.0) - px(20.0))
-                .max(px(24.0));
         let repos = self.filtered_repos();
         let rows: Vec<TableRow> = repos.iter().map(|r| make_row(r)).collect();
         drop(repos);
@@ -185,8 +141,6 @@ impl VantageApp {
             );
         }
 
-        table = table.child(self.render_table_head(theme, compact));
-
         for section in &sections {
             let mut card = div()
                 .flex()
@@ -201,7 +155,7 @@ impl VantageApp {
 
             if !self.collapsed_groups.contains(&section.key) {
                 for row in &section.rows {
-                    card = card.child(self.render_row(theme, row, compact, branch_width, cx));
+                    card = card.child(self.render_row(theme, row, cx));
                 }
             }
 
@@ -209,69 +163,6 @@ impl VantageApp {
         }
 
         table
-    }
-
-    fn render_table_head(&self, theme: Theme, compact: bool) -> impl IntoElement {
-        let mut head = div()
-            .flex()
-            .items_center()
-            .w_full()
-            .flex_shrink_0()
-            .xs()
-            .medium()
-            .fg(theme.label_muted);
-
-        head = head
-            .child(
-                cell(repo_column(compact))
-                    .py(px(10.0))
-                    .pl(px(20.0))
-                    .pr(px(16.0))
-                    .whitespace_nowrap()
-                    .child("Repository"),
-            )
-            .child(
-                cell(branch_column(compact))
-                    .py(px(10.0))
-                    .px(px(16.0))
-                    .whitespace_nowrap()
-                    .child("Current Branch"),
-            )
-            .child(
-                cell(tree_column(compact))
-                    .py(px(10.0))
-                    .px(px(16.0))
-                    .whitespace_nowrap()
-                    .child("Working Tree"),
-            );
-
-        if !compact {
-            head = head.child(
-                cell(COL_SYNC)
-                    .py(px(10.0))
-                    .px(px(16.0))
-                    .text_right()
-                    .whitespace_nowrap()
-                    .child("Remote Sync"),
-            );
-        }
-
-        // Spacer for the per-row action strip, so the columns after it stay
-        // aligned with the body. The strip carries no heading of its own.
-        head = head.child(div().flex_1().min_w(px(0.0)));
-
-        if !compact {
-            head = head.child(
-                cell(COL_UPDATED)
-                    .py(px(10.0))
-                    .pl(px(16.0))
-                    .pr(px(20.0))
-                    .text_right()
-                    .whitespace_nowrap()
-                    .child("Updated"),
-            );
-        }
-        head
     }
 
     fn render_group_header(
@@ -335,113 +226,15 @@ impl VantageApp {
             )
     }
 
-    fn render_row(
-        &self,
-        theme: Theme,
-        row: &TableRow,
-        compact: bool,
-        branch_width: gpui::Pixels,
-        cx: &mut Context<Self>,
-    ) -> impl IntoElement {
+    fn render_row(&self, theme: Theme, row: &TableRow, cx: &mut Context<Self>) -> impl IntoElement {
         let selected = self.selected_repo_id.as_deref() == Some(row.id.as_str());
         let repo_id = row.id.clone();
-        let activity_color = theme.text_soft;
 
-        let mut line = div()
-            .id(gpui::SharedString::from(format!("repo-row-{}", row.id)))
-            .group("repo-row")
-            .flex()
-            .items_center()
-            .w_full()
-            .cursor_pointer()
-            .border_t_1()
-            .border_color(theme.row_border)
-            .bg(if selected {
-                theme.accent_soft
-            } else {
-                theme.panel
-            })
-            .when(!selected, move |d| {
-                d.hover(move |s| s.bg(theme.row_hover_bg))
-            })
-            .on_click(cx.listener(move |this, _e, window, cx| {
-                this.select_repo(repo_id.clone(), cx);
-                window.refresh();
-            }));
-
-        // Repository name only: a repository can contain several languages,
-        // so a single stack label would be misleading.
-        line = line.child(
-            cell(repo_column(compact))
-                .py(px(12.0))
-                .pl(px(20.0))
-                .pr(px(16.0))
-                .flex()
-                .items_center()
-                .child(
-                    div()
-                        .sm()
-                        .medium()
-                        .fg(theme.text_app)
-                        .whitespace_nowrap()
-                        .child(row.name.clone()),
-                ),
-        );
-
-        // Current branch (ellipsized to the column, like `truncate` in the source)
-        let branch = crate::text::ellipsize(
-            cx,
-            &row.branch,
-            crate::theme::FONT_MONO,
-            crate::theme::W_MEDIUM,
-            crate::theme::TEXT_XS,
-            branch_width,
-        );
-        line = line.child(
-            cell(branch_column(compact))
-                .py(px(12.0))
-                .px(px(16.0))
-                .overflow_hidden()
-                .child(
-                    div()
-                        .flex()
-                        .items_center()
-                        .gap(px(6.0))
-                        .mono_xs()
-                        .medium()
-                        .fg(theme.text_soft)
-                        .whitespace_nowrap()
-                        .child(icon("git-branch", IconSize::Sm, theme.icon_idle))
-                        .child(branch),
-                ),
-        );
-
-        // Working tree status
-        line = line.child(
-            cell(tree_column(compact))
-                .py(px(12.0))
-                .px(px(16.0))
-                .child(status_text(&theme, row.sync, row.uncommitted)),
-        );
-
-        // Remote sync
-        if !compact {
-            line = line.child(
-                cell(COL_SYNC)
-                    .py(px(12.0))
-                    .px(px(16.0))
-                    .child(sync_arrows(&theme, row.ahead, row.behind)),
-            );
-        }
-
-        // Row action: fetch this one repository. Pull and Push live in the
-        // detail pane, which has room to name them.
+        // Fetch control: the only row-level action, so it stays on the row.
         let fetching = self.repo_op(&row.id) == Some(RepoOp::Fetch);
         let busy = self.repo_op(&row.id).is_some();
         let fetch_id = row.id.clone();
         let fetch_control: gpui::AnyElement = if fetching {
-            // Spinner replaces the glyph for as long as the fetch runs; the row
-            // stays on screen because a scan does not blank the table.
             div()
                 .flex()
                 .items_center()
@@ -472,44 +265,77 @@ impl VantageApp {
                 .opacity(0.35)
                 .into_any_element()
         };
-        line = line.child(
-            div()
-                .flex_1()
-                .min_w(px(0.0))
-                .flex()
-                .items_center()
-                .justify_end()
-                .pr(px(8.0))
-                .child(fetch_control),
-        );
 
-        // Updated + disclosure chevron
-        if !compact {
-            line = line.child(
-                cell(COL_UPDATED)
-                    .py(px(14.0))
-                    .pl(px(16.0))
-                    .pr(px(20.0))
+        div()
+            .id(gpui::SharedString::from(format!("repo-row-{}", row.id)))
+            .group("repo-row")
+            .flex()
+            .flex_col()
+            .w_full()
+            .gap(px(3.0))
+            .px(px(16.0))
+            .py(px(8.0))
+            .cursor_pointer()
+            .border_t_1()
+            .border_color(theme.row_border)
+            .bg(if selected {
+                theme.accent_soft
+            } else {
+                theme.panel
+            })
+            .when(!selected, move |d| {
+                d.hover(move |s| s.bg(theme.row_hover_bg))
+            })
+            .on_click(cx.listener(move |this, _e, window, cx| {
+                this.select_repo(repo_id.clone(), cx);
+                window.refresh();
+            }))
+            // Name first: it is what the eye looks for.
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap(px(10.0))
+                    .w_full()
                     .child(
                         div()
-                            .flex()
-                            .items_center()
-                            .justify_end()
-                            .gap(px(6.0))
+                            .flex_1()
+                            .min_w(px(0.0))
+                            .sm()
+                            .medium()
+                            .fg(theme.text_app)
+                            .truncate()
+                            .child(row.name.clone()),
+                    )
+                    .child(status_badges(&theme, row)),
+            )
+            // Branch, then how long ago it moved, then the row action.
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap(px(8.0))
+                    .w_full()
+                    .child(icon("git-branch", IconSize::Xs, theme.icon_idle))
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w(px(0.0))
+                            .mono_xs()
+                            .fg(theme.text_body)
+                            .truncate()
+                            .child(row.branch.clone()),
+                    )
+                    .child(
+                        div()
+                            .flex_shrink_0()
                             .xs()
                             .fg(theme.label_muted)
                             .whitespace_nowrap()
-                            .child(row.activity.clone())
-                            .child(
-                                div()
-                                    .group_hover("repo-row", move |s| s.fg(activity_color))
-                                    .child(icon("chevron-right", IconSize::Sm, theme.icon_idle)),
-                            ),
-                    ),
-            );
-        }
-
-        line
+                            .child(row.activity.clone()),
+                    )
+                    .child(fetch_control),
+            )
     }
 
     fn render_skeleton(&self) -> impl IntoElement {
@@ -575,6 +401,54 @@ impl VantageApp {
         }
         list
     }
+}
+
+/// Compact status line for a row: every state the repository is in, not just
+/// one, each with an icon and a word so colour is never the only signal.
+fn status_badges(theme: &Theme, row: &TableRow) -> Div {
+    let mut badges = div().flex().items_center().gap(px(10.0)).flex_shrink_0();
+
+    if row.sync == RepoSyncState::Conflict {
+        badges = badges.child(badge("alert-triangle", "Conflict", theme.status_red));
+    }
+    if row.uncommitted > 0 {
+        let label = if row.uncommitted == 1 {
+            "1 change".to_string()
+        } else {
+            format!("{} changes", row.uncommitted)
+        };
+        badges = badges.child(badge("file-diff", &label, theme.status_amber));
+    }
+    if row.ahead > 0 {
+        badges = badges.child(badge(
+            "arrow-up",
+            &format!("{} ahead", row.ahead),
+            theme.status_blue,
+        ));
+    }
+    if row.behind > 0 {
+        badges = badges.child(badge(
+            "arrow-down",
+            &format!("{} behind", row.behind),
+            theme.status_red,
+        ));
+    }
+    if row.sync == RepoSyncState::Clean {
+        badges = badges.child(badge("circle-check-big", "Clean", theme.status_green));
+    }
+
+    badges
+}
+
+fn badge(icon_name: &'static str, label: &str, color: Rgba) -> Div {
+    div()
+        .flex()
+        .items_center()
+        .gap(px(4.0))
+        .flex_shrink_0()
+        .whitespace_nowrap()
+        .child(icon(icon_name, IconSize::Xs, color))
+        .child(div().xs().medium().fg(color).child(label.to_string()))
 }
 
 fn clone_row(row: &TableRow) -> TableRow {

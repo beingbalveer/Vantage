@@ -45,11 +45,3 @@ pub fn ellipsize(
     let mut wrapper = cx.text_system().line_wrapper(font, px(font_size));
     wrapper.truncate_line(text.to_string().into(), max_width, "\u{2026}", &mut runs)
 }
-
-/// Width available to the "Latest Commit" column of a table that spans
-/// `container_width`, given the fixed column ratios either side of it.
-pub fn column_width(container_width: Pixels, fraction: f32, padding: f32) -> Pixels {
-    let content = (container_width - px(2.0)).max(px(0.0));
-    let width = content * fraction - px(padding * 2.0);
-    width.max(px(0.0))
-}
