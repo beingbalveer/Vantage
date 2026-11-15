@@ -1,4 +1,4 @@
-//! Detail queries (branches, commits, working tree, remote, language) for the
+//! Detail queries (branches, commits, working tree, identity, remote) for the
 //! Vantage backend.
 //!
 //! The backend owns a tokio runtime and calls these synchronously from the UI
@@ -12,7 +12,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::model::{CommitIdentity, PreviewKind, PreviewLine};
 
-use vantage_core::git::{diff, github, log, refs, status};
+use vantage_core::git::{diff, log, refs, status};
 use vantage_core::GitRunner;
 
 use crate::model::{BranchInfo, ChangedFile, CommitEntry, FileChangeStatus};
@@ -24,15 +24,6 @@ const COMMIT_LIMIT: u32 = 15;
 /// Generous enough to show whole hunks with their context, bounded so a
 /// thousand-line rewrite cannot be put into the row model.
 const PREVIEW_LINES: usize = 200;
-const NO_REMOTE: &str = "no remote";
-
-/// Display placeholder for a repository with no `origin`.
-///
-/// Callers that need to know whether a remote exists compare the display value
-/// against this instead of re-reading `git config`.
-pub fn no_remote_label() -> &'static str {
-    NO_REMOTE
-}
 const NO_COMMITS: &str = "no commits";
 const UNKNOWN_AUTHOR: &str = "unknown";
 
@@ -701,19 +692,14 @@ pub fn commit_identity(path: &Path) -> Option<CommitIdentity> {
 
 // ---------------- Remote ----------------
 
-/// `origin`'s URL normalized to `host/owner/repo`, or `no remote`.
+/// Whether the repository has an `origin` to fetch, pull and push against.
 ///
-/// The signature carries no runtime because this is a single cheap config read;
-/// it asks git directly so worktrees and `include`d configs resolve correctly.
-pub fn remote(_runner: &GitRunner, path: &Path) -> String {
-    let Some(url) = origin_url(path) else {
-        return NO_REMOTE.to_string();
-    };
-    match github::parse_remote(&url) {
-        Some(target) => format!("{}/{}/{}", target.host, target.owner, target.repo),
-        // A filesystem remote is still a remote; report it verbatim.
-        None => url,
-    }
+/// The URL itself is not part of the dashboard — the action bar names the branch
+/// and nothing else — so this is the only thing the UI needs from the remote.
+/// Like the other cheap config reads here it asks git directly, so worktrees and
+/// `include`d configs resolve correctly.
+pub fn has_remote(path: &Path) -> bool {
+    origin_url(path).is_some()
 }
 
 fn origin_url(repo_path: &Path) -> Option<String> {
@@ -733,115 +719,6 @@ fn origin_url(repo_path: &Path) -> Option<String> {
     }
     let url = String::from_utf8_lossy(&output.stdout).trim().to_string();
     (!url.is_empty()).then_some(url)
-}
-
-// ---------------- Language ----------------
-
-/// Root-level extension -> language, in tie-break order.
-const LANGUAGES: [(&str, &[&str]); 11] = [
-    ("TypeScript", &["ts", "tsx"]),
-    ("JavaScript", &["js", "jsx"]),
-    ("Python", &["py"]),
-    ("Rust", &["rs"]),
-    ("Go", &["go"]),
-    ("Swift", &["swift"]),
-    ("Ruby", &["rb"]),
-    ("Java", &["java"]),
-    ("Kotlin", &["kt"]),
-    ("Markdown", &["md"]),
-    ("JSON", &["json"]),
-];
-
-const SKIP_DIRS: [&str; 9] = [
-    "node_modules",
-    ".git",
-    "dist",
-    "build",
-    "target",
-    "out",
-    ".next",
-    "vendor",
-    "coverage",
-];
-
-/// Shallow (depth 2) extension census, skipping build/vendor trees. Manifests
-/// only win when the tree has no source files at all.
-pub fn language(path: &Path) -> String {
-    let mut counts = [0usize; LANGUAGES.len()];
-    collect_extensions(path, 0, &mut counts);
-
-    if counts[0] + counts[1] > 0 {
-        if let Some(framework) = javascript_framework(path) {
-            return framework.to_string();
-        }
-    }
-
-    // Source extensions outrank docs and manifests; otherwise the most common
-    // extension of any kind wins.
-    let code_best = (0..9)
-        .filter(|slot| counts[*slot] > 0)
-        .max_by_key(|slot| counts[*slot]);
-    let any_best = (0..counts.len())
-        .filter(|slot| counts[*slot] > 0)
-        .max_by_key(|slot| counts[*slot]);
-
-    match code_best.or(any_best) {
-        Some(slot) => LANGUAGES[slot].0.to_string(),
-        None => "Other".to_string(),
-    }
-}
-
-fn collect_extensions(dir: &Path, depth: usize, counts: &mut [usize; LANGUAGES.len()]) {
-    let Ok(entries) = std::fs::read_dir(dir) else {
-        return;
-    };
-    for entry in entries.flatten() {
-        let path = entry.path();
-        let name = path
-            .file_name()
-            .map(|name| name.to_string_lossy().to_lowercase())
-            .unwrap_or_default();
-        if path.is_dir() {
-            if depth < 2 && !name.starts_with('.') && !SKIP_DIRS.contains(&name.as_str()) {
-                collect_extensions(&path, depth + 1, counts);
-            }
-            continue;
-        }
-        let Some(extension) = path
-            .extension()
-            .map(|extension| extension.to_string_lossy().to_lowercase())
-        else {
-            continue;
-        };
-        for (slot, (_, extensions)) in LANGUAGES.iter().enumerate() {
-            if extensions.contains(&extension.as_str()) {
-                counts[slot] += 1;
-                break;
-            }
-        }
-    }
-}
-
-fn javascript_framework(root: &Path) -> Option<&'static str> {
-    let bytes = std::fs::read(root.join("package.json")).ok()?;
-    let manifest: serde_json::Value = serde_json::from_slice(&bytes).ok()?;
-    let has = |name: &str| {
-        ["dependencies", "devDependencies", "peerDependencies"]
-            .iter()
-            .any(|section| {
-                manifest
-                    .get(*section)
-                    .and_then(|deps| deps.get(name))
-                    .is_some()
-            })
-    };
-    if has("next") {
-        Some("Next.js")
-    } else if has("react") {
-        Some("React / TS")
-    } else {
-        None
-    }
 }
 
 // ---------------- Relative time ----------------

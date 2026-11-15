@@ -2,7 +2,7 @@
 //! view model (`src/types/repo.ts` in the React app).
 //!
 //! Everything that needs git output the core engine does not already expose
-//! (branches, commits, changed files, remote, language) comes from
+//! (branches, commits, changed files, identity, remote) comes from
 //! [`super::details`]; this module only decides *what the dashboard shows*.
 
 use std::path::Path;
@@ -49,15 +49,13 @@ pub fn map_repo(
         current_branch.as_str()
     };
     let recent_commits = details::commits(rt, runner, path, commit_branch);
-    let remote_repo = details::remote(runner, path);
-    let has_remote = remote_repo != details::no_remote_label();
+    let has_remote = details::has_remote(path);
 
     Repository {
         id: entry.id.clone(),
         name: entry.name.clone(),
         workspace: group,
         local_path: crate::path::contract(path),
-        remote_repo,
         has_remote,
         current_branch,
         author: details::commit_identity(path),
@@ -67,7 +65,6 @@ pub fn map_repo(
         has_upstream: status.upstream.is_some(),
         last_activity_label,
         last_activity_minutes,
-        primary_language: details::language(path),
         uncommitted_files,
         branches,
         recent_commits,
@@ -458,7 +455,6 @@ mod tests {
             .iter()
             .any(|commit| commit.message.contains("initial commit")));
         assert!(clean.uncommitted_files.is_empty());
-        assert!(!clean.remote_repo.is_empty());
         assert!(
             !clean.has_remote,
             "a work tree with no origin must not offer fetch/pull/push"

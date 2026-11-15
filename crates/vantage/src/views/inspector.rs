@@ -192,8 +192,6 @@ impl VantageApp {
                             .gap(px(8.0))
                             .xs()
                             .fg(theme.label_muted)
-                            .child(repo.primary_language.clone())
-                            .child(div().child("·"))
                             .child(
                                 div()
                                     .id("copy-path")
@@ -905,6 +903,7 @@ impl VantageApp {
         let panel_width = (content_width * self.settings.right_panel_fraction).max(420.0);
         let message_width =
             (px(panel_width) - px(24.0 * 2.0 + 16.0 * 2.0 + 16.0 + 12.0)).max(px(40.0));
+        let unpushed = repo.ahead_count.max(0) as usize;
         let mut list = div()
             .flex()
             .flex_col()
@@ -913,6 +912,29 @@ impl VantageApp {
             .border_color(theme.divider)
             .rounded(px(8.0))
             .overflow_hidden();
+
+        // Names the badges below: everything above this line is still local.
+        if repo.has_remote && unpushed > 0 {
+            let label = if unpushed == 1 {
+                "1 commit not pushed".to_string()
+            } else {
+                format!("{unpushed} commits not pushed")
+            };
+            list = list.child(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap(px(6.0))
+                    .w_full()
+                    .px(px(14.0))
+                    .py(px(8.0))
+                    .bg(theme.table_head_bg)
+                    .border_b_1()
+                    .border_color(theme.row_border)
+                    .child(icon("arrow-up", IconSize::Xs, theme.status_blue))
+                    .child(div().xs().medium().fg(theme.status_blue).child(label)),
+            );
+        }
 
         for (index, commit) in repo.recent_commits.iter().enumerate() {
             let short_sha: String = commit.sha.chars().take(7).collect();
@@ -984,12 +1006,47 @@ impl VantageApp {
                                             .child(div().flex_shrink_0().child("·"))
                                             .child(div().truncate().child(commit.author.clone())),
                                     )
-                                    .child(
-                                        div()
-                                            .flex_shrink_0()
-                                            .whitespace_nowrap()
-                                            .child(commit.relative_time.clone()),
-                                    ),
+                                    .child({
+                                        // The badge exists only on commits the
+                                        // remote does not have; the times stay
+                                        // flush right either way, because this
+                                        // cluster is right-aligned by the row.
+                                        let mut trailing = div()
+                                            .flex()
+                                            .items_center()
+                                            .gap(px(8.0))
+                                            .flex_shrink_0();
+                                        if repo.commit_is_local_only(index) {
+                                            // GitHub Desktop's marker: a quiet
+                                            // round chip with an up arrow, sat
+                                            // where the row's trailing controls
+                                            // live.
+                                            trailing = trailing.child(
+                                                div()
+                                                    .flex()
+                                                    .items_center()
+                                                    .justify_center()
+                                                    .w(px(22.0))
+                                                    .h(px(22.0))
+                                                    .rounded(px(11.0))
+                                                    .flex_shrink_0()
+                                                    .bg(crate::theme::alpha(
+                                                        theme.label_muted,
+                                                        0.16,
+                                                    ))
+                                                    .child(icon(
+                                                        "arrow-up",
+                                                        IconSize::Xs,
+                                                        theme.text_body,
+                                                    )),
+                                            );
+                                        }
+                                        trailing.child(
+                                            div()
+                                                .whitespace_nowrap()
+                                                .child(commit.relative_time.clone()),
+                                        )
+                                    }),
                             ),
                     ),
             );
@@ -1016,6 +1073,18 @@ impl VantageApp {
         let can_fetch = !busy && repo.has_remote;
         let ahead = repo.ahead_count;
         let behind = repo.behind_count;
+        // The buttons name what they would move: commits waiting locally for a
+        // push, and commits on the remote waiting for a pull.
+        let push_label = if ahead > 0 {
+            format!("Push {ahead}")
+        } else {
+            "Push".to_string()
+        };
+        let pull_label = if behind > 0 {
+            format!("Pull {behind}")
+        } else {
+            "Pull".to_string()
+        };
         let fetch_id = repo.id.clone();
 
         let spinner_leading = |theme: &Theme, kind: RepoOp, id: &str| {
@@ -1078,16 +1147,7 @@ impl VantageApp {
                                 .child(icon("arrow-down", IconSize::Xs, theme.status_red))
                                 .child(behind.to_string()),
                         )
-                    })
-                    .child(
-                        div()
-                            .flex_1()
-                            .min_w(px(0.0))
-                            .truncate()
-                            .mono_xs()
-                            .fg(theme.label_muted)
-                            .child(repo.remote_repo.clone()),
-                    ),
+                    }),
             )
             .child(
                 div()
@@ -1104,7 +1164,7 @@ impl VantageApp {
                         .id("pull-selected")
                         .into_any_element()
                     } else {
-                        secondary_button(&theme, "Pull", Some("arrow-down"))
+                        secondary_button(&theme, pull_label, Some("arrow-down"))
                             .id("pull-selected")
                             .when(!can_pull, |d| d.opacity(0.5))
                             .when(can_pull, |d| {
@@ -1121,7 +1181,7 @@ impl VantageApp {
                         .id("push-selected")
                         .into_any_element()
                     } else {
-                        secondary_button(&theme, "Push", Some("arrow-up"))
+                        secondary_button(&theme, push_label, Some("arrow-up"))
                             .id("push-selected")
                             .when(!can_push, |d| d.opacity(0.5))
                             .when(can_push, |d| {

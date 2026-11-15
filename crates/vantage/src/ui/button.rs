@@ -39,7 +39,7 @@ pub fn primary_button(
 
 pub fn secondary_button(
     theme: &Theme,
-    label: &'static str,
+    label: impl IntoElement,
     icon_name: Option<&'static str>,
 ) -> Div {
     let leading =
@@ -53,7 +53,7 @@ pub fn secondary_button(
 /// `Fetch Origin` swaps its static icon for a spinner while a fetch runs.
 pub fn secondary_button_with(
     theme: &Theme,
-    label: &'static str,
+    label: impl IntoElement,
     leading: Option<gpui::AnyElement>,
 ) -> Div {
     let mut button = div()

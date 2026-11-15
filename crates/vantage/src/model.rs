@@ -106,8 +106,7 @@ pub struct Repository {
     pub name: String,
     pub workspace: String,
     pub local_path: String,
-    pub remote_repo: String,
-    /// `remote_repo` names a real origin rather than the "no remote" placeholder.
+    /// Whether an `origin` exists, which gates fetch/pull/push.
     pub has_remote: bool,
     pub current_branch: String,
     /// `None` when git has no usable `user.name` / `user.email` here, which
@@ -121,13 +120,23 @@ pub struct Repository {
     pub has_upstream: bool,
     pub last_activity_label: String,
     pub last_activity_minutes: i64,
-    pub primary_language: String,
     pub uncommitted_files: Vec<ChangedFile>,
     pub branches: Vec<BranchInfo>,
     pub recent_commits: Vec<CommitEntry>,
 }
 
 impl Repository {
+    /// Whether the commit at `index` in the newest-first list has not reached
+    /// any remote.
+    ///
+    /// `ahead_count` is git's own count of commits the upstream — or, on a
+    /// branch that tracks nothing, any remote — does not have, so the newest N
+    /// rows are exactly the local ones. A repository with no remote has nothing
+    /// to push to, so it gets no badges.
+    pub fn commit_is_local_only(&self, index: usize) -> bool {
+        self.has_remote && (index as i32) < self.ahead_count
+    }
+
     /// `RepoSyncState` drives the Working Tree cell (see StatusText.tsx).
     pub fn needs_attention(&self) -> bool {
         matches!(
@@ -145,5 +154,55 @@ pub fn file_status_code(status: FileChangeStatus) -> &'static str {
         FileChangeStatus::Deleted => "D",
         FileChangeStatus::Untracked => "?",
         FileChangeStatus::Conflicted => "!",
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn repo(ahead: i32, has_remote: bool) -> Repository {
+        Repository {
+            id: "repo-1".to_string(),
+            name: "fixture".to_string(),
+            workspace: "Ungrouped".to_string(),
+            local_path: "/tmp/fixture".to_string(),
+            has_remote,
+            current_branch: "main".to_string(),
+            author: None,
+            sync_state: RepoSyncState::Ahead,
+            ahead_count: ahead,
+            behind_count: 0,
+            has_upstream: true,
+            last_activity_label: "just now".to_string(),
+            last_activity_minutes: 0,
+            uncommitted_files: Vec::new(),
+            branches: Vec::new(),
+            recent_commits: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn the_newest_unpushed_commits_are_marked_local() {
+        let repo = repo(2, true);
+        assert!(repo.commit_is_local_only(0), "the tip is never pushed");
+        assert!(repo.commit_is_local_only(1));
+        assert!(
+            !repo.commit_is_local_only(2),
+            "everything older is on the remote"
+        );
+    }
+
+    #[test]
+    fn a_fully_pushed_branch_has_no_local_commits() {
+        let repo = repo(0, true);
+        assert!(!repo.commit_is_local_only(0));
+    }
+
+    #[test]
+    fn a_repository_without_a_remote_has_nothing_to_push() {
+        let repo = repo(3, false);
+        assert!(!repo.commit_is_local_only(0));
+        assert!(!repo.commit_is_local_only(2));
     }
 }
