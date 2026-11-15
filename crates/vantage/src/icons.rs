@@ -42,6 +42,7 @@ icons! {
     "git-branch" => "git-branch.svg",
     "git-commit-horizontal" => "git-commit-horizontal.svg",
     "layers" => "layers.svg",
+    "more-horizontal" => "more-horizontal.svg",
     "moon" => "moon.svg",
     "panel-left" => "panel-left.svg",
     "panel-right" => "panel-right.svg",

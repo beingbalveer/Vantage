@@ -461,6 +461,26 @@ impl VantageApp {
                     .bg(theme.table_head_bg)
                     .border_b_1()
                     .border_color(theme.row_border)
+                    .on_mouse_down(
+                        gpui::MouseButton::Right,
+                        cx.listener({
+                            let menu_repo = repo.id.clone();
+                            let menu_name = repo.name.clone();
+                            let uncommitted = repo.uncommitted_files.len();
+                            let stashes = repo.stash_count;
+                            move |this, event: &gpui::MouseDownEvent, _w, cx| {
+                                this.open_repo_menu(
+                                    &menu_repo,
+                                    &menu_name,
+                                    uncommitted,
+                                    stashes,
+                                    f32::from(event.position.x),
+                                    f32::from(event.position.y),
+                                    cx,
+                                );
+                            }
+                        }),
+                    )
                     .child(
                         checkbox(&theme, all_staged)
                             .id("stage-all")
@@ -509,7 +529,41 @@ impl VantageApp {
                                         })),
                                 ),
                         )
-                    }),
+                    })
+                    .child(
+                        div()
+                            .id("changes-menu")
+                            .flex()
+                            .items_center()
+                            .justify_center()
+                            .w(px(22.0))
+                            .h(px(22.0))
+                            .rounded(px(5.0))
+                            .flex_shrink_0()
+                            .cursor_pointer()
+                            .hover(move |s| s.bg(theme.nav_hover_bg))
+                            .child(icon("more-horizontal", IconSize::Xs, theme.icon_idle))
+                            .on_mouse_down(
+                                gpui::MouseButton::Left,
+                                cx.listener({
+                                    let menu_repo = repo.id.clone();
+                                    let menu_name = repo.name.clone();
+                                    let uncommitted = repo.uncommitted_files.len();
+                                    let stashes = repo.stash_count;
+                                    move |this, event: &gpui::MouseDownEvent, _w, cx| {
+                                        this.open_repo_menu(
+                                            &menu_repo,
+                                            &menu_name,
+                                            uncommitted,
+                                            stashes,
+                                            f32::from(event.position.x),
+                                            f32::from(event.position.y),
+                                            cx,
+                                        );
+                                    }
+                                }),
+                            ),
+                    ),
             );
 
         for (index, file) in repo.uncommitted_files.iter().enumerate() {

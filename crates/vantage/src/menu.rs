@@ -35,6 +35,9 @@ actions!(
         SectionOverview,
         SectionAttention,
         SectionChanges,
+        SelectPrevRepo,
+        SelectNextRepo,
+        OpenRepo,
     ]
 );
 
@@ -55,6 +58,10 @@ pub fn install(cx: &mut App, app: Entity<VantageApp>) {
         KeyBinding::new("ctrl-cmd-f", ToggleFullscreen, None),
         KeyBinding::new("cmd-m", Minimize, None),
         KeyBinding::new("cmd-w", CloseWindow, None),
+        // Plain arrows walk the repository list; Enter opens the highlighted one.
+        KeyBinding::new("up", SelectPrevRepo, None),
+        KeyBinding::new("down", SelectNextRepo, None),
+        KeyBinding::new("enter", OpenRepo, None),
         KeyBinding::new("cmd-1", SectionOverview, None),
         KeyBinding::new("cmd-2", SectionAttention, None),
         KeyBinding::new("cmd-3", SectionChanges, None),
@@ -142,6 +149,25 @@ pub fn install(cx: &mut App, app: Entity<VantageApp>) {
         let app = app.clone();
         move |_: &ToggleSidebar, cx: &mut App| {
             app.update(cx, |app, cx| app.toggle_sidebar(cx));
+        }
+    });
+
+    cx.on_action({
+        let app = app.clone();
+        move |_: &SelectPrevRepo, cx: &mut App| {
+            app.update(cx, |app, cx| app.move_selection(-1, cx));
+        }
+    });
+    cx.on_action({
+        let app = app.clone();
+        move |_: &SelectNextRepo, cx: &mut App| {
+            app.update(cx, |app, cx| app.move_selection(1, cx));
+        }
+    });
+    cx.on_action({
+        let app = app.clone();
+        move |_: &OpenRepo, cx: &mut App| {
+            app.update(cx, |app, cx| app.open_selected(cx));
         }
     });
 

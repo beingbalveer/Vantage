@@ -659,6 +659,15 @@ fn untracked_preview(repo_path: &Path, relative: &str) -> (Vec<PreviewLine>, boo
     (preview, truncated)
 }
 
+// ---------------- Stashes ----------------
+
+/// How many stashes the repository keeps; the menu labels use the count.
+pub fn stash_count(rt: &tokio::runtime::Runtime, runner: &GitRunner, path: &Path) -> usize {
+    rt.block_on(vantage_core::git::stash::list_stashes(runner, path))
+        .map(|entries| entries.len())
+        .unwrap_or(0)
+}
+
 // ---------------- One commit ----------------
 
 /// The files a commit touched, each with its own patch lines and counts.

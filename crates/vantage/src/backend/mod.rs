@@ -22,6 +22,7 @@ use vantage_core::git::refs::{
     checkout_branch, create_branch, delete_branch, has_upstream, is_commit_on_remote,
     rename_branch, sync_fetch, sync_pull, sync_push, PullStrategy,
 };
+use vantage_core::git::stash::{stash_pop, stash_push};
 use vantage_core::git::status::query_repo_status;
 use vantage_core::persist::PersistedState;
 use vantage_core::{repos, GitRunner, RepoEntry};
@@ -259,6 +260,38 @@ impl Backend {
             ops::amend_commit(&self.runner, &repo_path, &paths, &summary, None).await
         })?;
         Ok(amended.short)
+    }
+
+    /// Throw away every changed path at once, with the same backup safety net.
+    pub fn discard_paths(&self, repo_id: &str, paths: &[String]) -> Result<()> {
+        if paths.is_empty() {
+            return Ok(());
+        }
+        let repo_path = self.known_path(repo_id)?;
+        self.runtime
+            .block_on(ops::discard(&self.runner, &repo_path, paths))?;
+        Ok(())
+    }
+
+    /// Put the working tree aside under a message.
+    pub fn stash_all(&self, repo_id: &str, message: Option<&str>) -> Result<()> {
+        let repo_path = self.known_path(repo_id)?;
+        let message = message.map(str::to_string);
+        self.runtime.block_on(stash_push(
+            &self.runner,
+            &repo_path,
+            message.as_deref(),
+            true,
+        ))?;
+        Ok(())
+    }
+
+    /// Bring stash `index` back and remove it from the list.
+    pub fn stash_pop(&self, repo_id: &str, index: u32) -> Result<()> {
+        let repo_path = self.known_path(repo_id)?;
+        self.runtime
+            .block_on(stash_pop(&self.runner, &repo_path, index))?;
+        Ok(())
     }
 
     /// Throw away the working-tree changes of one path, keeping a backup ref so

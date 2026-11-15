@@ -120,6 +120,8 @@ pub struct Repository {
     pub local_path: String,
     /// Whether an `origin` exists, which gates fetch/pull/push.
     pub has_remote: bool,
+    /// Number of stashes kept in the repository.
+    pub stash_count: usize,
     pub current_branch: String,
     /// `None` when git has no usable `user.name` / `user.email` here, which
     /// also means a commit would fail.
@@ -180,6 +182,7 @@ mod tests {
             workspace: "Ungrouped".to_string(),
             local_path: "/tmp/fixture".to_string(),
             has_remote,
+            stash_count: 0,
             current_branch: "main".to_string(),
             author: None,
             sync_state: RepoSyncState::Ahead,

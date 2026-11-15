@@ -57,6 +57,7 @@ pub fn map_repo(
         workspace: group,
         local_path: crate::path::contract(path),
         has_remote,
+        stash_count: details::stash_count(rt, runner, path),
         current_branch,
         author: details::commit_identity(path),
         sync_state: sync_state(status),

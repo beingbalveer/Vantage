@@ -40,6 +40,7 @@ pub enum RepoOp {
     Commit,
     Undo,
     Branch,
+    Stash,
 }
 
 impl RepoOp {
@@ -51,6 +52,7 @@ impl RepoOp {
             Self::Discard => "Discarding…",
             Self::Amend => "Amending…",
             Self::Branch => "Updating branch…",
+            Self::Stash => "Stashing…",
             Self::Pull => "Pulling…",
             Self::Push => "Pushing…",
             Self::Commit => "Committing…",
@@ -182,6 +184,8 @@ pub struct VantageApp {
     pub amending: bool,
     /// A branch action waiting for its name or confirmation.
     pub branch_prompt: Option<BranchPrompt>,
+    /// A destructive action waiting for its confirm.
+    pub confirm: Option<ConfirmPrompt>,
     /// The commit opened in the Commits tab, if any.
     pub commit_view: Option<CommitView>,
     /// The pane borrows width from the list while a commit diff is open.
@@ -283,6 +287,7 @@ impl VantageApp {
             context_menu: None,
             amending: false,
             branch_prompt: None,
+            confirm: None,
             commit_view: None,
             commit_wide: false,
             branch_field: FieldState::new(),
@@ -1632,6 +1637,157 @@ impl VantageApp {
         cx.notify();
     }
 
+    /// Open the actions for a repository row.
+    #[allow(clippy::too_many_arguments)]
+    pub fn open_repo_menu(
+        &mut self,
+        repo_id: &str,
+        name: &str,
+        uncommitted: usize,
+        stashes: usize,
+        x: f32,
+        y: f32,
+        cx: &mut Context<Self>,
+    ) {
+        self.context_menu = Some(ContextMenu::Repo {
+            repo_id: repo_id.to_string(),
+            name: name.to_string(),
+            uncommitted,
+            stashes,
+            x,
+            y,
+        });
+        cx.notify();
+    }
+
+    /// Put every uncommitted change aside.
+    pub fn stash_repo(&mut self, repo_id: &str, cx: &mut Context<Self>) {
+        self.context_menu = None;
+        let Some(repo) = self.repos.iter().find(|repo| repo.id == repo_id).cloned() else {
+            return;
+        };
+        self.run_repo_op(
+            &repo,
+            cx,
+            RepoOp::Stash,
+            RepoOpReport::new(
+                "Stashed the working tree".to_string(),
+                "Could not stash".to_string(),
+            ),
+            move |backend, id| backend.stash_all(id, Some("Vantage: stashed changes")),
+        );
+    }
+
+    /// Bring back the newest stash.
+    pub fn pop_stash(&mut self, repo_id: &str, cx: &mut Context<Self>) {
+        self.context_menu = None;
+        let Some(repo) = self.repos.iter().find(|repo| repo.id == repo_id).cloned() else {
+            return;
+        };
+        self.run_repo_op(
+            &repo,
+            cx,
+            RepoOp::Stash,
+            RepoOpReport::new(
+                "Restored the newest stash".to_string(),
+                "Could not restore the stash".to_string(),
+            ),
+            move |backend, id| backend.stash_pop(id, 0),
+        );
+    }
+
+    /// Ask before throwing away every change in a repository.
+    pub fn ask_discard_repo(&mut self, repo_id: &str, cx: &mut Context<Self>) {
+        self.context_menu = None;
+        let Some(repo) = self.repos.iter().find(|repo| repo.id == repo_id).cloned() else {
+            return;
+        };
+        let paths: Vec<String> = repo
+            .uncommitted_files
+            .iter()
+            .map(|file| file.path.clone())
+            .collect();
+        if paths.is_empty() {
+            return;
+        }
+        self.confirm = Some(ConfirmPrompt {
+            title: format!("Discard {} changes in {}?", paths.len(), repo.name),
+            body: "Every uncommitted edit in this repository is thrown away. A backup of the \
+                   change is kept in the repository's refs, but the files go back to the last \
+                   commit."
+                .to_string(),
+            label: "Discard all",
+            action: ConfirmAction::DiscardRepository {
+                repo_id: repo_id.to_string(),
+                paths,
+            },
+        });
+        cx.notify();
+    }
+
+    pub fn cancel_confirm(&mut self, cx: &mut Context<Self>) {
+        self.confirm = None;
+        cx.notify();
+    }
+
+    /// Run whichever destructive action was confirmed.
+    pub fn submit_confirm(&mut self, cx: &mut Context<Self>) {
+        let Some(prompt) = self.confirm.take() else {
+            return;
+        };
+        match prompt.action {
+            ConfirmAction::DiscardRepository { repo_id, paths } => {
+                let Some(repo) = self.repos.iter().find(|repo| repo.id == repo_id).cloned() else {
+                    return;
+                };
+                self.selection.remove(&repo_id);
+                self.run_repo_op(
+                    &repo,
+                    cx,
+                    RepoOp::Discard,
+                    RepoOpReport::new(
+                        format!("Discarded {} changes", paths.len()),
+                        "Could not discard the changes".to_string(),
+                    ),
+                    move |backend, id| backend.discard_paths(id, &paths),
+                );
+            }
+        }
+        cx.notify();
+    }
+
+    /// Move the highlighted repository up or down, without opening the pane.
+    pub fn move_selection(&mut self, delta: isize, cx: &mut Context<Self>) {
+        let list = self.filtered_repos();
+        if list.is_empty() {
+            return;
+        }
+        let current = self
+            .selected_repo_id
+            .as_deref()
+            .and_then(|id| list.iter().position(|repo| repo.id == id));
+        let next = match (current, delta) {
+            (Some(index), 0) => index,
+            (Some(index), d) => (index as isize + d).clamp(0, list.len() as isize - 1) as usize,
+            (None, d) if d < 0 => 0,
+            (None, _) => 0,
+        };
+        let id = list[next].id.clone();
+        drop(list);
+        self.selected_repo_id = Some(id);
+        cx.notify();
+    }
+
+    /// Open the highlighted repository's detail pane.
+    pub fn open_selected(&mut self, cx: &mut Context<Self>) {
+        if let Some(repo) = self.selected_repo().cloned() {
+            self.settings.right_panel_open = true;
+            self.save_settings(cx);
+            self.ensure_avatar(&repo, cx);
+            cx.notify();
+        }
+    }
+
     /// Open the branch actions menu.
     #[allow(clippy::too_many_arguments)]
     pub fn open_branch_menu(
@@ -1725,6 +1881,66 @@ impl VantageApp {
         self.branch_prompt = None;
         self.branch_field.clear();
         self.run_repo_op(&repo, cx, RepoOp::Branch, RepoOpReport::new(ok, fail), op);
+    }
+
+    /// Small dialog for a destructive action: what will happen, and one way out.
+    fn render_confirm_modal(&self, cx: &mut Context<Self>) -> gpui::Div {
+        let theme = self.theme;
+        let Some(prompt) = self.confirm.clone() else {
+            return div();
+        };
+
+        let card = div()
+            .w(px(420.0))
+            .flex()
+            .flex_col()
+            .gap(px(14.0))
+            .p(px(20.0))
+            .bg(theme.panel)
+            .border_1()
+            .border_color(theme.divider)
+            .rounded(px(12.0))
+            .shadow_lg()
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(|_this, _e, _w, cx| cx.stop_propagation()),
+            )
+            .child(div().sm().medium().fg(theme.text_app).child(prompt.title))
+            .child(div().xs().fg(theme.text_body).child(prompt.body))
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .justify_end()
+                    .gap(px(8.0))
+                    .child(
+                        crate::ui::secondary_button(&theme, "Cancel", None)
+                            .id("confirm-cancel")
+                            .on_click(cx.listener(|this, _e, _w, cx| this.cancel_confirm(cx))),
+                    )
+                    .child(
+                        crate::ui::accent_button(&theme, prompt.label)
+                            .id("confirm-ok")
+                            .bg(theme.status_red)
+                            .hover(move |s| s.bg(theme.del_text))
+                            .on_click(cx.listener(|this, _e, _w, cx| this.submit_confirm(cx))),
+                    ),
+            );
+
+        div()
+            .absolute()
+            .top(px(0.0))
+            .left(px(0.0))
+            .size_full()
+            .flex()
+            .items_center()
+            .justify_center()
+            .bg(theme.overlay)
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(|this, _e, _w, cx| this.cancel_confirm(cx)),
+            )
+            .child(card)
     }
 
     /// Small dialog for a branch action: a name to type, or a delete to confirm.
@@ -2445,6 +2661,26 @@ impl Render for VantageApp {
                     let items: Vec<(&'static str, bool, u64)> = vec![("Discard changes", true, 0)];
                     (*x, *y, name, items)
                 }
+                ContextMenu::Repo {
+                    name,
+                    uncommitted,
+                    stashes,
+                    x,
+                    y,
+                    ..
+                } => {
+                    let mut items: Vec<(&'static str, bool, u64)> = Vec::new();
+                    if *uncommitted > 0 {
+                        items.push(("Stash all changes", false, 0));
+                    }
+                    if *stashes > 0 {
+                        items.push(("Restore latest stash", false, 0));
+                    }
+                    if *uncommitted > 0 {
+                        items.push(("Discard all changes", true, 0));
+                    }
+                    (*x, *y, name.clone(), items)
+                }
                 ContextMenu::Branch {
                     name,
                     is_current,
@@ -2541,6 +2777,18 @@ impl Render for VantageApp {
                                 (ContextMenu::File { repo_id, path, .. }, "Discard changes") => {
                                     this.discard_file(repo_id, path, cx)
                                 }
+                                (ContextMenu::Repo { repo_id, .. }, "Stash all changes") => {
+                                    let id = repo_id.clone();
+                                    this.stash_repo(&id, cx);
+                                }
+                                (ContextMenu::Repo { repo_id, .. }, "Restore latest stash") => {
+                                    let id = repo_id.clone();
+                                    this.pop_stash(&id, cx);
+                                }
+                                (ContextMenu::Repo { repo_id, .. }, "Discard all changes") => {
+                                    let id = repo_id.clone();
+                                    this.ask_discard_repo(&id, cx);
+                                }
                                 (ContextMenu::Branch { repo_id, name, .. }, "Checkout branch") => {
                                     if this.selected_repo_id.as_deref() == Some(repo_id.as_str()) {
                                         this.close_file_menu(cx);
@@ -2622,6 +2870,10 @@ impl Render for VantageApp {
                 )
                 .child(deferred(panel));
         }
+        if self.confirm.is_some() {
+            let modal = self.render_confirm_modal(cx);
+            root = root.child(deferred(modal));
+        }
         if self.branch_prompt.is_some() {
             let modal = self.render_branch_modal(window, cx);
             root = root.child(deferred(modal));
@@ -2637,6 +2889,20 @@ impl Render for VantageApp {
         }
         root
     }
+}
+
+/// A destructive action waiting for confirmation.
+#[derive(Clone, Debug)]
+pub struct ConfirmPrompt {
+    pub title: String,
+    pub body: String,
+    pub label: &'static str,
+    pub action: ConfirmAction,
+}
+
+#[derive(Clone, Debug)]
+pub enum ConfirmAction {
+    DiscardRepository { repo_id: String, paths: Vec<String> },
 }
 
 /// A commit opened in the detail view: its files, and which one is on screen.
@@ -2667,6 +2933,15 @@ pub enum BranchPrompt {
 /// A right-click menu, anchored at the pointer.
 #[derive(Clone, Debug)]
 pub enum ContextMenu {
+    /// Actions for one repository row.
+    Repo {
+        repo_id: String,
+        name: String,
+        uncommitted: usize,
+        stashes: usize,
+        x: f32,
+        y: f32,
+    },
     /// Actions for one changed file.
     File {
         repo_id: String,
@@ -2847,6 +3122,7 @@ mod tests {
             workspace: "Ungrouped".to_string(),
             local_path: "/tmp/fixture".to_string(),
             has_remote: true,
+            stash_count: 0,
             current_branch: "main".to_string(),
             author: None,
             sync_state: RepoSyncState::Modified,
