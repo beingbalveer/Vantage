@@ -3,10 +3,10 @@
 
 use gpui::{div, prelude::*, px, relative, Context, Div, IntoElement, Styled};
 
-use crate::app::{RepoOp, SummaryFilter, VantageApp};
+use crate::app::{SummaryFilter, VantageApp};
 use crate::model::RepoSyncState;
 use crate::theme::Theme;
-use crate::ui::{icon, icon_button_sm, spinner, status_badges, IconSize};
+use crate::ui::{icon, status_badges, IconSize};
 use crate::ui::{primary_button, Txt};
 
 struct TableRow {
@@ -18,8 +18,6 @@ struct TableRow {
     uncommitted: usize,
     ahead: i32,
     behind: i32,
-    /// Drives the row's fetch enabled state.
-    has_remote: bool,
     activity: String,
 }
 
@@ -39,7 +37,6 @@ fn make_row(repo: &crate::model::Repository) -> TableRow {
         uncommitted: repo.uncommitted_files.len(),
         ahead: repo.ahead_count,
         behind: repo.behind_count,
-        has_remote: repo.has_remote,
         activity: repo.last_activity_label.clone(),
     }
 }
@@ -235,51 +232,15 @@ impl VantageApp {
         let selected = self.selected_repo_id.as_deref() == Some(row.id.as_str());
         let repo_id = row.id.clone();
 
-        // Fetch control: the only row-level action, so it stays on the row.
-        let fetching = self.repo_op(&row.id) == Some(RepoOp::Fetch);
-        let busy = self.repo_op(&row.id).is_some();
-        let fetch_id = row.id.clone();
-        let fetch_control: gpui::AnyElement = if fetching {
-            div()
-                .flex()
-                .items_center()
-                .justify_center()
-                .w(px(22.0))
-                .h(px(22.0))
-                .flex_shrink_0()
-                .child(spinner(
-                    format!("row-fetch-{}", row.id),
-                    "refresh-cw",
-                    IconSize::Xs,
-                    theme.accent_text,
-                ))
-                .into_any_element()
-        } else if row.has_remote && !busy {
-            icon_button_sm(&theme, "refresh-cw")
-                .id(gpui::SharedString::from(format!("row-fetch-{}", row.id)))
-                // Stop the click so it never also selects the row underneath.
-                .on_click(cx.listener(move |this, _e, _w, cx| {
-                    cx.stop_propagation();
-                    if let Some(repo) = this.repos.iter().find(|r| r.id == fetch_id).cloned() {
-                        this.fetch_repo(&repo, cx);
-                    }
-                }))
-                .into_any_element()
-        } else {
-            icon_button_sm(&theme, "refresh-cw")
-                .opacity(0.35)
-                .into_any_element()
-        };
-
         div()
             .id(gpui::SharedString::from(format!("repo-row-{}", row.id)))
             .group("repo-row")
             .flex()
             .flex_col()
             .w_full()
-            .gap(px(3.0))
+            .gap(px(5.0))
             .px(px(16.0))
-            .py(px(8.0))
+            .py(px(10.0))
             .cursor_pointer()
             .border_t_1()
             .border_color(theme.row_border)
@@ -307,7 +268,7 @@ impl VantageApp {
                             .flex_1()
                             .min_w(px(0.0))
                             .sm()
-                            .medium()
+                            .font_weight(crate::theme::W_REGULAR)
                             .fg(theme.text_app)
                             .truncate()
                             .child(row.name.clone()),
@@ -325,27 +286,28 @@ impl VantageApp {
                 div()
                     .flex()
                     .items_center()
-                    .gap(px(8.0))
+                    .gap(px(6.0))
                     .w_full()
-                    .child(icon("git-branch", IconSize::Xs, theme.icon_idle))
+                    .child(icon("git-branch", IconSize::Xxs, theme.text_dim))
                     .child(
                         div()
                             .flex_1()
                             .min_w(px(0.0))
-                            .mono_xs()
-                            .fg(theme.text_body)
+                            .text_size(px(10.0))
+                            .line_height(px(14.0))
+                            .font_family(crate::theme::FONT_MONO)
+                            .fg(theme.label_muted)
                             .truncate()
                             .child(row.branch.clone()),
                     )
                     .child(
                         div()
                             .flex_shrink_0()
-                            .xs()
-                            .fg(theme.label_muted)
+                            .text_size(px(11.0))
+                            .fg(theme.text_dim)
                             .whitespace_nowrap()
                             .child(row.activity.clone()),
-                    )
-                    .child(fetch_control),
+                    ),
             )
     }
 
@@ -521,7 +483,6 @@ fn clone_row(row: &TableRow) -> TableRow {
         uncommitted: row.uncommitted,
         ahead: row.ahead,
         behind: row.behind,
-        has_remote: row.has_remote,
         activity: row.activity.clone(),
     }
 }

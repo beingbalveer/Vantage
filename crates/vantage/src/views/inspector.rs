@@ -172,7 +172,7 @@ impl VantageApp {
                                     .flex_1()
                                     .min_w(px(0.0))
                                     .display_lg()
-                                    .semibold()
+                                    .font_weight(crate::theme::W_MEDIUM)
                                     .fg(theme.text_app)
                                     .truncate()
                                     .child(repo.name.clone()),
@@ -198,12 +198,13 @@ impl VantageApp {
                                     .flex()
                                     .items_center()
                                     .gap(px(5.0))
-                                    .child(icon("git-branch", IconSize::Xs, theme.icon_idle))
+                                    .child(icon("git-branch", IconSize::Xxs, theme.text_dim))
                                     .child(
                                         div()
-                                            .mono_xs()
-                                            .medium()
-                                            .fg(theme.text_soft)
+                                            .text_size(px(10.0))
+                                            .line_height(px(14.0))
+                                            .font_family(crate::theme::FONT_MONO)
+                                            .fg(theme.label_muted)
                                             .whitespace_nowrap()
                                             .child(repo.current_branch.clone()),
                                     ),
@@ -216,8 +217,10 @@ impl VantageApp {
                                     .items_center()
                                     .gap(px(4.0))
                                     .cursor_pointer()
-                                    .mono_x11()
-                                    .fg(theme.text_body)
+                                    .text_size(px(10.0))
+                                    .line_height(px(14.0))
+                                    .font_family(crate::theme::FONT_MONO)
+                                    .fg(theme.text_dim)
                                     .hover(move |s| s.fg(theme.text_app))
                                     .on_click(cx.listener(move |this, _e, _w, cx| {
                                         this.copy_local_path(path.clone(), cx);
@@ -441,6 +444,7 @@ impl VantageApp {
                 div()
                     .flex()
                     .items_center()
+                    .justify_between()
                     .gap(px(10.0))
                     .w_full()
                     .px(px(14.0))
@@ -456,13 +460,47 @@ impl VantageApp {
                             })),
                     )
                     .child(
-                        div()
-                            .xs()
-                            .medium()
-                            .fg(theme.text_soft)
-                            .whitespace_nowrap()
-                            .child(select_label),
-                    ),
+                        div().flex_1().min_w(px(0.0)).child(
+                            div()
+                                .xs()
+                                .medium()
+                                .fg(theme.text_soft)
+                                .whitespace_nowrap()
+                                .child(select_label),
+                        ),
+                    )
+                    .when(self.amending, |d| {
+                        d.child(
+                            div()
+                                .flex()
+                                .items_center()
+                                .gap(px(8.0))
+                                .flex_shrink_0()
+                                .child(
+                                    div()
+                                        .xs()
+                                        .medium()
+                                        .fg(theme.accent_text)
+                                        .whitespace_nowrap()
+                                        .child("Amending the last commit"),
+                                )
+                                .child(
+                                    div()
+                                        .id("cancel-amend")
+                                        .px(px(2.0))
+                                        .rounded(px(4.0))
+                                        .cursor_pointer()
+                                        .xs()
+                                        .medium()
+                                        .fg(theme.label_muted)
+                                        .hover(move |s| s.fg(theme.status_red).underline())
+                                        .child("Cancel")
+                                        .on_click(cx.listener(|this, _e, _w, cx| {
+                                            this.cancel_amend(cx);
+                                        })),
+                                ),
+                        )
+                    }),
             );
 
         for (index, file) in repo.uncommitted_files.iter().enumerate() {
@@ -493,6 +531,22 @@ impl VantageApp {
                         .py(px(8.0))
                         .xs()
                         .hover(move |s| s.bg(theme.row_hover_bg))
+                        .on_mouse_down(
+                            gpui::MouseButton::Right,
+                            cx.listener({
+                                let menu_repo = repo.id.clone();
+                                let menu_path = file.path.clone();
+                                move |this, event: &gpui::MouseDownEvent, _w, cx| {
+                                    this.open_file_menu(
+                                        &menu_repo,
+                                        &menu_path,
+                                        f32::from(event.position.x),
+                                        f32::from(event.position.y),
+                                        cx,
+                                    );
+                                }
+                            }),
+                        )
                         .child(
                             div()
                                 .flex()
@@ -657,10 +711,24 @@ impl VantageApp {
         let committing = running == Some(RepoOp::Commit);
         let busy = running.is_some();
         let message_ready = !self.commit_field.value.trim().is_empty();
-        let can_commit = !busy && staged > 0 && message_ready;
+        let amending = self.amending;
+        // Amending can be message-only, so files are optional there.
+        let can_commit = !busy && message_ready && (amending || staged > 0);
 
-        let label = if committing {
-            RepoOp::Commit.in_progress_label().to_string()
+        let label = if committing || amending && busy {
+            if amending {
+                RepoOp::Amend.in_progress_label().to_string()
+            } else {
+                RepoOp::Commit.in_progress_label().to_string()
+            }
+        } else if amending {
+            if staged == 1 {
+                "Amend 1 file".to_string()
+            } else if staged > 1 {
+                format!("Amend {staged} files")
+            } else {
+                "Amend commit".to_string()
+            }
         } else if staged == 0 {
             "Commit".to_string()
         } else if staged == 1 {
@@ -1005,6 +1073,10 @@ impl VantageApp {
                 message_width,
             );
 
+            let menu_repo = repo.id.clone();
+            let menu_short = commit.sha.clone();
+            let menu_subject = commit.message.clone();
+            let can_amend = index == 0 && repo.commit_is_local_only(0);
             list = list.child(
                 div()
                     .flex()
@@ -1014,6 +1086,20 @@ impl VantageApp {
                     .py(px(10.0))
                     .w_full()
                     .bg(theme.panel)
+                    .on_mouse_down(
+                        gpui::MouseButton::Right,
+                        cx.listener(move |this, event: &gpui::MouseDownEvent, _w, cx| {
+                            this.open_commit_menu(
+                                &menu_repo,
+                                &menu_short,
+                                &menu_subject,
+                                can_amend,
+                                f32::from(event.position.x),
+                                f32::from(event.position.y),
+                                cx,
+                            );
+                        }),
+                    )
                     .when(index > 0, |d| d.border_t_1().border_color(theme.row_border))
                     .child(
                         div()

@@ -7,8 +7,8 @@ use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
 use gpui::{
-    div, prelude::*, px, rgba, ClipboardItem, Context, FocusHandle, IntoElement, KeyDownEvent,
-    MouseButton, PathPromptOptions, Window, WindowAppearance,
+    deferred, div, prelude::*, px, rgba, ClipboardItem, Context, FocusHandle, IntoElement,
+    KeyDownEvent, MouseButton, PathPromptOptions, Window, WindowAppearance,
 };
 
 use crate::backend::Backend;
@@ -33,6 +33,8 @@ pub enum InspectorTab {
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum RepoOp {
     Fetch,
+    Discard,
+    Amend,
     Pull,
     Push,
     Commit,
@@ -45,6 +47,8 @@ impl RepoOp {
     pub fn in_progress_label(self) -> &'static str {
         match self {
             Self::Fetch => "Fetching…",
+            Self::Discard => "Discarding…",
+            Self::Amend => "Amending…",
             Self::Pull => "Pulling…",
             Self::Push => "Pushing…",
             Self::Commit => "Committing…",
@@ -169,6 +173,10 @@ pub struct VantageApp {
     /// Repositories with a fetch/pull/push still running, and which one. Rows
     /// and the detail pane turn the running action into a spinner from this.
     pub busy_repos: std::collections::HashMap<String, RepoOp>,
+    /// Right-click menu, at the pointer.
+    pub context_menu: Option<ContextMenu>,
+    /// The commit bar is in amend mode: the next commit rewrites the tip.
+    pub amending: bool,
     /// The commit created from this session, while it is still the branch tip.
     pub last_commit: Option<LastCommit>,
     /// Paths the user ticked in the detail pane, per repository, until a commit
@@ -260,6 +268,8 @@ impl VantageApp {
             is_scanning: false,
             busy_repos: std::collections::HashMap::new(),
             last_commit: None,
+            context_menu: None,
+            amending: false,
             selection: std::collections::HashMap::new(),
             avatars: std::collections::HashMap::new(),
             avatars_pending: HashSet::new(),
@@ -624,6 +634,7 @@ impl VantageApp {
     pub fn select_repo(&mut self, id: String, cx: &mut Context<Self>) {
         if self.selected_repo_id.as_deref() != Some(id.as_str()) {
             self.expanded_file = None;
+            self.context_menu = None;
             self.group_menu_open = false;
             self.copied_path = false;
         }
@@ -1368,6 +1379,36 @@ impl VantageApp {
             return;
         }
 
+        if self.amending {
+            let name = repo.name.clone();
+            let record_repo = repo.id.clone();
+            let record_summary = message.clone();
+            let previous_tip = repo.recent_commits.first().map(|commit| commit.sha.clone());
+            let paths_for_op = paths.clone();
+            self.run_repo_op(
+                &repo,
+                cx,
+                RepoOp::Amend,
+                RepoOpReport::new(
+                    format!("Amended the last commit in {name}"),
+                    format!("Could not amend the last commit in {name}"),
+                )
+                .on_success(move |app, short: String| {
+                    app.amending = false;
+                    app.commit_field.clear();
+                    app.selection.remove(&record_repo);
+                    app.last_commit = Some(LastCommit {
+                        repo_id: record_repo,
+                        short,
+                        summary: record_summary,
+                        previous_tip,
+                    });
+                }),
+                move |backend, id| backend.amend(id, &paths_for_op, &message),
+            );
+            return;
+        }
+
         let count = paths.len();
         let name = repo.name.clone();
         let ok_message = if count == 1 {
@@ -1439,6 +1480,92 @@ impl VantageApp {
     pub fn clear_summary_filter(&mut self, cx: &mut Context<Self>) {
         self.summary_filter = None;
         cx.notify();
+    }
+
+    /// Open the context menu for a changed file at the pointer.
+    pub fn open_file_menu(
+        &mut self,
+        repo_id: &str,
+        path: &str,
+        x: f32,
+        y: f32,
+        cx: &mut Context<Self>,
+    ) {
+        self.context_menu = Some(ContextMenu::File {
+            repo_id: repo_id.to_string(),
+            path: path.to_string(),
+            x,
+            y,
+        });
+        cx.notify();
+    }
+
+    /// Open the context menu for a commit at the pointer.
+    #[allow(clippy::too_many_arguments)]
+    pub fn open_commit_menu(
+        &mut self,
+        repo_id: &str,
+        short: &str,
+        subject: &str,
+        is_tip: bool,
+        x: f32,
+        y: f32,
+        cx: &mut Context<Self>,
+    ) {
+        self.context_menu = Some(ContextMenu::Commit {
+            repo_id: repo_id.to_string(),
+            short: short.to_string(),
+            subject: subject.to_string(),
+            is_tip,
+            x,
+            y,
+        });
+        cx.notify();
+    }
+
+    pub fn close_file_menu(&mut self, cx: &mut Context<Self>) {
+        self.context_menu = None;
+        cx.notify();
+    }
+
+    /// Rewrite the tip commit instead of making a new one: the message field is
+    /// pre-filled with the commit's subject and the usual file ticks apply.
+    pub fn begin_amend(&mut self, subject: &str, cx: &mut Context<Self>) {
+        self.context_menu = None;
+        self.amending = true;
+        // The files being amended live in Changes, so go there: the mode is
+        // about what the commit will contain, not just its message.
+        self.inspector_tab = InspectorTab::Changes;
+        self.commit_field.set(subject.to_string());
+        cx.notify();
+    }
+
+    pub fn cancel_amend(&mut self, cx: &mut Context<Self>) {
+        self.amending = false;
+        self.commit_field.clear();
+        cx.notify();
+    }
+
+    /// Throw away the working-tree changes of one file.
+    ///
+    /// The engine snapshots the change into a backup ref first, so even this
+    /// destructive action can be recovered inside the repository.
+    pub fn discard_file(&mut self, repo_id: &str, path: &str, cx: &mut Context<Self>) {
+        self.context_menu = None;
+        let Some(repo) = self.repos.iter().find(|repo| repo.id == repo_id).cloned() else {
+            return;
+        };
+        let file_path = path.to_string();
+        self.run_repo_op(
+            &repo,
+            cx,
+            RepoOp::Discard,
+            RepoOpReport::new(
+                format!("Discarded changes in {file_path}"),
+                format!("Could not discard {file_path}"),
+            ),
+            move |backend, id| backend.discard(id, &file_path),
+        );
     }
 
     /// The commit a detail pane may offer to undo: still the branch tip of
@@ -1783,6 +1910,10 @@ impl VantageApp {
 
     /// Escape in a field: close whichever surface owns it.
     fn cancel_field(&mut self, id: FieldId, cx: &mut Context<Self>) {
+        if id == FieldId::CommitMessage && self.amending {
+            self.cancel_amend(cx);
+            return;
+        }
         if id == FieldId::NewGroup {
             self.is_adding_group = false;
             self.group_field.clear();
@@ -1990,6 +2121,131 @@ impl Render for VantageApp {
                     })),
             );
         }
+        // A right-click menu: a press anywhere else dismisses it, and the panel
+        // paints above everything in the deferred layer.
+        if let Some(menu) = self.context_menu.clone() {
+            let bounds = window.bounds();
+            let width = 200.0;
+            let height = 96.0;
+            let (anchor_x, anchor_y, title, items) = match &menu {
+                ContextMenu::File { path, x, y, .. } => {
+                    let name = path
+                        .rsplit_once('/')
+                        .map_or(path.as_str(), |(_, name)| name)
+                        .to_string();
+                    let items: Vec<(&'static str, bool, u64)> = vec![("Discard changes", true, 0)];
+                    (*x, *y, name, items)
+                }
+                ContextMenu::Commit {
+                    short,
+                    subject,
+                    is_tip,
+                    x,
+                    y,
+                    ..
+                } => {
+                    // Only the tip commit can be rewritten, and only while it is
+                    // still local.
+                    let items: Vec<(&'static str, bool, u64)> = if *is_tip {
+                        vec![("Amend commit", false, 0)]
+                    } else {
+                        Vec::new()
+                    };
+                    (*x, *y, format!("{short}  {subject}"), items)
+                }
+            };
+            let x = anchor_x
+                .min(f32::from(bounds.size.width) - width - 8.0)
+                .max(8.0);
+            let y = anchor_y
+                .min(f32::from(bounds.size.height) - height - 8.0)
+                .max(8.0);
+
+            let mut panel = div()
+                .absolute()
+                .left(px(x))
+                .top(px(y))
+                .w(px(width))
+                .flex()
+                .flex_col()
+                .p(px(4.0))
+                .bg(theme.panel)
+                .border_1()
+                .border_color(theme.divider)
+                .rounded(px(8.0))
+                .shadow_lg()
+                .child(
+                    div()
+                        .px(px(8.0))
+                        .py(px(4.0))
+                        .xs()
+                        .fg(theme.label_muted)
+                        .truncate()
+                        .child(title),
+                )
+                .child(div().h(px(1.0)).my(px(4.0)).bg(theme.divider));
+
+            let menu_for_actions = menu.clone();
+            for (label, destructive, _) in items {
+                let action_menu = menu_for_actions.clone();
+                panel = panel.child(
+                    div()
+                        .id(gpui::SharedString::from(format!("ctx-{label}")))
+                        .flex()
+                        .items_center()
+                        .px(px(8.0))
+                        .py(px(6.0))
+                        .rounded(px(4.0))
+                        .cursor_pointer()
+                        .xs()
+                        .medium()
+                        .fg(if destructive {
+                            theme.status_red
+                        } else {
+                            theme.text_soft
+                        })
+                        .hover(move |s| s.bg(theme.row_hover_bg))
+                        .child(label)
+                        .on_click(cx.listener(move |this, _e, _w, cx| {
+                            match (&action_menu, label) {
+                                (ContextMenu::File { repo_id, path, .. }, "Discard changes") => {
+                                    this.discard_file(repo_id, path, cx)
+                                }
+                                (
+                                    ContextMenu::Commit {
+                                        repo_id, subject, ..
+                                    },
+                                    "Amend commit",
+                                ) => {
+                                    // Only the repo the menu came from can be
+                                    // amended, even if the selection moved on.
+                                    if this.selected_repo_id.as_deref() == Some(repo_id.as_str()) {
+                                        this.begin_amend(subject, cx);
+                                    } else {
+                                        this.close_file_menu(cx);
+                                    }
+                                }
+                                _ => this.close_file_menu(cx),
+                            }
+                        })),
+                );
+            }
+
+            root = root
+                .child(
+                    div()
+                        .id("context-menu-dismiss")
+                        .absolute()
+                        .top(px(0.0))
+                        .left(px(0.0))
+                        .size_full()
+                        .bg(rgba(0x00000000))
+                        .on_click(cx.listener(|this, _e, _w, cx| {
+                            this.close_file_menu(cx);
+                        })),
+                )
+                .child(deferred(panel));
+        }
         if self.is_add_modal_open {
             root = root.child(self.render_add_repo_modal(window, cx));
         }
@@ -2001,6 +2257,28 @@ impl Render for VantageApp {
         }
         root
     }
+}
+
+/// A right-click menu, anchored at the pointer.
+#[derive(Clone, Debug)]
+pub enum ContextMenu {
+    /// Actions for one changed file.
+    File {
+        repo_id: String,
+        path: String,
+        x: f32,
+        y: f32,
+    },
+    /// Actions for one commit.
+    Commit {
+        repo_id: String,
+        short: String,
+        subject: String,
+        /// The tip commit is the only one that can be amended.
+        is_tip: bool,
+        x: f32,
+        y: f32,
+    },
 }
 
 /// Which slice of the list the summary strip is showing.

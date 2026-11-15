@@ -63,6 +63,7 @@ pub const LH_LG: Pixels = px(28.0);
 /// this band, so changing it also means changing `traffic_light_position`.
 pub const HEADER_HEIGHT: Pixels = px(42.0);
 
+pub const W_REGULAR: FontWeight = FontWeight(400.0);
 pub const W_MEDIUM: FontWeight = FontWeight(500.0);
 pub const W_SEMIBOLD: FontWeight = FontWeight(600.0);
 

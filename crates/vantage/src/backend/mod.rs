@@ -207,6 +207,29 @@ impl Backend {
         Ok(())
     }
 
+    /// Rewrite the tip commit: its message, plus any paths given (they are
+    /// staged first, so the same ticked-file rule as a normal commit applies).
+    pub fn amend(&self, repo_id: &str, paths: &[String], summary: &str) -> Result<String> {
+        let repo_path = self.known_path(repo_id)?;
+        let summary = summary.to_string();
+        let paths = paths.to_vec();
+        let amended = self.runtime.block_on(async {
+            ops::stage_paths(&self.runner, &repo_path, &paths).await?;
+            ops::amend_commit(&self.runner, &repo_path, &paths, &summary, None).await
+        })?;
+        Ok(amended.short)
+    }
+
+    /// Throw away the working-tree changes of one path, keeping a backup ref so
+    /// a mistaken discard is recoverable from the repository itself.
+    pub fn discard(&self, repo_id: &str, path: &str) -> Result<()> {
+        let repo_path = self.known_path(repo_id)?;
+        let paths = vec![path.to_string()];
+        self.runtime
+            .block_on(ops::discard(&self.runner, &repo_path, &paths))?;
+        Ok(())
+    }
+
     /// Undo the tip commit of a repository, keeping its changes staged.
     ///
     /// Refuses when the commit is already on a remote branch: undoing it there

@@ -91,7 +91,7 @@ pub fn status_badges(
     behind: i32,
     conflict: bool,
 ) -> Div {
-    let mut row = div().flex().items_center().gap(px(10.0)).flex_shrink_0();
+    let mut row = div().flex().items_center().gap(px(8.0)).flex_shrink_0();
     for kind in status_kinds(uncommitted, ahead, behind, conflict) {
         row = row.child(badge(theme, kind));
     }
@@ -106,8 +106,14 @@ fn badge(theme: &Theme, kind: StatusKind) -> Div {
         .gap(px(4.0))
         .flex_shrink_0()
         .whitespace_nowrap()
-        .child(icon(kind.icon(), IconSize::Xs, color))
-        .child(div().xs().medium().fg(color).child(kind.label()))
+        .child(icon(kind.icon(), IconSize::Xxs, color))
+        .child(
+            div()
+                .text_size(px(11.0))
+                .medium()
+                .fg(color)
+                .child(kind.label()),
+        )
 }
 
 #[cfg(test)]

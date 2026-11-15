@@ -46,9 +46,6 @@ pub trait Txt: Styled + Sized {
         self.fam(FONT_MONO, TEXT_XS, LH_XS)
     }
     /// font-mono text-[11px]
-    fn mono_x11(self) -> Self {
-        self.fam(FONT_MONO, 11.0, px(16.0))
-    }
     fn medium(self) -> Self {
         self.font_weight(W_MEDIUM)
     }

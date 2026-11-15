@@ -38,25 +38,6 @@ pub fn icon_button(theme: &Theme, name: &'static str) -> Div {
         .child(icon(name, IconSize::Md, theme.label_muted))
 }
 
-/// Table-row density of [`icon_button`]: a 22px target that fits inside a
-/// single row without widening it. Callers own the id, the handler and any
-/// disabled styling, so a no-op action can drop its click listener.
-pub fn icon_button_sm(theme: &Theme, name: &'static str) -> Div {
-    let hover = theme.nav_hover_bg;
-
-    div()
-        .flex()
-        .items_center()
-        .justify_center()
-        .w(px(22.0))
-        .h(px(22.0))
-        .rounded(px(RADIUS_MD - 2.0))
-        .flex_shrink_0()
-        .cursor_pointer()
-        .hover(move |s| s.bg(hover))
-        .child(icon(name, IconSize::Xs, theme.label_muted))
-}
-
 /// A glyph that turns for as long as it stays mounted — the in-flight state of
 /// a fetch/pull/push.
 ///

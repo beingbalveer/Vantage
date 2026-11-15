@@ -20,7 +20,7 @@ pub use button::{
     accent_button, accent_button_with, disabled_button, primary_button, secondary_button,
     secondary_button_with,
 };
-pub use icon::{icon, icon_button, icon_button_sm, spinner};
+pub use icon::{icon, icon_button, spinner};
 pub use input::{apply_field_key, field, FieldKey, FieldState, FieldVariant};
 pub use status::status_badges;
 pub use tabs::{choice_button, tab};
