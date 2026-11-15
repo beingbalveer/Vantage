@@ -8,6 +8,7 @@ pub mod avatar;
 pub mod button;
 pub mod icon;
 pub mod input;
+pub mod status;
 pub mod tabs;
 pub mod text;
 pub mod toggle;
@@ -20,6 +21,7 @@ pub use button::{
 };
 pub use icon::{icon, icon_button, icon_button_sm, spinner};
 pub use input::{apply_field_key, field, FieldKey, FieldState, FieldVariant};
+pub use status::status_badges;
 pub use tabs::{choice_button, tab};
 pub use text::Txt;
 pub use toggle::{checkbox, switch};

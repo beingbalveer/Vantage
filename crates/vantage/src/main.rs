@@ -19,7 +19,6 @@ mod theme;
 mod ui;
 mod views;
 mod watcher;
-mod widgets;
 
 use std::borrow::Cow;
 

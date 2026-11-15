@@ -1,12 +1,12 @@
 //! All Repositories / Needs Attention list: one bordered container of compact
 //! two-line rows inside collapsible group headers.
 
-use gpui::{div, prelude::*, px, relative, Context, Div, IntoElement, Rgba, Styled};
+use gpui::{div, prelude::*, px, relative, Context, Div, IntoElement, Styled};
 
 use crate::app::{RepoOp, SummaryFilter, VantageApp};
 use crate::model::RepoSyncState;
 use crate::theme::Theme;
-use crate::ui::{icon, icon_button_sm, spinner, IconSize};
+use crate::ui::{icon, icon_button_sm, spinner, status_badges, IconSize};
 use crate::ui::{primary_button, Txt};
 
 struct TableRow {
@@ -312,7 +312,13 @@ impl VantageApp {
                             .truncate()
                             .child(row.name.clone()),
                     )
-                    .child(status_badges(&theme, row)),
+                    .child(status_badges(
+                        &theme,
+                        row.uncommitted,
+                        row.ahead,
+                        row.behind,
+                        row.sync == RepoSyncState::Conflict,
+                    )),
             )
             // Branch, then how long ago it moved, then the row action.
             .child(
@@ -406,54 +412,6 @@ impl VantageApp {
         }
         list
     }
-}
-
-/// Compact status line for a row: every state the repository is in, not just
-/// one, each with an icon and a word so colour is never the only signal.
-fn status_badges(theme: &Theme, row: &TableRow) -> Div {
-    let mut badges = div().flex().items_center().gap(px(10.0)).flex_shrink_0();
-
-    if row.sync == RepoSyncState::Conflict {
-        badges = badges.child(badge("alert-triangle", "Conflict", theme.status_red));
-    }
-    if row.uncommitted > 0 {
-        let label = if row.uncommitted == 1 {
-            "1 change".to_string()
-        } else {
-            format!("{} changes", row.uncommitted)
-        };
-        badges = badges.child(badge("file-diff", &label, theme.status_amber));
-    }
-    if row.ahead > 0 {
-        badges = badges.child(badge(
-            "arrow-up",
-            &format!("{} ahead", row.ahead),
-            theme.status_blue,
-        ));
-    }
-    if row.behind > 0 {
-        badges = badges.child(badge(
-            "arrow-down",
-            &format!("{} behind", row.behind),
-            theme.status_red,
-        ));
-    }
-    if row.sync == RepoSyncState::Clean {
-        badges = badges.child(badge("circle-check-big", "Clean", theme.status_green));
-    }
-
-    badges
-}
-
-fn badge(icon_name: &'static str, label: &str, color: Rgba) -> Div {
-    div()
-        .flex()
-        .items_center()
-        .gap(px(4.0))
-        .flex_shrink_0()
-        .whitespace_nowrap()
-        .child(icon(icon_name, IconSize::Xs, color))
-        .child(div().xs().medium().fg(color).child(label.to_string()))
 }
 
 /// One quiet line of totals above the list: no cards, no chrome. Each item is a

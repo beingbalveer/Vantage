@@ -9,7 +9,6 @@ use crate::ui::{
     Txt,
 };
 use crate::ui::{icon, IconSize};
-use crate::widgets::status_text;
 
 impl VantageApp {
     pub fn render_inspector(
@@ -178,10 +177,12 @@ impl VantageApp {
                                     .truncate()
                                     .child(repo.name.clone()),
                             )
-                            .child(status_text(
+                            .child(crate::ui::status_badges(
                                 &theme,
-                                repo.sync_state,
                                 repo.uncommitted_files.len(),
+                                repo.ahead_count,
+                                repo.behind_count,
+                                repo.sync_state == crate::model::RepoSyncState::Conflict,
                             )),
                     )
                     .child(
