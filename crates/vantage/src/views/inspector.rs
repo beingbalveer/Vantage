@@ -753,7 +753,35 @@ impl VantageApp {
                         ),
                 );
 
-            if is_expanded {
+            if is_expanded && is_image_path(&file.path) {
+                // Pictures get a picture: git has no lines to show for them.
+                let full = crate::app::expand_home(&repo.local_path).join(&file.path);
+                row = row.child(
+                    div()
+                        .flex()
+                        .flex_col()
+                        .items_center()
+                        .gap(px(6.0))
+                        .w_full()
+                        .px(px(14.0))
+                        .py(px(12.0))
+                        .bg(theme.diff_bg)
+                        .border_t_1()
+                        .border_color(theme.divider)
+                        .child(
+                            gpui::img(full)
+                                .max_h(px(260.0))
+                                .max_w(px(420.0))
+                                .object_fit(gpui::ObjectFit::Contain),
+                        )
+                        .child(
+                            div()
+                                .xs()
+                                .fg(theme.label_muted)
+                                .child("Image changes have no line diff."),
+                        ),
+                );
+            } else if is_expanded {
                 let mut diff = div()
                     .flex()
                     .flex_col()
@@ -1703,6 +1731,14 @@ impl VantageApp {
                     }),
             )
     }
+}
+
+/// Extensions git renders as "Binary files differ"; we show the picture itself.
+fn is_image_path(path: &str) -> bool {
+    matches!(
+        path.rsplit_once('.').map(|(_, ext)| ext.to_ascii_lowercase()),
+        Some(ext) if matches!(ext.as_str(), "png" | "jpg" | "jpeg" | "gif" | "webp" | "bmp")
+    )
 }
 
 /// Repo-relative path split into `(folder, file name)` for the row label.

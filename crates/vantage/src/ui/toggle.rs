@@ -13,9 +13,9 @@ pub fn checkbox(theme: &Theme, checked: bool) -> Div {
         .items_center()
         .justify_center()
         .flex_shrink_0()
-        .w(px(14.0))
-        .h(px(14.0))
-        .rounded(px(3.0))
+        .w(px(16.0))
+        .h(px(16.0))
+        .rounded(px(4.0))
         .border_1()
         .cursor_pointer();
 

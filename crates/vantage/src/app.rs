@@ -42,6 +42,7 @@ pub enum RepoOp {
     Branch,
     Stash,
     Revert,
+    Merge,
 }
 
 impl RepoOp {
@@ -55,6 +56,7 @@ impl RepoOp {
             Self::Branch => "Updating branch…",
             Self::Stash => "Stashing…",
             Self::Revert => "Reverting…",
+            Self::Merge => "Merging…",
             Self::Pull => "Pulling…",
             Self::Push => "Pushing…",
             Self::Commit => "Committing…",
@@ -1796,6 +1798,37 @@ impl VantageApp {
             return;
         };
         match prompt.action {
+            ConfirmAction::MergeBranch { repo_id, target } => {
+                let Some(repo) = self.repos.iter().find(|repo| repo.id == repo_id).cloned() else {
+                    return;
+                };
+                let target_for_op = target.clone();
+                self.run_repo_op(
+                    &repo,
+                    cx,
+                    RepoOp::Merge,
+                    RepoOpReport::new(
+                        format!("Merged {target}"),
+                        format!("Could not merge {target}"),
+                    ),
+                    move |backend, id| backend.merge(id, &target_for_op).map(|_| ()),
+                );
+            }
+            ConfirmAction::UpdateFromDefault { repo_id } => {
+                let Some(repo) = self.repos.iter().find(|repo| repo.id == repo_id).cloned() else {
+                    return;
+                };
+                self.run_repo_op(
+                    &repo,
+                    cx,
+                    RepoOp::Merge,
+                    RepoOpReport::new(
+                        "Updated from the default branch".to_string(),
+                        "Could not update from the default branch".to_string(),
+                    ),
+                    move |backend, id| backend.update_from_default(id).map(|_| ()),
+                );
+            }
             ConfirmAction::ForgetRepository { repo_id } => {
                 let Some(backend) = self.backend.clone() else {
                     return;
@@ -1847,6 +1880,45 @@ impl VantageApp {
                 .to_string(),
             label: "Remove",
             action: ConfirmAction::ForgetRepository {
+                repo_id: repo_id.to_string(),
+            },
+        });
+        cx.notify();
+    }
+
+    /// Ask before merging another branch into the current one.
+    pub fn ask_merge_branch(&mut self, repo_id: &str, target: &str, cx: &mut Context<Self>) {
+        self.context_menu = None;
+        let Some(repo) = self.repos.iter().find(|repo| repo.id == repo_id).cloned() else {
+            return;
+        };
+        self.confirm = Some(ConfirmPrompt {
+            title: format!("Merge {target} into {}?", repo.current_branch),
+            body: "Git will merge and commit automatically. If the branches conflict, the merge \
+                   stops and the files are left for you to resolve."
+                .to_string(),
+            label: "Merge",
+            action: ConfirmAction::MergeBranch {
+                repo_id: repo_id.to_string(),
+                target: target.to_string(),
+            },
+        });
+        cx.notify();
+    }
+
+    /// Ask before pulling the default branch into the current one.
+    pub fn ask_update_from_default(&mut self, repo_id: &str, cx: &mut Context<Self>) {
+        self.context_menu = None;
+        let Some(repo) = self.repos.iter().find(|repo| repo.id == repo_id).cloned() else {
+            return;
+        };
+        self.confirm = Some(ConfirmPrompt {
+            title: format!("Update {} from the default branch?", repo.current_branch),
+            body: "Vantage fetches, then merges the remote default branch into the branch you \
+                   are on."
+                .to_string(),
+            label: "Update",
+            action: ConfirmAction::UpdateFromDefault {
                 repo_id: repo_id.to_string(),
             },
         });
@@ -3270,6 +3342,7 @@ impl Render for VantageApp {
                             items.push(("Discard all changes", true, 0));
                         }
                     } else {
+                        items.push(("Update from default branch", false, 0));
                         items.push(("View on GitHub", false, 0));
                         items.push(("Remove from list", true, 0));
                         items.push(("Reveal in Finder", false, 0));
@@ -3289,6 +3362,9 @@ impl Render for VantageApp {
                     let mut items: Vec<(&'static str, bool, u64)> = Vec::new();
                     if !*is_current {
                         items.push(("Checkout branch", false, 0));
+                    }
+                    if !*is_current {
+                        items.push(("Merge into current branch", false, 0));
                     }
                     items.push(("New branch from this branch", false, 0));
                     if *is_current {
@@ -3386,6 +3462,21 @@ impl Render for VantageApp {
                                 (ContextMenu::Repo { repo_id, .. }, "Discard all changes") => {
                                     let id = repo_id.clone();
                                     this.ask_discard_repo(&id, cx);
+                                }
+                                (
+                                    ContextMenu::Repo { repo_id, .. },
+                                    "Update from default branch",
+                                ) => {
+                                    let id = repo_id.clone();
+                                    this.ask_update_from_default(&id, cx);
+                                }
+                                (
+                                    ContextMenu::Branch { repo_id, name, .. },
+                                    "Merge into current branch",
+                                ) => {
+                                    let id = repo_id.clone();
+                                    let branch = name.clone();
+                                    this.ask_merge_branch(&id, &branch, cx);
                                 }
                                 (ContextMenu::Repo { repo_id, .. }, "View on GitHub") => {
                                     let id = repo_id.clone();
@@ -3535,6 +3626,8 @@ pub struct ConfirmPrompt {
 pub enum ConfirmAction {
     DiscardRepository { repo_id: String, paths: Vec<String> },
     ForgetRepository { repo_id: String },
+    MergeBranch { repo_id: String, target: String },
+    UpdateFromDefault { repo_id: String },
 }
 
 /// A commit opened in the detail view: its files, and which one is on screen.

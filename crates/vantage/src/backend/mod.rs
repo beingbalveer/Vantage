@@ -20,7 +20,7 @@ use tokio::runtime::Runtime;
 use vantage_core::git::ops;
 use vantage_core::git::refs::{
     checkout_branch, create_branch, delete_branch, has_upstream, is_commit_on_remote,
-    rename_branch, sync_fetch, sync_pull, sync_push, PullStrategy,
+    merge_into_current, rename_branch, sync_fetch, sync_pull, sync_push, PullStrategy,
 };
 use vantage_core::git::stash::{stash_pop, stash_push};
 use vantage_core::git::status::query_repo_status;
@@ -301,6 +301,32 @@ impl Backend {
         ))?;
         self.add_repo(&path)?;
         Ok(())
+    }
+
+    /// Merge `target` into the checked-out branch. Returns whether git stopped
+    /// on conflicts, in which case the tree is left for the user to resolve.
+    pub fn merge(&self, repo_id: &str, target: &str) -> Result<bool> {
+        let repo_path = self.known_path(repo_id)?;
+        let outcome =
+            self.runtime
+                .block_on(merge_into_current(&self.runner, &repo_path, target))?;
+        Ok(outcome.conflicted)
+    }
+
+    /// Fetch, then merge `origin/<default>` into the current branch.
+    pub fn update_from_default(&self, repo_id: &str) -> Result<bool> {
+        let repo_path = self.known_path(repo_id)?;
+        let default = self
+            .runtime
+            .block_on(repos::default_branch(&self.runner, &repo_path));
+        self.runtime
+            .block_on(sync_fetch(&self.runner, &repo_path))?;
+        let outcome = self.runtime.block_on(merge_into_current(
+            &self.runner,
+            &repo_path,
+            &format!("origin/{default}"),
+        ))?;
+        Ok(outcome.conflicted)
     }
 
     /// The browser page for the repository's `origin`, when it is a hosted one.

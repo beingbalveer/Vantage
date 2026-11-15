@@ -4,7 +4,7 @@
 //! heights, so the app keeps one geometry as it grows.
 
 pub const RADIUS_MD: f32 = 8.0;
-pub const CONTROL_MD: f32 = 30.0;
+pub const CONTROL_MD: f32 = 32.0;
 
 /// Height of a control that sits in a one-line row (the commit bar's message
 /// field and its button). Pinning one height keeps them aligned, and means

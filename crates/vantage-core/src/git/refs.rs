@@ -167,6 +167,36 @@ async fn checkout_locked(
     Ok(())
 }
 
+/// What a merge left behind.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MergeOutcome {
+    /// True when git stopped on conflicts; the working tree is left for the
+    /// user, exactly as the command line would.
+    pub conflicted: bool,
+}
+
+/// Merge `target` (a branch or remote ref) into the checked-out branch.
+pub async fn merge_into_current(
+    runner: &GitRunner,
+    repo_path: &Path,
+    target: &str,
+) -> Result<MergeOutcome, AppError> {
+    let repo_lock = runner.get_repo_lock(repo_path).await;
+    let _repo_guard = repo_lock.lock().await;
+
+    let out = runner
+        .run_write(repo_path, &["merge", "--no-edit", target], 120)
+        .await?;
+    if out.success() {
+        return Ok(MergeOutcome { conflicted: false });
+    }
+    let stderr = out.stderr.clone();
+    if stderr.contains("CONFLICT") || stderr.contains("Automatic merge failed") {
+        return Ok(MergeOutcome { conflicted: true });
+    }
+    Err(AppError::other(stderr))
+}
+
 pub async fn sync_fetch(runner: &GitRunner, repo_path: &Path) -> Result<(), AppError> {
     let repo_lock = runner.get_repo_lock(repo_path).await;
     let _repo_guard = repo_lock.lock().await;
