@@ -195,6 +195,22 @@ impl VantageApp {
                             .fg(theme.label_muted)
                             .child(
                                 div()
+                                    .flex()
+                                    .items_center()
+                                    .gap(px(5.0))
+                                    .child(icon("git-branch", IconSize::Xs, theme.icon_idle))
+                                    .child(
+                                        div()
+                                            .mono_xs()
+                                            .medium()
+                                            .fg(theme.text_soft)
+                                            .whitespace_nowrap()
+                                            .child(repo.current_branch.clone()),
+                                    ),
+                            )
+                            .child(div().child("·"))
+                            .child(
+                                div()
                                     .id("copy-path")
                                     .flex()
                                     .items_center()
@@ -1056,11 +1072,9 @@ impl VantageApp {
         list
     }
 
-    /// One band under the header: the branch, where it points, and the three git
-    /// actions for this repository.
-    ///
-    /// Ahead/behind appear only when they are non-zero — a row of `↑0 ↓0` is
-    /// noise next to buttons that already say what can happen.
+    /// Toolbar under the identity block: the three git actions for this
+    /// repository. Branch, counts and tree status live in the header above, so
+    /// nothing here repeats them.
     fn render_inspector_bar(
         &self,
         repo: &crate::model::Repository,
@@ -1101,55 +1115,13 @@ impl VantageApp {
         div()
             .flex()
             .items_center()
-            .justify_between()
+            .justify_end()
             .flex_wrap()
-            .gap(px(12.0))
+            .gap(px(8.0))
             .px(px(24.0))
-            .py(px(10.0))
+            .py(px(8.0))
             .border_b_1()
             .border_color(theme.divider)
-            .child(
-                div()
-                    .flex()
-                    .items_center()
-                    .gap(px(8.0))
-                    .flex_1()
-                    .min_w(px(0.0))
-                    .child(icon("git-branch", IconSize::Sm, theme.icon_idle))
-                    .child(
-                        div()
-                            .mono_xs()
-                            .fg(theme.text_soft)
-                            .whitespace_nowrap()
-                            .child(repo.current_branch.clone()),
-                    )
-                    .when(ahead > 0, |d| {
-                        d.child(
-                            div()
-                                .flex()
-                                .items_center()
-                                .gap(px(2.0))
-                                .mono_xs()
-                                .medium()
-                                .fg(theme.accent_text)
-                                .child(icon("arrow-up", IconSize::Xs, theme.accent_text))
-                                .child(ahead.to_string()),
-                        )
-                    })
-                    .when(behind > 0, |d| {
-                        d.child(
-                            div()
-                                .flex()
-                                .items_center()
-                                .gap(px(2.0))
-                                .mono_xs()
-                                .medium()
-                                .fg(theme.status_red)
-                                .child(icon("arrow-down", IconSize::Xs, theme.status_red))
-                                .child(behind.to_string()),
-                        )
-                    }),
-            )
             .child(
                 div()
                     .flex()
