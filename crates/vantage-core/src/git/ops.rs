@@ -1603,6 +1603,72 @@ pub async fn unstage_path(
     Ok(())
 }
 
+/// Stage every change in the working tree, untracked files included.
+///
+/// The bulk counterpart of [`stage_path`]: one git call for the whole list, so
+/// "select all" costs the same as ticking a single box.
+pub async fn stage_all(runner: &GitRunner, repo_path: &Path) -> Result<(), AppError> {
+    let out = runner
+        .run_write_literal(repo_path, &["add", "-A"], 60)
+        .await?;
+    if !out.success() {
+        return Err(AppError::other(out.stderr));
+    }
+    Ok(())
+}
+
+/// Stage several paths in one call, with literal pathspecs.
+///
+/// The commit path uses this so the index always contains every path the UI
+/// handed over, even when an individual stage from an earlier click had not
+/// landed yet — otherwise a ticked file could be dropped from the commit.
+pub async fn stage_paths(
+    runner: &GitRunner,
+    repo_path: &Path,
+    paths: &[String],
+) -> Result<(), AppError> {
+    if paths.is_empty() {
+        return Ok(());
+    }
+    let mut args = vec!["add", "-A", "--"];
+    for path in paths {
+        args.push(path.as_str());
+    }
+    let out = runner.run_write_literal(repo_path, &args, 60).await?;
+    if !out.success() {
+        return Err(AppError::other(out.stderr));
+    }
+    Ok(())
+}
+
+/// Unstage everything, leaving the working tree untouched.
+///
+/// Like [`unstage_path`], an unborn HEAD has nothing to restore from, so that
+/// case drops the index entries instead.
+pub async fn unstage_all(runner: &GitRunner, repo_path: &Path) -> Result<(), AppError> {
+    let out = runner
+        .run_write_literal(repo_path, &["restore", "--staged", "--", "."], 60)
+        .await?;
+    if out.success() {
+        return Ok(());
+    }
+    if !is_unborn_head_error(&out.stderr) {
+        return Err(AppError::other(out.stderr));
+    }
+
+    let fallback = runner
+        .run_write_literal(
+            repo_path,
+            &["rm", "--cached", "--quiet", "-r", "--", "."],
+            60,
+        )
+        .await?;
+    if !fallback.success() {
+        return Err(AppError::other(fallback.stderr));
+    }
+    Ok(())
+}
+
 /// Whether git refused an operation because HEAD has no commit yet.
 fn is_unborn_head_error(stderr: &str) -> bool {
     stderr.contains("HEAD")
@@ -4058,6 +4124,108 @@ mod tests {
         .await
         .unwrap_err();
         assert_eq!(err.code, "Validation");
+    }
+
+    #[tokio::test]
+    async fn stage_paths_stages_exactly_the_given_list() {
+        let runner = GitRunner::new();
+        let repo = TempTestRepo::new(&runner).await;
+
+        fs::write(repo.path.join("a.txt"), "a\n").unwrap();
+        fs::write(repo.path.join("b.txt"), "b\n").unwrap();
+        runner
+            .run_write(&repo.path, &["add", "a.txt", "b.txt"], 10)
+            .await
+            .unwrap();
+        runner
+            .run_write(&repo.path, &["commit", "-m", "init"], 10)
+            .await
+            .unwrap();
+
+        // One modified, one brand new, one left alone.
+        fs::write(repo.path.join("a.txt"), "a changed\n").unwrap();
+        fs::write(repo.path.join("c.txt"), "c\n").unwrap();
+        fs::write(repo.path.join("b.txt"), "b changed\n").unwrap();
+
+        stage_paths(
+            &runner,
+            &repo.path,
+            &["a.txt".to_string(), "c.txt".to_string()],
+        )
+        .await
+        .unwrap();
+
+        let staged = runner
+            .run_read(&repo.path, &["diff", "--cached", "--name-only"])
+            .await
+            .unwrap()
+            .stdout_string();
+        assert!(staged.contains("a.txt"), "staged: {staged}");
+        assert!(staged.contains("c.txt"), "untracked path must be staged");
+        assert!(
+            !staged.contains("b.txt"),
+            "a path outside the list must stay unstaged"
+        );
+        assert_eq!(
+            fs::read_to_string(repo.path.join("b.txt")).unwrap(),
+            "b changed\n",
+            "staging must not touch working-tree content"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_stage_and_unstage_every_path() {
+        let runner = GitRunner::new();
+        let repo = TempTestRepo::new(&runner).await;
+
+        fs::write(repo.path.join("tracked.txt"), "tracked\n").unwrap();
+        runner
+            .run_write(&repo.path, &["add", "tracked.txt"], 10)
+            .await
+            .unwrap();
+        runner
+            .run_write(&repo.path, &["commit", "-m", "init"], 10)
+            .await
+            .unwrap();
+
+        // One modified file plus one never-tracked file.
+        fs::write(repo.path.join("tracked.txt"), "tracked changed\n").unwrap();
+        fs::write(repo.path.join("fresh.txt"), "fresh\n").unwrap();
+        stage_all(&runner, &repo.path).await.unwrap();
+
+        let staged = runner
+            .run_read(&repo.path, &["diff", "--cached", "--name-only"])
+            .await
+            .unwrap()
+            .stdout_string();
+        assert!(staged.contains("tracked.txt"), "staged: {staged}");
+        assert!(staged.contains("fresh.txt"), "untracked must be staged too");
+
+        unstage_all(&runner, &repo.path).await.unwrap();
+        let staged = runner
+            .run_read(&repo.path, &["diff", "--cached", "--name-only"])
+            .await
+            .unwrap()
+            .stdout_string();
+        assert!(staged.trim().is_empty(), "index should be clean again");
+        assert_eq!(
+            fs::read_to_string(repo.path.join("fresh.txt")).unwrap(),
+            "fresh\n",
+            "unstaging must not delete working-tree content"
+        );
+
+        // Unborn HEAD: nothing to restore from, so the index is dropped.
+        let unborn = TempTestRepo::new(&runner).await;
+        fs::write(unborn.path.join("new.txt"), "new\n").unwrap();
+        stage_all(&runner, &unborn.path).await.unwrap();
+        unstage_all(&runner, &unborn.path).await.unwrap();
+        let staged = runner
+            .run_read(&unborn.path, &["diff", "--cached", "--name-only"])
+            .await
+            .unwrap()
+            .stdout_string();
+        assert!(staged.trim().is_empty());
+        assert!(unborn.path.join("new.txt").exists());
     }
 
     #[tokio::test]

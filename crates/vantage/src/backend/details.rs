@@ -10,6 +10,8 @@ use std::collections::{HashMap, HashSet};
 use std::path::Path;
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use crate::model::{CommitIdentity, PreviewKind, PreviewLine};
+
 use vantage_core::git::{diff, github, log, refs, status};
 use vantage_core::GitRunner;
 
@@ -18,8 +20,19 @@ use crate::model::{BranchInfo, ChangedFile, CommitEntry, FileChangeStatus};
 /// Commits listed per branch panel.
 const COMMIT_LIMIT: u32 = 15;
 /// Patch lines kept as a changed file's preview.
-const PREVIEW_LINES: usize = 8;
+///
+/// Generous enough to show whole hunks with their context, bounded so a
+/// thousand-line rewrite cannot be put into the row model.
+const PREVIEW_LINES: usize = 200;
 const NO_REMOTE: &str = "no remote";
+
+/// Display placeholder for a repository with no `origin`.
+///
+/// Callers that need to know whether a remote exists compare the display value
+/// against this instead of re-reading `git config`.
+pub fn no_remote_label() -> &'static str {
+    NO_REMOTE
+}
 const NO_COMMITS: &str = "no commits";
 const UNKNOWN_AUTHOR: &str = "unknown";
 
@@ -417,7 +430,10 @@ async fn numstat_totals(runner: &GitRunner, repo_path: &Path) -> HashMap<String,
 async fn diff_preview_maps(
     runner: &GitRunner,
     repo_path: &Path,
-) -> (HashMap<String, Vec<String>>, HashMap<String, Vec<String>>) {
+) -> (
+    HashMap<String, Vec<PreviewLine>>,
+    HashMap<String, Vec<PreviewLine>>,
+) {
     (
         diff_preview_map(runner, repo_path, false).await,
         diff_preview_map(runner, repo_path, true).await,
@@ -428,7 +444,7 @@ async fn diff_preview_map(
     runner: &GitRunner,
     repo_path: &Path,
     staged: bool,
-) -> HashMap<String, Vec<String>> {
+) -> HashMap<String, Vec<PreviewLine>> {
     let mut args = vec!["diff", "--no-color", "--no-ext-diff"];
     if staged {
         args.push("--cached");
@@ -446,7 +462,7 @@ async fn diff_preview_map(
 /// where it is `/dev/null` and the `---` header names the removed path
 /// (`a/...`). Blocks without file headers, such as binary or mode-only
 /// changes, contribute no entry.
-fn parse_diff_previews(patch: &str) -> HashMap<String, Vec<String>> {
+fn parse_diff_previews(patch: &str) -> HashMap<String, Vec<PreviewLine>> {
     let mut previews = HashMap::new();
     let mut block: Vec<&str> = Vec::new();
 
@@ -464,7 +480,7 @@ fn parse_diff_previews(patch: &str) -> HashMap<String, Vec<String>> {
     previews
 }
 
-fn insert_block_preview(previews: &mut HashMap<String, Vec<String>>, block: &[&str]) {
+fn insert_block_preview(previews: &mut HashMap<String, Vec<PreviewLine>>, block: &[&str]) {
     let Some(path) = block_path(block) else {
         return;
     };
@@ -527,18 +543,160 @@ fn unquote_path(path: &str) -> String {
     unquoted
 }
 
-/// Keep git's patch prefixes (`+`, `-`, `@@`, `---`, `+++`) only.
-fn preview_lines(patch: &str) -> Vec<String> {
-    let mut preview = Vec::new();
+/// Turn one file's patch into the lines the row renders.
+///
+/// File metadata (`diff --git`, `index`, `---`, `+++`, mode and rename lines) is
+/// dropped: it says nothing about the change and used to fill the whole preview.
+/// Hunk headers and context lines are kept, and both line numbers are tracked so
+/// the view can draw a real gutter.
+fn preview_lines(patch: &str) -> Vec<PreviewLine> {
+    let mut preview: Vec<PreviewLine> = Vec::new();
+    // (next old line, next new line) from the current `@@` header.
+    let mut old_number: Option<u32> = None;
+    let mut new_number: Option<u32> = None;
+
     for line in patch.lines() {
-        if line.starts_with(['+', '-', '@']) {
-            preview.push(line.to_string());
-            if preview.len() == PREVIEW_LINES {
-                break;
+        if preview.len() == PREVIEW_LINES {
+            break;
+        }
+
+        if line.starts_with("@@") {
+            let (old_start, new_start) = hunk_starts(line);
+            old_number = old_start;
+            new_number = new_start;
+            preview.push(PreviewLine {
+                kind: PreviewKind::Hunk,
+                old_line: None,
+                new_line: None,
+                text: line.to_string(),
+            });
+            continue;
+        }
+
+        // Anything before the first hunk is file metadata.
+        let inside_hunk = old_number.is_some() || new_number.is_some();
+        if !inside_hunk || is_patch_metadata(line) {
+            continue;
+        }
+
+        let (kind, old_line, new_line, text) = match line.chars().next() {
+            Some('+') => {
+                let text = line[1..].to_string();
+                let line_no = new_number;
+                new_number = new_number.map(|n| n + 1);
+                (PreviewKind::Added, None, line_no, text)
             }
+            Some('-') => {
+                let text = line[1..].to_string();
+                let line_no = old_number;
+                old_number = old_number.map(|n| n + 1);
+                (PreviewKind::Removed, line_no, None, text)
+            }
+            Some(' ') => {
+                let text = line[1..].to_string();
+                let (old_line, new_line) = (old_number, new_number);
+                old_number = old_number.map(|n| n + 1);
+                new_number = new_number.map(|n| n + 1);
+                (PreviewKind::Context, old_line, new_line, text)
+            }
+            // `\ No newline at end of file` and anything else git adds.
+            _ => continue,
+        };
+
+        preview.push(PreviewLine {
+            kind,
+            old_line,
+            new_line,
+            text,
+        });
+    }
+
+    preview
+}
+
+/// The `(old, new)` first line of a `@@ -a,b +c,d @@` header.
+fn hunk_starts(header: &str) -> (Option<u32>, Option<u32>) {
+    let mut old = None;
+    let mut new = None;
+    for token in header.split_whitespace() {
+        if let Some(rest) = token.strip_prefix('-') {
+            old = parse_start(rest);
+        } else if let Some(rest) = token.strip_prefix('+') {
+            new = parse_start(rest);
+        }
+        if old.is_some() && new.is_some() {
+            break;
         }
     }
-    preview
+    (old, new)
+}
+
+fn parse_start(range: &str) -> Option<u32> {
+    let start = range.split(',').next()?;
+    start.parse().ok()
+}
+
+/// File-level patch lines that carry no change content.
+fn is_patch_metadata(line: &str) -> bool {
+    const PREFIXES: [&str; 12] = [
+        "diff --git ",
+        "index ",
+        "--- ",
+        "+++ ",
+        "new file mode ",
+        "deleted file mode ",
+        "old mode ",
+        "new mode ",
+        "similarity index ",
+        "rename from ",
+        "rename to ",
+        "Binary files ",
+    ];
+    PREFIXES.iter().any(|prefix| line.starts_with(prefix))
+}
+
+// ---------------- Commit identity ----------------
+
+/// The identity git will use for the next commit in `path`.
+///
+/// Like [`remote`], this is a single cheap config read done synchronously: the
+/// dashboard needs it for the commit bar of the selected repository. `git config
+/// --get-regexp` already resolves precedence, so a repository-local `user.name`
+/// beats the global one.
+pub fn commit_identity(path: &Path) -> Option<CommitIdentity> {
+    let output = std::process::Command::new("git")
+        .arg("-C")
+        .arg(path)
+        .args(["config", "--get-regexp", "^user\\.(name|email)$"])
+        .env("LC_ALL", "C")
+        .env("GIT_TERMINAL_PROMPT", "0")
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+
+    let mut name = None;
+    let mut email = None;
+    for line in String::from_utf8_lossy(&output.stdout).lines() {
+        let Some((key, value)) = line.split_once(char::is_whitespace) else {
+            continue;
+        };
+        let value = value.trim();
+        if value.is_empty() {
+            continue;
+        }
+        match key {
+            "user.name" => name = Some(value.to_string()),
+            "user.email" => email = Some(value.to_string()),
+            _ => {}
+        }
+    }
+
+    Some(CommitIdentity {
+        name: name?,
+        email: email?,
+    })
 }
 
 // ---------------- Remote ----------------
@@ -798,74 +956,114 @@ u UU N... 100644 100644 100644 100644 aaaaaaa bbbbbbb ccccccc conflicted.rs\0\
     }
 
     #[test]
-    fn preview_keeps_only_patch_prefixed_lines() {
-        let patch = "diff --git a/a.rs b/a.rs\n\
-index 111..222 100644\n\
---- a/a.rs\n\
-+++ b/a.rs\n\
-@@ -1,3 +1,3 @@\n\
--old line\n\
-+new line\n\
- context line\n\
-\\ No newline at end of file\n";
+    fn preview_keeps_hunks_context_and_line_numbers() {
+        // Built line by line: a `\` continuation would eat the leading space
+        // that marks a context line.
+        let patch = [
+            "diff --git a/a.rs b/a.rs",
+            "index 111..222 100644",
+            "--- a/a.rs",
+            "+++ b/a.rs",
+            "@@ -10,3 +10,4 @@ fn main() {",
+            " context before",
+            "-old line",
+            "+new line",
+            "+added line",
+            " context after",
+            "\\ No newline at end of file",
+        ]
+        .join("\n");
 
+        let preview = preview_lines(&patch);
         assert_eq!(
-            preview_lines(patch),
+            preview
+                .iter()
+                .map(|line| (line.kind, line.old_line, line.new_line, line.text.as_str()))
+                .collect::<Vec<_>>(),
             vec![
-                "--- a/a.rs".to_string(),
-                "+++ b/a.rs".to_string(),
-                "@@ -1,3 +1,3 @@".to_string(),
-                "-old line".to_string(),
-                "+new line".to_string(),
-            ]
+                (
+                    PreviewKind::Hunk,
+                    None,
+                    None,
+                    "@@ -10,3 +10,4 @@ fn main() {"
+                ),
+                (PreviewKind::Context, Some(10), Some(10), "context before"),
+                (PreviewKind::Removed, Some(11), None, "old line"),
+                (PreviewKind::Added, None, Some(11), "new line"),
+                (PreviewKind::Added, None, Some(12), "added line"),
+                (PreviewKind::Context, Some(12), Some(13), "context after"),
+            ],
+            "file metadata is dropped, context is kept and the gutter numbers follow the hunk"
         );
     }
 
     #[test]
-    fn preview_is_capped_at_eight_lines() {
-        let patch: String = (0..20).map(|line| format!("+line {line}\n")).collect();
+    fn preview_is_bounded_for_huge_files() {
+        let mut patch = String::from("--- a/a.rs\n+++ b/a.rs\n@@ -1,1 +1,400 @@\n");
+        for index in 0..400 {
+            patch.push_str(&format!("+line {index}\n"));
+        }
         assert_eq!(preview_lines(&patch).len(), PREVIEW_LINES);
     }
 
     #[test]
     fn diff_previews_split_blocks_by_path_and_include_deletions() {
-        let patch = "diff --git a/src/a.rs b/src/a.rs\n\
-index 1111111..2222222 100644\n\
---- a/src/a.rs\n\
-+++ b/src/a.rs\n\
-@@ -1,2 +1,2 @@\n\
--old line\n\
-+new line\n\
- context\n\
-diff --git a/gone.rs b/gone.rs\n\
-deleted file mode 100644\n\
-index 3333333..0000000\n\
---- a/gone.rs\n\
-+++ /dev/null\n\
-@@ -1 +0,0 @@\n\
--removed line\n\
-diff --git a/src/b.rs b/src/b.rs\n\
-index 4444444..5555555 100644\n\
---- a/src/b.rs\n\
-+++ b/src/b.rs\n\
-@@ -1 +1,2 @@\n\
- keep\n\
-+added line\n";
+        let patch = [
+            "diff --git a/src/a.rs b/src/a.rs",
+            "index 1111111..2222222 100644",
+            "--- a/src/a.rs",
+            "+++ b/src/a.rs",
+            "@@ -1,2 +1,2 @@",
+            "-old line",
+            "+new line",
+            " context",
+            "diff --git a/gone.rs b/gone.rs",
+            "deleted file mode 100644",
+            "index 3333333..0000000",
+            "--- a/gone.rs",
+            "+++ /dev/null",
+            "@@ -1 +0,0 @@",
+            "-removed line",
+            "diff --git a/src/b.rs b/src/b.rs",
+            "index 4444444..5555555 100644",
+            "--- a/src/b.rs",
+            "+++ b/src/b.rs",
+            "@@ -1 +1,2 @@",
+            " keep",
+            "+added line",
+        ]
+        .join("\n");
 
-        let previews = parse_diff_previews(patch);
+        let previews = parse_diff_previews(&patch);
         assert_eq!(previews.len(), 3);
 
         let modified = previews.get("src/a.rs").expect("modified file");
-        assert!(modified.iter().any(|line| line == "--- a/src/a.rs"));
-        assert!(modified.iter().any(|line| line == "-old line"));
-        assert!(modified.iter().any(|line| line == "+new line"));
+        assert!(modified
+            .iter()
+            .any(|line| line.kind == PreviewKind::Removed && line.text == "old line"));
+        assert!(modified
+            .iter()
+            .any(|line| line.kind == PreviewKind::Added && line.text == "new line"));
+        assert!(modified
+            .iter()
+            .any(|line| line.kind == PreviewKind::Context && line.text == "context"));
+        assert!(
+            modified.iter().all(|line| !line.text.starts_with("--- a/")),
+            "file headers must not survive into the preview"
+        );
 
         let deleted = previews.get("gone.rs").expect("deleted file");
-        assert!(deleted.iter().any(|line| line == "+++ /dev/null"));
-        assert!(deleted.iter().any(|line| line == "-removed line"));
+        assert!(deleted
+            .iter()
+            .any(|line| line.kind == PreviewKind::Removed && line.text == "removed line"));
         assert!(!previews.contains_key("/dev/null"));
 
         let second = previews.get("src/b.rs").expect("second file in the patch");
-        assert!(second.iter().any(|line| line == "+added line"));
+        assert!(second
+            .iter()
+            .any(|line| line.kind == PreviewKind::Added && line.text == "added line"));
+        assert!(second
+            .iter()
+            .any(|line| line.kind == PreviewKind::Context && line.text == "keep"));
     }
 }

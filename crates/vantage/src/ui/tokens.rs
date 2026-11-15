@@ -6,6 +6,11 @@
 pub const RADIUS_MD: f32 = 8.0;
 pub const CONTROL_MD: f32 = 30.0;
 
+/// Height of a control that sits in a one-line row (the commit bar's message
+/// field and its button). Pinning one height keeps them aligned, and means
+/// focus styling can never change the field's height.
+pub const ROW_CONTROL_HEIGHT: f32 = 28.0;
+
 /// The only icon sizes the app should use. Add a variant here when a new size
 /// is genuinely needed rather than passing another raw float at a call site.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

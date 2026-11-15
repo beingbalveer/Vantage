@@ -180,10 +180,39 @@ pub async fn sync_fetch(runner: &GitRunner, repo_path: &Path) -> Result<(), AppE
     Ok(())
 }
 
+/// How a pull reconciles a branch that has diverged from its upstream.
+///
+/// `--ff-only` is the default because it can never rewrite or merge local
+/// commits behind the user's back, which matters when another agent may be
+/// committing in the same work tree.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum PullStrategy {
+    /// Refuse the pull when the branches diverged.
+    #[default]
+    FastForward,
+    /// `--no-rebase`: merge the upstream branch into the local one.
+    Merge,
+    /// `--rebase`: replay local commits on top of the upstream branch.
+    Rebase,
+}
+
+impl PullStrategy {
+    /// The `git pull` argument that selects this strategy.
+    pub fn flag(self) -> &'static str {
+        match self {
+            Self::FastForward => "--ff-only",
+            Self::Merge => "--no-rebase",
+            Self::Rebase => "--rebase",
+        }
+    }
+}
+
 pub async fn sync_pull(
     runner: &GitRunner,
     repo_path: &Path,
     target_branch: Option<&str>,
+    strategy: PullStrategy,
 ) -> Result<(), AppError> {
     let repo_lock = runner.get_repo_lock(repo_path).await;
     let _repo_guard = repo_lock.lock().await;
@@ -203,12 +232,49 @@ pub async fn sync_pull(
     }
 
     let out = runner
-        .run_write(repo_path, &["pull", "--ff-only"], 120)
+        .run_write(repo_path, &["pull", strategy.flag()], 120)
         .await?;
     if !out.success() {
-        return Err(AppError::other(out.stderr));
+        let stderr = out.stderr.clone();
+        let message = stderr.trim();
+        // git's wording for the two cases the user can act on. Anything else
+        // (auth, network, missing upstream) is passed through untouched.
+        if strategy == PullStrategy::FastForward
+            && (message.contains("Not possible to fast-forward")
+                || message.contains("diverging branches")
+                || message.contains("would be overwritten"))
+        {
+            return Err(AppError::other(
+                "This branch has local commits the remote does not, so it cannot be \
+                 fast-forwarded. Pick a pull strategy in Settings → Git, or merge/rebase \
+                 outside Vantage.",
+            )
+            .with_stderr(stderr));
+        }
+        if message.contains("CONFLICT") || message.contains("Automatic merge failed") {
+            return Err(AppError::other(
+                "The pull stopped on a conflict. Resolve the conflicted files, then abort or \
+                 finish the operation before pulling again.",
+            )
+            .with_stderr(stderr));
+        }
+        return Err(AppError::other(message.to_string()).with_stderr(stderr));
     }
     Ok(())
+}
+
+/// Whether the checked-out branch tracks a remote branch.
+///
+/// A branch with no upstream has to be published with `--set-upstream` the
+/// first time it is pushed.
+pub async fn has_upstream(runner: &GitRunner, repo_path: &Path) -> Result<bool, AppError> {
+    let out = runner
+        .run_read(
+            repo_path,
+            &["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}"],
+        )
+        .await?;
+    Ok(out.success() && !out.stdout_string().trim().is_empty())
 }
 
 pub async fn sync_push(
@@ -727,6 +793,28 @@ pub async fn push_all_tags(runner: &GitRunner, repo_path: &Path) -> Result<(), A
 mod tests {
     use super::*;
     use std::fs;
+
+    #[test]
+    fn pull_strategy_maps_to_git_flags() {
+        assert_eq!(PullStrategy::default(), PullStrategy::FastForward);
+        assert_eq!(PullStrategy::FastForward.flag(), "--ff-only");
+        assert_eq!(PullStrategy::Merge.flag(), "--no-rebase");
+        assert_eq!(PullStrategy::Rebase.flag(), "--rebase");
+    }
+
+    #[test]
+    fn pull_strategy_persists_as_camel_case() {
+        // Settings store this verbatim; a rename here would silently reset
+        // every saved preference to the default.
+        assert_eq!(
+            serde_json::to_string(&PullStrategy::FastForward).unwrap(),
+            "\"fastForward\""
+        );
+        assert_eq!(
+            serde_json::from_str::<PullStrategy>("\"rebase\"").unwrap(),
+            PullStrategy::Rebase
+        );
+    }
 
     struct TempTestRepo {
         path: std::path::PathBuf,

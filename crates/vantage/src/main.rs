@@ -4,6 +4,8 @@
 //! assignments, so the UI always reflects real work trees.
 
 mod app;
+mod app_icon;
+mod avatar_cache;
 mod backend;
 mod chrome;
 mod icons;
@@ -184,6 +186,9 @@ fn main() {
     }
 
     Application::new().with_assets(Assets).run(|cx: &mut App| {
+        // Unbundled binaries have no Info.plist icon; give the process the
+        // brand icon before the first window appears.
+        app_icon::install();
         register_fonts(cx);
         cx.on_window_closed(|cx| {
             if cx.windows().is_empty() {

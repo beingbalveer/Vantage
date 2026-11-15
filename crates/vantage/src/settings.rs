@@ -5,6 +5,7 @@
 //! contains terminal, viewer and commit settings that v2 does not expose.
 
 use serde::{Deserialize, Serialize};
+use vantage_core::git::refs::PullStrategy;
 use vantage_core::persist::PersistedState;
 use vantage_core::repos;
 use vantage_core::state::{validate_branch_name, Theme as LegacyTheme, WindowBounds};
@@ -189,6 +190,8 @@ pub struct UiSettings {
     /// Off = 0. Otherwise one of 1, 5, 15, 30 or 60 minutes.
     pub auto_fetch_minutes: u32,
     pub fetch_on_launch: bool,
+    /// How `Pull` reconciles a branch that diverged from its upstream.
+    pub pull_strategy: PullStrategy,
     /// Display fallback for a repository with no commits and no origin HEAD.
     pub default_branch: String,
     pub remember_window: bool,
@@ -209,6 +212,7 @@ impl Default for UiSettings {
             sidebar_collapsed: false,
             auto_fetch_minutes: 0,
             fetch_on_launch: false,
+            pull_strategy: PullStrategy::FastForward,
             default_branch: "main".to_string(),
             remember_window: true,
             window_bounds: None,
@@ -305,6 +309,7 @@ mod tests {
         assert_eq!(settings.sort, SortOrder::Recent);
         assert_eq!(settings.auto_fetch_minutes, 0);
         assert!(!settings.fetch_on_launch);
+        assert_eq!(settings.pull_strategy, PullStrategy::FastForward);
         assert!(settings.remember_window);
         assert!(!settings.right_panel_open);
         assert_eq!(settings.right_panel_fraction, 0.5);
@@ -340,6 +345,7 @@ mod tests {
             fetch_on_launch: true,
             default_branch: "trunk".to_string(),
             remember_window: false,
+            pull_strategy: PullStrategy::Rebase,
             ..UiSettings::default()
         };
         let value = serde_json::to_value(&settings).unwrap();
@@ -364,6 +370,7 @@ mod tests {
         assert!(loaded.fetch_on_launch);
         assert_eq!(loaded.default_branch, "trunk");
         assert!(!loaded.remember_window);
+        assert_eq!(loaded.pull_strategy, PullStrategy::Rebase);
     }
 
     #[test]

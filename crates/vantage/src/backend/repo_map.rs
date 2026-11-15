@@ -49,17 +49,22 @@ pub fn map_repo(
         current_branch.as_str()
     };
     let recent_commits = details::commits(rt, runner, path, commit_branch);
+    let remote_repo = details::remote(runner, path);
+    let has_remote = remote_repo != details::no_remote_label();
 
     Repository {
         id: entry.id.clone(),
         name: entry.name.clone(),
         workspace: group,
         local_path: crate::path::contract(path),
-        remote_repo: details::remote(runner, path),
+        remote_repo,
+        has_remote,
         current_branch,
+        author: details::commit_identity(path),
         sync_state: sync_state(status),
         ahead_count: status.ahead as i32,
         behind_count: status.behind as i32,
+        has_upstream: status.upstream.is_some(),
         last_activity_label,
         last_activity_minutes,
         primary_language: details::language(path),
@@ -454,7 +459,20 @@ mod tests {
             .any(|commit| commit.message.contains("initial commit")));
         assert!(clean.uncommitted_files.is_empty());
         assert!(!clean.remote_repo.is_empty());
+        assert!(
+            !clean.has_remote,
+            "a work tree with no origin must not offer fetch/pull/push"
+        );
+        assert!(!clean.has_upstream);
         assert!(!clean.local_path.is_empty());
+        assert_eq!(
+            clean.author,
+            Some(crate::model::CommitIdentity {
+                name: "QA".to_string(),
+                email: "qa@example.com".to_string(),
+            }),
+            "the bar names the identity the fixture configured"
+        );
 
         // An uncommitted edit flips the row to Modified and lists the file.
         std::fs::write(dir.join("lib.ts"), "export const one = 2;\n").unwrap();
@@ -465,6 +483,31 @@ mod tests {
         assert_eq!(dirty.uncommitted_files.len(), 1);
         assert_eq!(dirty.uncommitted_files[0].path, "lib.ts");
 
+        // Adding an origin turns the remote capability on while the branch
+        // still tracks nothing, which is what makes `Push` publish it.
+        let remote =
+            std::env::temp_dir().join(format!("vantage_repo_map_origin_{}", std::process::id()));
+        std::fs::remove_dir_all(&remote).ok();
+        std::fs::create_dir_all(&remote).unwrap();
+        git(&remote, &["init", "-q", "--bare"]);
+        git(&dir, &["remote", "add", "origin", remote.to_str().unwrap()]);
+        git(&dir, &["commit", "-q", "-am", "second commit"]);
+
+        let status = rt.block_on(query_repo_status(&runner, &entry.id, &dir, None, None));
+        let with_remote = map_repo(&rt, &runner, &entry, &status, "Ungrouped".to_string());
+        assert!(with_remote.has_remote);
+        assert!(
+            !with_remote.has_upstream,
+            "a branch that was never pushed tracks nothing"
+        );
+
+        git(&dir, &["push", "-q", "-u", "origin", "main"]);
+        let status = rt.block_on(query_repo_status(&runner, &entry.id, &dir, None, None));
+        let published = map_repo(&rt, &runner, &entry, &status, "Ungrouped".to_string());
+        assert!(published.has_remote);
+        assert!(published.has_upstream, "push -u sets the upstream");
+
+        std::fs::remove_dir_all(&remote).ok();
         std::fs::remove_dir_all(&dir).ok();
     }
 }

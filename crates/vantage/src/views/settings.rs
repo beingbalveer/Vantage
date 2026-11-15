@@ -2,6 +2,8 @@
 
 use gpui::{div, prelude::*, px, relative, Context, Div, IntoElement, Styled, Window};
 
+use vantage_core::git::refs::PullStrategy;
+
 use crate::app::{FieldId, VantageApp};
 use crate::settings::{DefaultView, SettingsSection, SortOrder, ThemeChoice};
 use crate::theme::{Theme, FONT_MONO, LH_SM, TEXT_SM};
@@ -351,6 +353,29 @@ impl VantageApp {
             cx,
         );
 
+        let current_pull = self.settings.pull_strategy;
+        let mut pull_choices = div().flex().flex_wrap().gap(px(6.0));
+        for (index, (strategy, label)) in [
+            (PullStrategy::FastForward, "Fast-forward only"),
+            (PullStrategy::Merge, "Merge"),
+            (PullStrategy::Rebase, "Rebase"),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            pull_choices = pull_choices.child(
+                crate::ui::choice_button(
+                    &theme,
+                    label,
+                    current_pull == strategy,
+                    format!("settings-pull-{index}"),
+                )
+                .on_click(
+                    cx.listener(move |this, _e, _w, cx| this.set_pull_strategy(strategy, cx)),
+                ),
+            );
+        }
+
         vec![
             setting_row(
                 &theme,
@@ -364,6 +389,15 @@ impl VantageApp {
                 "On launch",
                 "Fetch all repositories once after the first scan.",
                 launch_control,
+            )
+            .into_any_element(),
+            setting_row(
+                &theme,
+                "Pull",
+                "Fast-forward never merges or rebases behind your back; it reports a diverged \
+                 branch instead. Merge and Rebase apply to the branch each repository has \
+                 checked out.",
+                pull_choices,
             )
             .into_any_element(),
             setting_row(

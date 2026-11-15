@@ -17,6 +17,9 @@ actions!(
         AddRepository,
         RefreshStatus,
         FetchOrigin,
+        PullBranch,
+        PushBranch,
+        CommitStaged,
         ToggleSidebar,
         ToggleTheme,
         ToggleFullscreen,
@@ -44,6 +47,9 @@ pub fn install(cx: &mut App, app: Entity<VantageApp>) {
         KeyBinding::new("cmd-o", AddRepository, None),
         KeyBinding::new("cmd-r", RefreshStatus, None),
         KeyBinding::new("cmd-shift-f", FetchOrigin, None),
+        KeyBinding::new("cmd-shift-p", PullBranch, None),
+        KeyBinding::new("cmd-p", PushBranch, None),
+        KeyBinding::new("cmd-enter", CommitStaged, None),
         KeyBinding::new("cmd-b", ToggleSidebar, None),
         KeyBinding::new("cmd-shift-l", ToggleTheme, None),
         KeyBinding::new("ctrl-cmd-f", ToggleFullscreen, None),
@@ -92,8 +98,20 @@ pub fn install(cx: &mut App, app: Entity<VantageApp>) {
     });
     cx.on_action({
         let app = app.clone();
-        move |_: &ToggleSidebar, cx: &mut App| {
-            app.update(cx, |app, cx| app.toggle_sidebar(cx));
+        move |_: &PullBranch, cx: &mut App| {
+            app.update(cx, |app, cx| app.pull_selected(cx));
+        }
+    });
+    cx.on_action({
+        let app = app.clone();
+        move |_: &PushBranch, cx: &mut App| {
+            app.update(cx, |app, cx| app.push_selected(cx));
+        }
+    });
+    cx.on_action({
+        let app = app.clone();
+        move |_: &CommitStaged, cx: &mut App| {
+            app.update(cx, |app, cx| app.commit_selected(cx));
         }
     });
     cx.on_action({
@@ -118,6 +136,12 @@ pub fn install(cx: &mut App, app: Entity<VantageApp>) {
         let app = app.clone();
         move |_: &SectionChanges, cx: &mut App| {
             app.update(cx, |app, cx| app.select_section(NavSection::Changes, cx));
+        }
+    });
+    cx.on_action({
+        let app = app.clone();
+        move |_: &ToggleSidebar, cx: &mut App| {
+            app.update(cx, |app, cx| app.toggle_sidebar(cx));
         }
     });
 
@@ -167,7 +191,11 @@ pub fn install(cx: &mut App, app: Entity<VantageApp>) {
                 MenuItem::action("Add Repository…", AddRepository),
                 MenuItem::separator(),
                 MenuItem::action("Refresh Status", RefreshStatus),
+                MenuItem::action("Pull", PullBranch),
+                MenuItem::action("Push", PushBranch),
                 MenuItem::action("Fetch Origin", FetchOrigin),
+                MenuItem::separator(),
+                MenuItem::action("Commit Staged Changes", CommitStaged),
                 MenuItem::separator(),
                 MenuItem::action("Close Window", CloseWindow),
             ],

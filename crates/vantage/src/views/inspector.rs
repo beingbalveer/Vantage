@@ -1,9 +1,13 @@
 //! Right repository detail pane — half of the content area, changes / branches / commits.
 
-use gpui::{deferred, div, prelude::*, px, relative, Context, IntoElement, Styled, Window};
+use gpui::{deferred, div, prelude::*, px, relative, Context, Div, IntoElement, Styled, Window};
 
-use crate::app::{InspectorTab, VantageApp};
-use crate::ui::{checkbox, secondary_button, Txt};
+use crate::app::{InspectorTab, RepoOp, VantageApp};
+use crate::theme::Theme;
+use crate::ui::{
+    accent_button, accent_button_with, checkbox, secondary_button, secondary_button_with, spinner,
+    Txt,
+};
 use crate::ui::{icon, IconSize};
 use crate::widgets::status_text;
 
@@ -37,8 +41,8 @@ impl VantageApp {
             .border_l_1()
             .border_color(theme.divider)
             .child(self.render_inspector_header(&repo, copied, cx))
-            .child(self.render_inspector_meta(&repo, menu_open, cx))
-            .child(self.render_inspector_tabs(&repo, cx))
+            .child(self.render_inspector_bar(&repo, cx))
+            .child(self.render_inspector_tabs(&repo, menu_open, cx))
             .child(
                 div()
                     .flex_1()
@@ -59,7 +63,17 @@ impl VantageApp {
                             .into_any_element(),
                     }),
             )
-            .child(self.render_inspector_footer(&repo, cx));
+            // Pinned to the bottom of the pane, so a long file list never
+            // scrolls the commit controls away. The undo strip sits directly
+            // above them, while the commit it offers is still local.
+            .when(
+                tab == InspectorTab::Changes && self.undo_candidate(&repo).is_some(),
+                |panel| panel.child(self.render_undo_strip(&repo, cx)),
+            )
+            .when(
+                tab == InspectorTab::Changes && !repo.uncommitted_files.is_empty(),
+                |panel| panel.child(self.render_commit_bar(&repo, window, cx)),
+            );
 
         Some(panel.into_any_element())
     }
@@ -213,82 +227,6 @@ impl VantageApp {
             )
     }
 
-    fn render_inspector_meta(
-        &self,
-        repo: &crate::model::Repository,
-        menu_open: bool,
-        cx: &mut Context<Self>,
-    ) -> impl IntoElement {
-        let theme = self.theme;
-        let ahead_color = if repo.ahead_count > 0 {
-            theme.accent_text
-        } else {
-            theme.label_muted
-        };
-        let behind_color = if repo.behind_count > 0 {
-            theme.status_red
-        } else {
-            theme.label_muted
-        };
-
-        div()
-            .flex()
-            .items_center()
-            .justify_between()
-            .gap(px(12.0))
-            .flex_wrap()
-            .px(px(24.0))
-            .py(px(12.0))
-            .bg(theme.table_head_bg)
-            .border_b_1()
-            .border_color(theme.divider)
-            .xs()
-            .child(
-                div()
-                    .flex()
-                    .items_center()
-                    .gap(px(8.0))
-                    .mono_xs()
-                    .fg(theme.text_soft)
-                    .child(icon("git-branch", IconSize::Sm, theme.icon_idle))
-                    .child(repo.current_branch.clone()),
-            )
-            .child(
-                div()
-                    .flex()
-                    .items_center()
-                    .gap(px(16.0))
-                    .child(
-                        div()
-                            .flex()
-                            .items_center()
-                            .gap(px(12.0))
-                            .mono_xs()
-                            .child(
-                                div()
-                                    .flex()
-                                    .items_center()
-                                    .gap(px(2.0))
-                                    .fg(ahead_color)
-                                    .when(repo.ahead_count > 0, |d| d.medium())
-                                    .child(icon("arrow-up", IconSize::Xs, ahead_color))
-                                    .child(repo.ahead_count.to_string()),
-                            )
-                            .child(
-                                div()
-                                    .flex()
-                                    .items_center()
-                                    .gap(px(2.0))
-                                    .fg(behind_color)
-                                    .when(repo.behind_count > 0, |d| d.medium())
-                                    .child(icon("arrow-down", IconSize::Xs, behind_color))
-                                    .child(repo.behind_count.to_string()),
-                            ),
-                    )
-                    .child(self.render_group_dropdown(repo, menu_open, cx)),
-            )
-    }
-
     fn render_group_dropdown(
         &self,
         repo: &crate::model::Repository,
@@ -308,26 +246,21 @@ impl VantageApp {
             .relative()
             .flex()
             .items_center()
-            .gap(px(6.0))
             .flex_shrink_0()
-            .child(div().xs().fg(theme.label_muted).child("Group"))
             .child(
                 div()
                     .id("group-dropdown")
                     .flex()
                     .items_center()
                     .gap(px(4.0))
-                    .py(px(4.0))
-                    .px(px(8.0))
-                    .rounded(px(6.0))
-                    .border_1()
-                    .border_color(theme.secondary_border)
-                    .bg(theme.panel)
+                    .px(px(6.0))
+                    .py(px(3.0))
+                    .rounded(px(5.0))
                     .cursor_pointer()
                     .xs()
-                    .medium()
-                    .fg(theme.text_soft)
+                    .fg(theme.label_muted)
                     .whitespace_nowrap()
+                    .hover(move |s| s.bg(theme.nav_hover_bg).fg(theme.text_soft))
                     .on_click(cx.listener(|this, _e, _w, cx| {
                         this.group_menu_open = !this.group_menu_open;
                         cx.notify();
@@ -339,7 +272,7 @@ impl VantageApp {
         if menu_open {
             let mut menu = div()
                 .absolute()
-                .top(px(30.0))
+                .top(px(24.0))
                 .right(px(0.0))
                 .min_w(px(160.0))
                 .flex()
@@ -391,6 +324,7 @@ impl VantageApp {
     fn render_inspector_tabs(
         &self,
         repo: &crate::model::Repository,
+        menu_open: bool,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
         let theme = self.theme;
@@ -409,18 +343,10 @@ impl VantageApp {
             ),
         ];
 
-        let mut row = div()
-            .flex()
-            .items_center()
-            .gap(px(24.0))
-            .px(px(24.0))
-            .pt(px(12.0))
-            .border_b_1()
-            .border_color(theme.divider);
-
+        let mut tab_row = div().flex().items_center().gap(px(24.0)).min_w(px(0.0));
         for (tab, label) in tabs {
             let active = self.inspector_tab == tab;
-            row = row.child(
+            tab_row = tab_row.child(
                 crate::ui::tab(&theme, label, active, ("inspector-tab", tab as u8 as usize))
                     .on_click(cx.listener(move |this, _e, _w, cx| {
                         this.inspector_tab = tab;
@@ -428,7 +354,20 @@ impl VantageApp {
                     })),
             );
         }
-        row
+
+        // The group selector lives here rather than in its own band: it is a
+        // rare action, and this row already has the space for it.
+        div()
+            .flex()
+            .items_center()
+            .justify_between()
+            .gap(px(16.0))
+            .px(px(24.0))
+            .pt(px(12.0))
+            .border_b_1()
+            .border_color(theme.divider)
+            .child(tab_row)
+            .child(self.render_group_dropdown(repo, menu_open, cx))
     }
 
     fn render_changes_tab(
@@ -461,6 +400,20 @@ impl VantageApp {
                 );
         }
 
+        // One control for the whole list: ticked means every file is staged, so
+        // a click either fills or clears the index in a single git call.
+        let staged_count = self.ticked_count(repo);
+        let total = repo.uncommitted_files.len();
+        let all_staged = staged_count == total;
+        let select_label = if all_staged {
+            format!("All {total} staged")
+        } else if staged_count == 0 {
+            format!("Select all {total} files")
+        } else {
+            format!("{staged_count} of {total} staged")
+        };
+        let all_repo_id = repo.id.clone();
+
         let mut list = div()
             .flex()
             .flex_col()
@@ -468,7 +421,34 @@ impl VantageApp {
             .border_1()
             .border_color(theme.divider)
             .rounded(px(8.0))
-            .overflow_hidden();
+            .overflow_hidden()
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap(px(10.0))
+                    .w_full()
+                    .px(px(14.0))
+                    .py(px(8.0))
+                    .bg(theme.table_head_bg)
+                    .border_b_1()
+                    .border_color(theme.row_border)
+                    .child(
+                        checkbox(&theme, all_staged)
+                            .id("stage-all")
+                            .on_click(cx.listener(move |this, _e, _w, cx| {
+                                this.toggle_all_staged(&all_repo_id, cx);
+                            })),
+                    )
+                    .child(
+                        div()
+                            .xs()
+                            .medium()
+                            .fg(theme.text_soft)
+                            .whitespace_nowrap()
+                            .child(select_label),
+                    ),
+            );
 
         for (index, file) in repo.uncommitted_files.iter().enumerate() {
             let status_color = match file.status {
@@ -578,8 +558,7 @@ impl VantageApp {
                     .flex()
                     .flex_col()
                     .w_full()
-                    .px(px(14.0))
-                    .py(px(10.0))
+                    .py(px(6.0))
                     .bg(theme.diff_bg)
                     .border_t_1()
                     .border_color(theme.divider)
@@ -590,25 +569,20 @@ impl VantageApp {
                     .line_height(px(16.0));
 
                 if file.diff_preview.is_empty() {
-                    diff = diff.child(div().fg(theme.text_dim).child("No diff lines."));
+                    diff = diff.child(div().px(px(12.0)).py(px(2.0)).fg(theme.text_dim).child(
+                        match file.status {
+                            crate::model::FileChangeStatus::Untracked => {
+                                "New file — nothing to diff against yet."
+                            }
+                            crate::model::FileChangeStatus::Conflicted => {
+                                "Conflicted file — resolve it in your editor to see a diff."
+                            }
+                            _ => "No textual changes.",
+                        },
+                    ));
                 } else {
                     for line in &file.diff_preview {
-                        let color = if line.starts_with('+') {
-                            theme.diff_add
-                        } else if line.starts_with('-') {
-                            theme.diff_del
-                        } else if line.starts_with("@@") {
-                            theme.diff_hunk
-                        } else {
-                            theme.diff_meta
-                        };
-                        diff = diff.child(
-                            div()
-                                .flex_shrink_0()
-                                .whitespace_nowrap()
-                                .fg(color)
-                                .child(line.clone()),
-                        );
+                        diff = diff.child(preview_row(&theme, line));
                     }
                 }
                 row = row.child(diff);
@@ -618,6 +592,174 @@ impl VantageApp {
         }
 
         list
+    }
+
+    /// Sticky commit footer: the message and its button.
+    fn render_commit_bar(
+        &self,
+        repo: &crate::model::Repository,
+        window: &Window,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
+        let theme = self.theme;
+        let staged = self.ticked_count(repo);
+        let running = self.repo_op(&repo.id);
+        let committing = running == Some(RepoOp::Commit);
+        let busy = running.is_some();
+        let message_ready = !self.commit_field.value.trim().is_empty();
+        let can_commit = !busy && staged > 0 && message_ready;
+
+        let label = if committing {
+            RepoOp::Commit.in_progress_label().to_string()
+        } else if staged == 1 {
+            "Commit 1 file".to_string()
+        } else {
+            format!("Commit {staged} files")
+        };
+
+        let mut commit_button = if committing {
+            accent_button_with(
+                &theme,
+                label,
+                Some(
+                    spinner(
+                        format!("commit-{}", repo.id),
+                        "refresh-cw",
+                        IconSize::Sm,
+                        theme.primary_text,
+                    )
+                    .into_any_element(),
+                ),
+            )
+            .id("commit-staged")
+        } else {
+            accent_button(&theme, label).id("commit-staged")
+        };
+        if can_commit {
+            commit_button =
+                commit_button.on_click(cx.listener(|this, _e, _w, cx| this.commit_selected(cx)));
+        } else {
+            commit_button = commit_button.opacity(0.5);
+        }
+
+        // Left of the message field: the account this commit will be
+        // attributed to. Hovering the tile names that account.
+        let identity: gpui::AnyElement = match &repo.author {
+            Some(author) => {
+                let name = author.name.clone();
+                let email = author.email.clone();
+                crate::ui::avatar(
+                    &theme,
+                    &author.name,
+                    &author.email,
+                    self.avatar_for(&author.email),
+                    crate::ui::AVATAR_SM,
+                )
+                .id("commit-author-avatar")
+                .tooltip(move |_window, cx| {
+                    cx.new(|_| crate::ui::IdentityTooltip::new(theme, name.clone(), email.clone()))
+                        .into()
+                })
+                .into_any_element()
+            }
+            None => div()
+                .flex()
+                .items_center()
+                .justify_center()
+                .w(px(crate::ui::AVATAR_SM))
+                .h(px(crate::ui::AVATAR_SM))
+                .rounded(px(crate::ui::AVATAR_SM / 2.0))
+                .flex_shrink_0()
+                .bg(crate::theme::alpha(theme.status_amber, 0.15))
+                .child(icon("alert-triangle", IconSize::Xs, theme.status_amber))
+                .into_any_element(),
+        };
+
+        div()
+            .flex()
+            .items_center()
+            .gap(px(10.0))
+            .w_full()
+            .px(px(24.0))
+            .py(px(12.0))
+            .border_t_1()
+            .border_color(theme.divider)
+            .bg(theme.table_head_bg)
+            .child(identity)
+            .child(div().flex_1().min_w(px(0.0)).child(self.text_field(
+                crate::app::FieldId::CommitMessage,
+                "Commit message",
+                crate::ui::FieldVariant::Row,
+                window,
+                cx,
+            )))
+            .child(commit_button)
+    }
+
+    /// "Committed just now · summary [Undo]" strip, for a commit that is still
+    /// local. It disappears as soon as the tip moves away from that commit.
+    fn render_undo_strip(
+        &self,
+        repo: &crate::model::Repository,
+        cx: &mut Context<Self>,
+    ) -> gpui::AnyElement {
+        let theme = self.theme;
+        let Some(offer) = self.undo_candidate(repo) else {
+            return div().into_any_element();
+        };
+        // "Committed just now" for our own commit, otherwise how many local
+        // commits the remote does not have yet.
+        let headline = if offer.just_now {
+            "Committed just now".to_string()
+        } else if offer.unpushed == 1 {
+            "1 commit not pushed".to_string()
+        } else {
+            format!("{} commits not pushed", offer.unpushed)
+        };
+        let summary = offer.summary.clone();
+        let busy = self.repo_op(&repo.id).is_some();
+
+        let mut undo = secondary_button(&theme, "Undo", None).id("undo-commit");
+        if busy {
+            undo = undo.opacity(0.5);
+        } else {
+            undo = undo.on_click(cx.listener(|this, _e, _w, cx| {
+                let Some(repo) = this.selected_repo().cloned() else {
+                    return;
+                };
+                this.undo_last_commit(&repo, cx);
+            }));
+        }
+
+        div()
+            .flex()
+            .items_center()
+            .justify_between()
+            .gap(px(12.0))
+            .w_full()
+            .px(px(24.0))
+            .py(px(10.0))
+            .border_t_1()
+            .border_color(theme.divider)
+            .bg(theme.panel)
+            .child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap(px(2.0))
+                    .min_w(px(0.0))
+                    .child(div().xs().fg(theme.label_muted).child(headline))
+                    .child(
+                        div()
+                            .xs()
+                            .medium()
+                            .fg(theme.text_app)
+                            .truncate()
+                            .child(summary),
+                    ),
+            )
+            .child(undo)
+            .into_any_element()
     }
 
     fn render_branches_tab(
@@ -856,39 +998,96 @@ impl VantageApp {
         list
     }
 
-    fn render_inspector_footer(
+    /// One band under the header: the branch, where it points, and the three git
+    /// actions for this repository.
+    ///
+    /// Ahead/behind appear only when they are non-zero — a row of `↑0 ↓0` is
+    /// noise next to buttons that already say what can happen.
+    fn render_inspector_bar(
         &self,
         repo: &crate::model::Repository,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
         let theme = self.theme;
+        let running = self.repo_op(&repo.id);
+        let busy = running.is_some();
+        let can_pull = !busy && repo.has_remote && repo.has_upstream && repo.behind_count > 0;
+        let can_push = !busy && repo.has_remote && (repo.ahead_count > 0 || !repo.has_upstream);
+        let can_fetch = !busy && repo.has_remote;
+        let ahead = repo.ahead_count;
+        let behind = repo.behind_count;
+        let fetch_id = repo.id.clone();
+
+        let spinner_leading = |theme: &Theme, kind: RepoOp, id: &str| {
+            spinner(
+                format!("{id}-{kind:?}"),
+                "refresh-cw",
+                IconSize::Sm,
+                theme.secondary_text,
+            )
+            .into_any_element()
+        };
 
         div()
             .flex()
             .items_center()
             .justify_between()
+            .flex_wrap()
             .gap(px(12.0))
-            .flex_shrink_0()
             .px(px(24.0))
-            .py(px(14.0))
-            .border_t_1()
+            .py(px(10.0))
+            .border_b_1()
             .border_color(theme.divider)
-            .bg(theme.table_head_bg)
             .child(
                 div()
-                    .w(px(212.0))
-                    .flex_shrink_0()
-                    .mono_xs()
-                    .fg(theme.label_muted)
-                    .whitespace_nowrap()
-                    .child(crate::text::ellipsize(
-                        cx,
-                        &repo.remote_repo,
-                        crate::theme::FONT_MONO,
-                        crate::theme::W_REGULAR,
-                        crate::theme::TEXT_XS,
-                        px(212.0),
-                    )),
+                    .flex()
+                    .items_center()
+                    .gap(px(8.0))
+                    .flex_1()
+                    .min_w(px(0.0))
+                    .child(icon("git-branch", IconSize::Sm, theme.icon_idle))
+                    .child(
+                        div()
+                            .mono_xs()
+                            .fg(theme.text_soft)
+                            .whitespace_nowrap()
+                            .child(repo.current_branch.clone()),
+                    )
+                    .when(ahead > 0, |d| {
+                        d.child(
+                            div()
+                                .flex()
+                                .items_center()
+                                .gap(px(2.0))
+                                .mono_xs()
+                                .medium()
+                                .fg(theme.accent_text)
+                                .child(icon("arrow-up", IconSize::Xs, theme.accent_text))
+                                .child(ahead.to_string()),
+                        )
+                    })
+                    .when(behind > 0, |d| {
+                        d.child(
+                            div()
+                                .flex()
+                                .items_center()
+                                .gap(px(2.0))
+                                .mono_xs()
+                                .medium()
+                                .fg(theme.status_red)
+                                .child(icon("arrow-down", IconSize::Xs, theme.status_red))
+                                .child(behind.to_string()),
+                        )
+                    })
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w(px(0.0))
+                            .truncate()
+                            .mono_xs()
+                            .fg(theme.label_muted)
+                            .child(repo.remote_repo.clone()),
+                    ),
             )
             .child(
                 div()
@@ -896,16 +1095,130 @@ impl VantageApp {
                     .items_center()
                     .gap(px(8.0))
                     .flex_shrink_0()
-                    .child(
+                    .child(if running == Some(RepoOp::Pull) {
+                        secondary_button_with(
+                            &theme,
+                            RepoOp::Pull.in_progress_label(),
+                            Some(spinner_leading(&theme, RepoOp::Pull, &repo.id)),
+                        )
+                        .id("pull-selected")
+                        .into_any_element()
+                    } else {
+                        secondary_button(&theme, "Pull", Some("arrow-down"))
+                            .id("pull-selected")
+                            .when(!can_pull, |d| d.opacity(0.5))
+                            .when(can_pull, |d| {
+                                d.on_click(cx.listener(|this, _e, _w, cx| this.pull_selected(cx)))
+                            })
+                            .into_any_element()
+                    })
+                    .child(if running == Some(RepoOp::Push) {
+                        secondary_button_with(
+                            &theme,
+                            RepoOp::Push.in_progress_label(),
+                            Some(spinner_leading(&theme, RepoOp::Push, &repo.id)),
+                        )
+                        .id("push-selected")
+                        .into_any_element()
+                    } else {
+                        secondary_button(&theme, "Push", Some("arrow-up"))
+                            .id("push-selected")
+                            .when(!can_push, |d| d.opacity(0.5))
+                            .when(can_push, |d| {
+                                d.on_click(cx.listener(|this, _e, _w, cx| this.push_selected(cx)))
+                            })
+                            .into_any_element()
+                    })
+                    .child(if running == Some(RepoOp::Fetch) {
+                        secondary_button_with(
+                            &theme,
+                            RepoOp::Fetch.in_progress_label(),
+                            Some(spinner_leading(&theme, RepoOp::Fetch, &repo.id)),
+                        )
+                        .id("fetch-origin")
+                        .into_any_element()
+                    } else {
                         secondary_button(&theme, "Fetch Origin", Some("refresh-cw"))
                             .id("fetch-origin")
-                            .on_click(cx.listener(|this, _e, _w, cx| {
-                                let Some(repo) = this.selected_repo().cloned() else {
-                                    return;
-                                };
-                                this.fetch_repo(&repo, cx);
-                            })),
-                    ),
+                            .when(!can_fetch, |d| d.opacity(0.5))
+                            .when(can_fetch, |d| {
+                                d.on_click(cx.listener(move |this, _e, _w, cx| {
+                                    let Some(repo) =
+                                        this.repos.iter().find(|r| r.id == fetch_id).cloned()
+                                    else {
+                                        return;
+                                    };
+                                    this.fetch_repo(&repo, cx);
+                                }))
+                            })
+                            .into_any_element()
+                    }),
             )
     }
+}
+
+/// One rendered patch line: gutter numbers, sign and content.
+///
+/// Colour carries the meaning (added / removed / hunk) and a faint tint marks
+/// the changed rows, so the block reads the same in light and dark mode instead
+/// of being a single dark slab.
+fn preview_row(theme: &Theme, line: &crate::model::PreviewLine) -> Div {
+    use crate::model::PreviewKind;
+
+    let (sign, color, background) = match line.kind {
+        PreviewKind::Added => (
+            "+",
+            theme.diff_add,
+            Some(crate::theme::alpha(theme.diff_add, 0.12)),
+        ),
+        PreviewKind::Removed => (
+            "-",
+            theme.diff_del,
+            Some(crate::theme::alpha(theme.diff_del, 0.12)),
+        ),
+        PreviewKind::Hunk => (
+            "",
+            theme.diff_hunk,
+            Some(crate::theme::alpha(theme.diff_hunk, 0.10)),
+        ),
+        PreviewKind::Context => (" ", theme.text_body, None),
+    };
+
+    let mut row = div()
+        .flex()
+        .items_center()
+        .gap(px(6.0))
+        .w_full()
+        .px(px(10.0))
+        .whitespace_nowrap()
+        .flex_shrink_0();
+    if let Some(background) = background {
+        row = row.bg(background);
+    }
+
+    // A hunk header spans the row; it has no line on either side.
+    if line.kind == PreviewKind::Hunk {
+        return row.child(div().flex_1().fg(color).child(line.text.clone()));
+    }
+
+    let gutter = |number: Option<u32>| {
+        div()
+            .w(px(34.0))
+            .flex_shrink_0()
+            .text_right()
+            .fg(theme.diff_meta)
+            .child(number.map(|n| n.to_string()).unwrap_or_default())
+    };
+
+    row.child(gutter(line.old_line))
+        .child(gutter(line.new_line))
+        .child(
+            div()
+                .w(px(6.0))
+                .flex_shrink_0()
+                .text_center()
+                .fg(color)
+                .child(sign),
+        )
+        .child(div().flex_1().fg(color).child(line.text.clone()))
 }

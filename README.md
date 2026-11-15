@@ -23,7 +23,7 @@ I work across several repositories at once, and much of that work is written and
 
 The hard part is not writing more code. It is knowing, without opening a dozen windows, which repository is on which branch, what is uncommitted, what is ahead or behind, and which working tree needs attention before the next agent run.
 
-Vantage is the dashboard for that question. It reads the real state of every repository in your workspace, shows the things that need a decision, and gives you the few Git actions that belong in a review loop: stage or unstage a file, check out a branch, fetch, refresh. When the work needs an editor or a full commit flow, it hands you back to the tools you already use.
+Vantage is the dashboard for that question. It reads the real state of every repository in your workspace, shows the things that need a decision, and gives you the few Git actions that belong in a review loop: stage or unstage a file, commit what you staged, check out a branch, fetch, pull, push. When the work needs an editor or a long commit message, it hands you back to the tools you already use.
 
 No account. No sync. No telemetry.
 
@@ -33,7 +33,7 @@ No account. No sync. No telemetry.
 
 ### Multi-repo overview
 
-The **All Repositories** view lists every repository in the workspace with its current branch, working-tree status, remote sync, latest commit and last activity. Repositories are grouped by your own groups, and each group header collapses so a large workspace stays readable.
+The **All Repositories** view lists every repository in the workspace with its current branch, working-tree status, remote sync and last activity. Each row ends in a **fetch** action that reloads just that repository; while it runs the icon spins, and it stops as soon as git returns. A row with no origin shows the action dimmed. Repositories are grouped by your own groups, and each group header collapses so a large workspace stays readable.
 
 Click any row to open its inspector.
 
@@ -49,11 +49,11 @@ The **Pending Changes** view collects uncommitted work into one card per reposit
 
 The repository detail view is a resizable right-hand pane. Opening a repository splits the content area roughly 50/50; the top-right panel icon shows or hides it without losing the current selection. It has three tabs:
 
-- **Changes** — every changed file with its status, staged state and `+` / `-` counts. Tick a file to stage or unstage it, and click its path to expand a colour-coded diff preview.
+- **Changes** — every changed file with its status, staged state and `+` / `-` counts. A header checkbox stages or unstages the whole list in one git call; click a file's path to expand a real diff (line numbers, hunks, context, tinted additions and deletions). A commit bar stays pinned to the bottom of the pane: the GitHub avatar of the account the commit will be attributed to (hover it for the name and email), a message field, and a button that commits exactly the ticked files with your own identity, hooks and signing configuration. When the branch has commits the remote does not, an **Undo** strip appears above it — `Committed just now` for one you just made, otherwise `N commit(s) not pushed` — naming the tip commit. Undo soft-resets that commit, so its files come straight back into **Changes** still staged, and it is refused once the commit is on the remote.
 - **Branches** — local branches with ahead/behind counts, their current/default state and latest commit. Check out any branch that is not already current.
 - **Commits** — recent commits with SHA, author, branch and relative time.
 
-The detail pane header shows the repository status, language and path (click to copy), plus a group selector for moving the repository between groups. The footer contains **Fetch Origin**.
+The detail pane header shows the repository status, language and path (click to copy). Under it sits one band with the current branch, the remote and the git actions for the repository in focus: **Pull**, **Push** and **Fetch Origin**. An action that cannot run is dimmed, and the one that is running shows a spinner and **Pulling…** / **Pushing…** / **Fetching…** until git returns. Moving a repository between groups lives at the right end of the tab row.
 
 ### Repository management
 
@@ -88,19 +88,20 @@ The whole interface has first-class light and dark themes. The theme setting liv
 | Vantage is | Vantage is not |
 |---|---|
 | A multi-repo branch, status and changes dashboard | An IDE or a code editor |
-| A place to stage files, check out branches and fetch | A full Git client or commit workflow |
+| A place to stage, commit, check out branches and sync | A full Git client (history rewrite, PR review) |
 | A local-first, zero-telemetry desktop app | A cloud service or account system |
 | Built on your system Git and existing credentials | A GitHub PR, issue or CI client |
 
-There is no file editor, no embedded terminal, no command palette, no fuzzy file finder, no AI chat and no plugin marketplace. Editing and committing stay in the tools built for them; Vantage keeps the cross-repository picture clear.
+There is no file editor, no embedded terminal, no command palette, no fuzzy file finder, no AI chat and no plugin marketplace. Vantage commits what you staged with a summary line; longer messages, amends and rebases stay in the tools built for them, so the cross-repository picture stays clear.
 
 ---
 
 ## Safety and privacy
 
 - **System Git, invoked directly.** Vantage invokes the `git` on your `PATH` with explicit arguments, so your existing SSH keys, credential helpers, hooks and signing configuration apply. It does not go through a shell.
-- **A small write surface.** Vantage does not edit your files and does not create commits. Its writes are limited to staging and unstaging paths, checking out an existing branch, and fetching from the remote.
+- **A small write surface.** Vantage does not edit your files. Its writes are limited to staging and unstaging paths, committing the paths you staged, checking out an existing branch, fetching, pulling and pushing. A commit runs your own hooks, identity and signing configuration — the commit bar names that identity (`user.name` / `user.email`, repository config overriding global) before you press Enter, and Vantage never amends, rebases or rewrites history for you. Pull never merges or rebases unless you pick that strategy in **Settings → Git**: the default fast-forward only reports a diverged branch instead of rewriting your history.
 - **Your state stays local.** Repository inventory, groups and assignments live in `state.json` in the platform data directory. No analytics endpoint, no account, no sync.
+- **One optional network call.** The commit bar shows the GitHub profile photo of the identity it will commit as. To do that, Vantage asks `github.com/<login>.png` once per account, through the system `curl`, and caches the image beside `state.json` for a week. There is no token, no other endpoint and no telemetry; when no login can be proven from your git identity, `github.user` or the `gh` CLI, the photo is skipped and initials are drawn locally instead.
 - **Failures are visible.** A repository that cannot be read is reported by name; the rest of the dashboard keeps working.
 
 ---
@@ -157,8 +158,11 @@ standard shortcuts.
 | Resize the right pane | Drag the divider between the overview and detail pane |
 | Expand a file diff | Click the changed file's path |
 | Stage or unstage a file | Click its checkbox in **Changes** |
+| Commit staged changes | Type a message in the bottom bar of **Changes** and press `Enter`, or `Cmd+Enter` |
+| Undo the last commit | Click **Undo** in the strip above the commit bar (only while that commit is unpushed) |
 | Check out a branch | Click **Checkout** in **Branches** |
-| Fetch a repository | Click **Fetch Origin**, or `Cmd+Shift+F` for the selected repository |
+| Fetch a repository | Click the row's refresh action, **Fetch Origin** in the detail pane, or `Cmd+Shift+F` |
+| Pull or push a repository | **Pull** / **Push** in the detail pane bar, or `Cmd+Shift+P` / `Cmd+P` |
 | Add a repository | Click **Add Repository**, or `Cmd+O` |
 | Refresh status | Click **Refresh Status**, or `Cmd+R` |
 | Switch views | `Cmd+1` All Repositories, `Cmd+2` Needs Attention, `Cmd+3` Pending Changes |

@@ -18,7 +18,10 @@ use std::path::{Path, PathBuf};
 use anyhow::{anyhow, Context, Result};
 use tokio::runtime::Runtime;
 use vantage_core::git::ops;
-use vantage_core::git::refs::{checkout_branch, sync_fetch};
+use vantage_core::git::refs::{
+    checkout_branch, has_upstream, is_commit_on_remote, sync_fetch, sync_pull, sync_push,
+    PullStrategy,
+};
 use vantage_core::git::status::query_repo_status;
 use vantage_core::persist::PersistedState;
 use vantage_core::{repos, GitRunner, RepoEntry};
@@ -119,6 +122,29 @@ impl Backend {
         Ok(())
     }
 
+    /// `git pull` for one repo, reconciling diverged history with `strategy`.
+    /// The caller re-scans the workspace once this returns.
+    pub fn pull(&self, repo_id: &str, strategy: PullStrategy) -> Result<()> {
+        let path = self.known_path(repo_id)?;
+        self.runtime
+            .block_on(sync_pull(&self.runner, &path, None, strategy))?;
+        Ok(())
+    }
+
+    /// `git push` for one repo.
+    ///
+    /// A branch that tracks nothing is published with `--set-upstream`, so the
+    /// first push of a local branch needs no separate step. Which case applies
+    /// is decided here rather than in the UI, so a stale row cannot push with
+    /// the wrong intent.
+    pub fn push(&self, repo_id: &str) -> Result<()> {
+        let path = self.known_path(repo_id)?;
+        let publish = !self.runtime.block_on(has_upstream(&self.runner, &path))?;
+        self.runtime
+            .block_on(sync_push(&self.runner, &path, publish, None))?;
+        Ok(())
+    }
+
     /// Fetch several repositories with a small bounded worker pool. Returns
     /// `(repo_id, error)` for the failures so the UI can report them without
     /// blocking a successful background run.
@@ -179,6 +205,70 @@ impl Backend {
         self.runtime
             .block_on(checkout_branch(&self.runner, &path, branch))?;
         Ok(())
+    }
+
+    /// Undo the tip commit of a repository, keeping its changes staged.
+    ///
+    /// Refuses when the commit is already on a remote branch: undoing it there
+    /// would rewrite published history. The engine also writes a backup ref
+    /// before resetting, so the commit is never silently lost.
+    pub fn undo_commit(&self, repo_id: &str) -> Result<()> {
+        let repo_path = self.known_path(repo_id)?;
+        let pushed =
+            self.runtime
+                .block_on(is_commit_on_remote(&self.runner, &repo_path, "HEAD"))?;
+        if pushed {
+            return Err(anyhow!(
+                "This commit is already on the remote. Undoing it would rewrite \
+                 published history — revert it instead."
+            ));
+        }
+        self.runtime
+            .block_on(ops::undo_last_commit(&self.runner, &repo_path))?;
+        Ok(())
+    }
+
+    /// Stage or unstage every path in one repository, in a single git call.
+    ///
+    /// "Select all" goes through this instead of looping over
+    /// [`Backend::set_staged`], so the whole list costs one process.
+    pub fn set_all_staged(&self, repo_id: &str, staged: bool) -> Result<()> {
+        let repo_path = self.known_path(repo_id)?;
+        let result = self.runtime.block_on(async {
+            if staged {
+                ops::stage_all(&self.runner, &repo_path).await
+            } else {
+                ops::unstage_all(&self.runner, &repo_path).await
+            }
+        });
+        result.with_context(|| {
+            format!(
+                "{} every path in `{}`",
+                if staged { "stage" } else { "unstage" },
+                repo_path.display()
+            )
+        })
+    }
+
+    /// Commit `paths` with `summary` as the message, using the repository's own
+    /// git identity.
+    ///
+    /// Returns the short SHA so the UI can name the commit it just created. The
+    /// engine does the staging, identity validation and conflict checks; this
+    /// adapter only moves the call off the UI thread.
+    pub fn commit(&self, repo_id: &str, paths: &[String], summary: &str) -> Result<String> {
+        let repo_path = self.known_path(repo_id)?;
+        let summary = summary.to_string();
+        let paths = paths.to_vec();
+        let committed = self.runtime.block_on(async {
+            // Assert the index from the caller's list before committing. Each
+            // tick stage runs as its own git process, so one can still be in
+            // flight when the commit starts; without this the engine would see
+            // that path as unselected and silently leave it behind.
+            ops::stage_paths(&self.runner, &repo_path, &paths).await?;
+            ops::commit(&self.runner, &repo_path, &paths, &summary, None, &[]).await
+        })?;
+        Ok(committed.short)
     }
 
     /// Stage or unstage one file, addressed by its repository-relative path.

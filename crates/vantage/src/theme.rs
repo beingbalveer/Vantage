@@ -63,7 +63,6 @@ pub const LH_LG: Pixels = px(28.0);
 /// this band, so changing it also means changing `traffic_light_position`.
 pub const HEADER_HEIGHT: Pixels = px(42.0);
 
-pub const W_REGULAR: FontWeight = FontWeight(400.0);
 pub const W_MEDIUM: FontWeight = FontWeight(500.0);
 pub const W_SEMIBOLD: FontWeight = FontWeight(600.0);
 
@@ -128,7 +127,7 @@ pub struct Theme {
     pub field_text: Rgba,   // text-slate-900 / dark:text-slate-100
     pub placeholder: Rgba,  // placeholder:text-slate-400
 
-    // Diff block
+    // Diff block: background, gutter, and the three line kinds.
     pub diff_bg: Rgba,
     pub diff_meta: Rgba,
     pub diff_add: Rgba,
@@ -198,11 +197,13 @@ impl Theme {
             field_text: rgb(SLATE_900),
             placeholder: rgb(SLATE_400),
 
-            diff_bg: rgb(SLATE_950),
-            diff_meta: rgb(SLATE_300),
-            diff_add: rgb(EMERALD_400),
-            diff_del: rgb(RED_400),
-            diff_hunk: rgb(BLUE_400),
+            // The diff block follows the appearance: a near-white sheet with
+            // dark-red/green text in light mode, the inverse in dark mode.
+            diff_bg: rgb(SLATE_50),
+            diff_meta: rgb(SLATE_500),
+            diff_add: rgb(EMERALD_700),
+            diff_del: rgb(RED_700),
+            diff_hunk: rgb(BLUE_700),
 
             overlay: alpha(rgb(SLATE_950), 0.35),
             toast_bg: rgb(SLATE_900),

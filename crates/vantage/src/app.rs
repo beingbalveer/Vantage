@@ -26,6 +26,76 @@ pub enum InspectorTab {
     Commits,
 }
 
+/// The git network operation a repository is currently running.
+///
+/// One per repository at a time, so the row and the detail pane can show which
+/// action is in flight instead of guessing.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum RepoOp {
+    Fetch,
+    Pull,
+    Push,
+    Commit,
+    Undo,
+}
+
+impl RepoOp {
+    /// Button label while this operation runs: "Fetching…", "Pulling…",
+    /// "Pushing…", "Committing…".
+    pub fn in_progress_label(self) -> &'static str {
+        match self {
+            Self::Fetch => "Fetching…",
+            Self::Pull => "Pulling…",
+            Self::Push => "Pushing…",
+            Self::Commit => "Committing…",
+            Self::Undo => "Undoing…",
+        }
+    }
+}
+
+/// Side effect to run on the UI thread once an operation succeeds, with the
+/// value the operation produced (a commit's short SHA, or `()` for the rest).
+type SuccessHook<T> = Box<dyn FnOnce(&mut VantageApp, T)>;
+
+/// What a finished repository operation says, and what it cleans up.
+///
+/// Grouping these keeps [`VantageApp::run_repo_op`] down to the arguments that
+/// differ per call site.
+pub struct RepoOpReport<T = ()> {
+    ok_message: String,
+    fail_message: String,
+    on_success: Option<SuccessHook<T>>,
+}
+
+impl<T> RepoOpReport<T> {
+    pub fn new(ok_message: String, fail_message: String) -> Self {
+        Self {
+            ok_message,
+            fail_message,
+            on_success: None,
+        }
+    }
+
+    /// Run `hook` on the UI thread when the operation returns successfully.
+    pub fn on_success(mut self, hook: impl FnOnce(&mut VantageApp, T) + 'static) -> Self {
+        self.on_success = Some(Box::new(hook));
+        self
+    }
+}
+
+/// The commit this session most recently created, so the detail pane can offer
+/// an Undo for a commit that has not been pushed (as GitHub Desktop does).
+#[derive(Clone, Debug)]
+pub struct LastCommit {
+    pub repo_id: String,
+    pub short: String,
+    pub summary: String,
+    /// The commit that was the branch tip before this one. The row list only
+    /// catches up after the rescan, so this is what lets the Undo strip appear
+    /// immediately instead of a beat later.
+    pub previous_tip: Option<String>,
+}
+
 /// Which text field a keystroke belongs to.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum FieldId {
@@ -33,6 +103,7 @@ pub enum FieldId {
     ModalPath,
     ModalCustomGroup,
     SettingsBranch,
+    CommitMessage,
 }
 
 pub struct VantageApp {
@@ -74,6 +145,9 @@ pub struct VantageApp {
     pub expanded_file: Option<String>,
     pub group_menu_open: bool,
     pub copied_path: bool,
+    /// Message for the next commit in the focused repository.
+    pub commit_field: FieldState,
+    commit_focus: FocusHandle,
 
     // Add-repository modal
     pub modal_path: FieldState,
@@ -90,6 +164,23 @@ pub struct VantageApp {
     pub backend: Option<std::sync::Arc<Backend>>,
     pub assignments: std::collections::BTreeMap<String, String>,
     pub is_scanning: bool,
+    /// Repositories with a fetch/pull/push still running, and which one. Rows
+    /// and the detail pane turn the running action into a spinner from this.
+    pub busy_repos: std::collections::HashMap<String, RepoOp>,
+    /// The commit created from this session, while it is still the branch tip.
+    pub last_commit: Option<LastCommit>,
+    /// Paths the user ticked in the detail pane, per repository, until a commit
+    /// spends them. Kept separately from the scan's `staged` flag because a
+    /// background rescan can arrive between a tick and the commit and would
+    /// otherwise drop that file from the commit.
+    selection: std::collections::HashMap<String, std::collections::HashMap<String, bool>>,
+    /// GitHub profile photos keyed by commit email. `Some(None)` means the
+    /// lookup finished without a photo, so we stop retrying it.
+    avatars: std::collections::HashMap<String, Option<std::sync::Arc<gpui::Image>>>,
+    avatars_pending: HashSet<String>,
+    /// Set by a text field's press handler, read by the window-level press
+    /// handler: a press that no field claimed clears focus.
+    pub text_click_claimed: bool,
     pub scan_errors: Vec<String>,
     watcher: Option<crate::watcher::RepoWatcher>,
     scan_seq: u64,
@@ -148,6 +239,8 @@ impl VantageApp {
             expanded_file: None,
             group_menu_open: false,
             copied_path: false,
+            commit_field: FieldState::new(),
+            commit_focus: cx.focus_handle(),
 
             modal_path: FieldState::new(),
             modal_group_choice: "Ungrouped".to_string(),
@@ -162,6 +255,12 @@ impl VantageApp {
             backend,
             assignments,
             is_scanning: false,
+            busy_repos: std::collections::HashMap::new(),
+            last_commit: None,
+            selection: std::collections::HashMap::new(),
+            avatars: std::collections::HashMap::new(),
+            avatars_pending: HashSet::new(),
+            text_click_claimed: false,
             scan_errors: Vec::new(),
             watcher: None,
             scan_seq: 0,
@@ -247,6 +346,7 @@ impl VantageApp {
                             app.groups.push(repo.workspace.clone());
                         }
                     }
+                    app.prune_selection();
                     cx.notify();
                     return;
                 }
@@ -270,6 +370,7 @@ impl VantageApp {
                     }
                 }
 
+                app.prune_selection();
                 app.bind_watcher(cx);
                 app.maybe_fetch_on_launch(cx);
                 cx.notify();
@@ -506,7 +607,92 @@ impl VantageApp {
         self.selected_repo_id = Some(id);
         self.settings.right_panel_open = true;
         self.save_settings(cx);
+        if let Some(repo) = self.selected_repo().cloned() {
+            self.ensure_avatar(&repo, cx);
+        }
         cx.notify();
+    }
+
+    /// Paths a commit from this pane would include, in list order.
+    pub fn ticked_paths(&self, repo: &Repository) -> Vec<String> {
+        ticked_paths(self.selection.get(&repo.id), repo)
+    }
+
+    /// How many files a commit would include, for the button and the header.
+    pub fn ticked_count(&self, repo: &Repository) -> usize {
+        self.ticked_paths(repo).len()
+    }
+
+    fn set_selected(&mut self, repo_id: &str, path: &str, staged: bool) {
+        self.selection
+            .entry(repo_id.to_string())
+            .or_default()
+            .insert(path.to_string(), staged);
+    }
+
+    /// Forget overrides the last scan has caught up with, so the map only ever
+    /// holds choices git has not applied yet.
+    fn prune_selection(&mut self) {
+        for repo in &self.repos {
+            let Some(overrides) = self.selection.get_mut(&repo.id) else {
+                continue;
+            };
+            overrides.retain(|path, staged| {
+                repo.uncommitted_files
+                    .iter()
+                    .find(|file| &file.path == path)
+                    .is_some_and(|file| file.staged != *staged)
+            });
+        }
+        self.selection.retain(|_, overrides| !overrides.is_empty());
+    }
+
+    /// The fetched GitHub photo for a commit email, when one is available.
+    pub fn avatar_for(&self, email: &str) -> Option<std::sync::Arc<gpui::Image>> {
+        self.avatars.get(email).cloned().flatten()
+    }
+
+    /// Resolve and fetch the profile photo for a repository's commit identity.
+    ///
+    /// Runs off the UI thread: the lookup may read `gh`'s config and the fetch
+    /// shells out to `curl`. Both the download and the decode are cached, so
+    /// selecting the same repository again costs nothing.
+    fn ensure_avatar(&mut self, repo: &Repository, cx: &mut Context<Self>) {
+        let Some(author) = repo.author.clone() else {
+            return;
+        };
+        let key = author.email.clone();
+        if self.avatars.contains_key(&key) || self.avatars_pending.contains(&key) {
+            return;
+        }
+        self.avatars_pending.insert(key.clone());
+
+        let path = expand_home(&repo.local_path);
+        let load_key = key.clone();
+        cx.spawn(async move |this, cx| {
+            let avatar = cx
+                .background_executor()
+                .spawn(async move { crate::avatar_cache::load(&load_key, &path) })
+                .await;
+            this.update(cx, |app, cx| {
+                app.avatars_pending.remove(&key);
+                let photo = avatar.map(|avatar| {
+                    // GitHub serves PNG or JPEG depending on the uploaded
+                    // avatar, so the detected format is what we decode with.
+                    let format = match avatar.format {
+                        crate::avatar_cache::AvatarFormat::Png => gpui::ImageFormat::Png,
+                        crate::avatar_cache::AvatarFormat::Jpeg => gpui::ImageFormat::Jpeg,
+                        crate::avatar_cache::AvatarFormat::Gif => gpui::ImageFormat::Gif,
+                        crate::avatar_cache::AvatarFormat::Webp => gpui::ImageFormat::Webp,
+                    };
+                    std::sync::Arc::new(gpui::Image::from_bytes(format, avatar.bytes))
+                });
+                app.avatars.insert(key, photo);
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
     }
 
     pub fn toggle_right_panel(&mut self, cx: &mut Context<Self>) {
@@ -645,6 +831,16 @@ impl VantageApp {
 
     pub fn set_fetch_on_launch(&mut self, enabled: bool, cx: &mut Context<Self>) {
         self.settings.fetch_on_launch = enabled;
+        self.save_settings(cx);
+        cx.notify();
+    }
+
+    pub fn set_pull_strategy(
+        &mut self,
+        strategy: vantage_core::git::refs::PullStrategy,
+        cx: &mut Context<Self>,
+    ) {
+        self.settings.pull_strategy = strategy;
         self.save_settings(cx);
         cx.notify();
     }
@@ -838,10 +1034,25 @@ impl VantageApp {
 
     /// Fetch the repository currently open in the inspector.
     pub fn fetch_selected(&mut self, cx: &mut Context<Self>) {
-        if let Some(repository) = self.selected_repo().cloned() {
-            self.fetch_repo(&repository, cx);
-        } else {
-            self.show_toast("Select a repository first", cx);
+        match self.selected_repo().cloned() {
+            Some(repo) => self.fetch_repo(&repo, cx),
+            None => self.show_toast("Select a repository first", cx),
+        }
+    }
+
+    /// Pull the repository currently open in the inspector.
+    pub fn pull_selected(&mut self, cx: &mut Context<Self>) {
+        match self.selected_repo().cloned() {
+            Some(repo) => self.pull_repo(&repo, cx),
+            None => self.show_toast("Select a repository first", cx),
+        }
+    }
+
+    /// Push the repository currently open in the inspector.
+    pub fn push_selected(&mut self, cx: &mut Context<Self>) {
+        match self.selected_repo().cloned() {
+            Some(repo) => self.push_repo(&repo, cx),
+            None => self.show_toast("Select a repository first", cx),
         }
     }
 
@@ -911,34 +1122,100 @@ impl VantageApp {
         let Some(backend) = self.backend.clone() else {
             return;
         };
-        let Some(staged) = self
-            .repos
+        let Some(index) = self.repos.iter().position(|repo| repo.id == repo_id) else {
+            return;
+        };
+        let Some(target) = self.repos[index]
+            .uncommitted_files
             .iter()
-            .find(|repo| repo.id == repo_id)
-            .and_then(|repo| {
-                repo.uncommitted_files
-                    .iter()
-                    .find(|file| file.path == path)
-                    .map(|file| file.staged)
-            })
+            .find(|file| file.path == path)
+            .map(|file| !file.staged)
         else {
             return;
         };
+        let root = expand_home(&self.repos[index].local_path);
+
+        // Apply the tick before asking git, so a checkbox never waits on a
+        // process. The rescan below confirms (or corrects) it.
+        if let Some(file) = self.repos[index]
+            .uncommitted_files
+            .iter_mut()
+            .find(|file| file.path == path)
+        {
+            file.staged = target;
+        }
+        cx.notify();
+
+        self.set_selected(repo_id, path, target);
 
         let id = repo_id.to_string();
         let file_path = path.to_string();
         let toast_path = file_path.clone();
-        let target = !staged;
         cx.spawn(async move |this, cx| {
             let result = cx
                 .background_executor()
                 .spawn(async move { backend.set_staged(&id, &file_path, target) })
                 .await;
             this.update(cx, |app, cx| {
+                // A failed write is the only case that needs a re-read: the tick
+                // is otherwise the user's answer and survives later scans.
                 if let Err(error) = result {
                     app.show_toast(format!("Could not update {toast_path}: {error}"), cx);
+                    app.start_scan_dirty(vec![root], cx);
                 }
-                app.start_scan(cx);
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
+    }
+
+    /// Stage or unstage every changed file of one repository.
+    ///
+    /// The checkbox is "all staged"; clicking a partially staged list stages
+    /// the rest, so one control both fills and clears the index.
+    pub fn toggle_all_staged(&mut self, repo_id: &str, cx: &mut Context<Self>) {
+        let Some(backend) = self.backend.clone() else {
+            return;
+        };
+        let Some(index) = self.repos.iter().position(|repo| repo.id == repo_id) else {
+            return;
+        };
+        let total = self.repos[index].uncommitted_files.len();
+        if total == 0 {
+            return;
+        }
+        let target = !self.repos[index]
+            .uncommitted_files
+            .iter()
+            .all(|file| file.staged);
+        let root = expand_home(&self.repos[index].local_path);
+
+        let paths: Vec<String> = self.repos[index]
+            .uncommitted_files
+            .iter()
+            .map(|file| file.path.clone())
+            .collect();
+        for file in self.repos[index].uncommitted_files.iter_mut() {
+            file.staged = target;
+        }
+        for path in &paths {
+            self.set_selected(repo_id, path, target);
+        }
+        cx.notify();
+
+        let id = repo_id.to_string();
+        let verb = if target { "stage" } else { "unstage" };
+        cx.spawn(async move |this, cx| {
+            let result = cx
+                .background_executor()
+                .spawn(async move { backend.set_all_staged(&id, target) })
+                .await;
+            this.update(cx, |app, cx| {
+                if let Err(error) = result {
+                    app.show_toast(format!("Could not {verb} {total} files: {error}"), cx);
+                    app.start_scan_dirty(vec![root], cx);
+                }
                 cx.notify();
             })
             .ok();
@@ -957,6 +1234,12 @@ impl VantageApp {
             .map(|repo| repo.name.clone())
             .unwrap_or_else(|| repo_id.to_string());
 
+        let root = self
+            .repos
+            .iter()
+            .find(|repo| repo.id == repo_id)
+            .map(|repo| expand_home(&repo.local_path));
+
         let id = repo_id.to_string();
         let branch = branch_name.to_string();
         let checkout_branch = branch.clone();
@@ -972,7 +1255,10 @@ impl VantageApp {
                         app.show_toast(format!("Checkout failed for {name}: {error}"), cx)
                     }
                 }
-                app.start_scan(cx);
+                match root {
+                    Some(root) => app.start_scan_dirty(vec![root], cx),
+                    None => app.start_scan(cx),
+                }
                 cx.notify();
             })
             .ok();
@@ -982,26 +1268,196 @@ impl VantageApp {
 
     /// Phase 2: actually fetch, then rescan the tree.
     pub fn fetch_repo(&mut self, repo: &Repository, cx: &mut Context<Self>) {
+        let name = repo.name.clone();
+        self.run_repo_op(
+            repo,
+            cx,
+            RepoOp::Fetch,
+            RepoOpReport::new(
+                format!("Fetched origin for {name}"),
+                format!("Fetch failed for {name}"),
+            ),
+            |backend, repo_id| backend.fetch(repo_id),
+        );
+    }
+
+    /// `git pull` the branch this repository has checked out, reconciled with
+    /// the strategy chosen in Settings → Git.
+    pub fn pull_repo(&mut self, repo: &Repository, cx: &mut Context<Self>) {
+        let name = repo.name.clone();
+        let strategy = self.settings.pull_strategy;
+        self.run_repo_op(
+            repo,
+            cx,
+            RepoOp::Pull,
+            RepoOpReport::new(
+                format!("Pulled {} into {name}", repo.current_branch),
+                format!("Pull failed for {name}"),
+            ),
+            move |backend, repo_id| backend.pull(repo_id, strategy),
+        );
+    }
+
+    /// `git push` the branch this repository has checked out. The backend
+    /// publishes the branch when it tracks nothing yet.
+    pub fn push_repo(&mut self, repo: &Repository, cx: &mut Context<Self>) {
+        let name = repo.name.clone();
+        let branch = repo.current_branch.clone();
+        let publishing = !repo.has_upstream;
+        let ok_message = if publishing {
+            format!("Published {branch} to origin from {name}")
+        } else {
+            format!("Pushed {branch} to origin from {name}")
+        };
+        self.run_repo_op(
+            repo,
+            cx,
+            RepoOp::Push,
+            RepoOpReport::new(ok_message, format!("Push failed for {name}")),
+            |backend, repo_id| backend.push(repo_id),
+        );
+    }
+
+    /// Commit the staged files of the focused repository with the message in
+    /// the composer.
+    ///
+    /// Only staged paths are committed, so ticking a file stays the explicit
+    /// decision it is in any other git client.
+    pub fn commit_selected(&mut self, cx: &mut Context<Self>) {
+        // The composer only exists on the Changes tab of an open pane; committing
+        // from anywhere else would be an invisible action.
+        if !self.settings.right_panel_open || self.inspector_tab != InspectorTab::Changes {
+            self.show_toast("Open a repository's Changes tab to commit", cx);
+            return;
+        }
+        let Some(repo) = self.selected_repo().cloned() else {
+            self.show_toast("Select a repository first", cx);
+            return;
+        };
+        let message = self.commit_field.value.trim().to_string();
+        if message.is_empty() {
+            self.show_toast("Write a commit message first", cx);
+            return;
+        }
+        let paths = self.ticked_paths(&repo);
+        if paths.is_empty() {
+            self.show_toast("Stage the files you want to commit", cx);
+            return;
+        }
+
+        let count = paths.len();
+        let name = repo.name.clone();
+        let ok_message = if count == 1 {
+            format!("Committed 1 file to {name}")
+        } else {
+            format!("Committed {count} files to {name}")
+        };
+        let record_repo = repo.id.clone();
+        let record_summary = message.clone();
+        let previous_tip = repo.recent_commits.first().map(|commit| commit.sha.clone());
+        self.run_repo_op(
+            &repo,
+            cx,
+            RepoOp::Commit,
+            RepoOpReport::new(ok_message, format!("Commit failed for {name}"))
+                // The message is only spent once git accepted it, so a failed
+                // commit leaves the composer intact for a retry.
+                .on_success(move |app, short: String| {
+                    app.commit_field.clear();
+                    // The commit spent these ticks; the rescan reports the real
+                    // index state from here on.
+                    app.selection.remove(&record_repo);
+                    app.last_commit = Some(LastCommit {
+                        repo_id: record_repo,
+                        short,
+                        summary: record_summary,
+                        previous_tip,
+                    });
+                }),
+            move |backend, repo_id| backend.commit(repo_id, &paths, &message),
+        );
+    }
+
+    /// The commit a detail pane may offer to undo: still the branch tip of
+    /// this repository, and made from this session.
+    pub fn undo_candidate(&self, repo: &Repository) -> Option<UndoOffer> {
+        undo_offer(self.last_commit.as_ref(), repo)
+    }
+
+    /// Soft-reset the last commit so its changes are staged again.
+    ///
+    /// The engine refuses when the commit is already on the remote, and writes a
+    /// backup ref first, so an undo can never silently lose work.
+    pub fn undo_last_commit(&mut self, repo: &Repository, cx: &mut Context<Self>) {
+        let Some(tip) = repo.recent_commits.first() else {
+            return;
+        };
+        if self.undo_candidate(repo).is_none() {
+            return;
+        }
+        let short = tip.sha.clone();
+        self.run_repo_op(
+            repo,
+            cx,
+            RepoOp::Undo,
+            RepoOpReport::new(
+                format!("Undid {short} — its changes are back in Changes"),
+                "Could not undo the commit".to_string(),
+            )
+            .on_success(|app, ()| app.last_commit = None),
+            move |backend, repo_id| backend.undo_commit(repo_id),
+        );
+    }
+
+    /// Run one git operation off the UI thread, report which action is in
+    /// flight for this repository, and re-scan when it ends.
+    fn run_repo_op<T: Send + 'static>(
+        &mut self,
+        repo: &Repository,
+        cx: &mut Context<Self>,
+        op_kind: RepoOp,
+        report: RepoOpReport<T>,
+        op: impl FnOnce(&Backend, &str) -> anyhow::Result<T> + Send + 'static,
+    ) {
         let Some(backend) = self.backend.clone() else {
             return;
         };
+        // One operation per repository at a time: `git` already serialises on
+        // the repo lock, so queueing a second one only delays the UI.
+        if self.busy_repos.insert(repo.id.clone(), op_kind).is_some() {
+            return;
+        }
+        cx.notify();
+
         let id = repo.id.clone();
-        let name = repo.name.clone();
         cx.spawn(async move |this, cx| {
+            let task_id = id.clone();
             let result = cx
                 .background_executor()
-                .spawn(async move { backend.fetch(&id) })
+                .spawn(async move { op(&backend, &task_id) })
                 .await;
             this.update(cx, |app, cx| {
+                app.busy_repos.remove(&id);
                 match result {
-                    Ok(()) => app.show_toast(format!("Fetched origin for {name}"), cx),
-                    Err(error) => app.show_toast(format!("Fetch failed for {name}: {error}"), cx),
+                    Ok(value) => {
+                        if let Some(on_success) = report.on_success {
+                            on_success(app, value);
+                        }
+                        app.show_toast(report.ok_message, cx);
+                    }
+                    Err(error) => app.show_toast(format!("{}: {error}", report.fail_message), cx),
                 }
                 app.start_scan(cx);
+                cx.notify();
             })
             .ok();
         })
         .detach();
+    }
+
+    /// Which git operation, if any, is still running for this repository.
+    pub fn repo_op(&self, repo_id: &str) -> Option<RepoOp> {
+        self.busy_repos.get(repo_id).copied()
     }
 
     pub fn copy_local_path(&mut self, path: String, cx: &mut Context<Self>) {
@@ -1218,6 +1674,7 @@ impl VantageApp {
             FieldId::ModalPath => &mut self.modal_path,
             FieldId::ModalCustomGroup => &mut self.modal_custom_group,
             FieldId::SettingsBranch => &mut self.settings_branch_field,
+            FieldId::CommitMessage => &mut self.commit_field,
         }
     }
 
@@ -1227,6 +1684,7 @@ impl VantageApp {
             FieldId::ModalPath => &self.modal_path,
             FieldId::ModalCustomGroup => &self.modal_custom_group,
             FieldId::SettingsBranch => &self.settings_branch_field,
+            FieldId::CommitMessage => &self.commit_field,
         }
     }
 
@@ -1236,6 +1694,7 @@ impl VantageApp {
             FieldId::ModalPath => self.modal_path_focus.clone(),
             FieldId::ModalCustomGroup => self.modal_custom_group_focus.clone(),
             FieldId::SettingsBranch => self.settings_branch_focus.clone(),
+            FieldId::CommitMessage => self.commit_focus.clone(),
         }
     }
 
@@ -1254,40 +1713,47 @@ impl VantageApp {
         match outcome {
             FieldKey::Ignored => {}
             FieldKey::Changed => cx.notify(),
-            FieldKey::Cancel => {
-                if id == FieldId::NewGroup {
-                    self.is_adding_group = false;
-                    self.group_field.clear();
-                } else if self.is_settings_open {
-                    self.close_settings(cx);
-                } else if self.is_add_modal_open {
-                    self.close_add_modal(cx);
-                } else if self.selected_repo_id.is_some() {
-                    self.close_inspector(cx);
-                }
-                cx.notify();
+            FieldKey::Cancel => self.cancel_field(id, cx),
+            FieldKey::Submit => self.submit_field(id, cx),
+        }
+    }
+
+    /// Escape in a field: close whichever surface owns it.
+    fn cancel_field(&mut self, id: FieldId, cx: &mut Context<Self>) {
+        if id == FieldId::NewGroup {
+            self.is_adding_group = false;
+            self.group_field.clear();
+        } else if self.is_settings_open {
+            self.close_settings(cx);
+        } else if self.is_add_modal_open {
+            self.close_add_modal(cx);
+        } else if self.selected_repo_id.is_some() {
+            self.close_inspector(cx);
+        }
+        cx.notify();
+    }
+
+    /// Enter in a field: run the action that field belongs to.
+    fn submit_field(&mut self, id: FieldId, cx: &mut Context<Self>) {
+        match id {
+            FieldId::NewGroup => {
+                let name = self.group_field.value.clone();
+                self.group_field.clear();
+                self.is_adding_group = false;
+                self.create_group(name, cx);
             }
-            FieldKey::Submit => match id {
-                FieldId::NewGroup => {
-                    let name = self.group_field.value.clone();
-                    self.group_field.clear();
-                    self.is_adding_group = false;
-                    self.create_group(name, cx);
+            FieldId::ModalPath | FieldId::ModalCustomGroup => {
+                if self.modal_group_choice == "__new__"
+                    && self.modal_custom_group.value.trim().is_empty()
+                {
+                    self.modal_error = Some("Enter a group name.".to_string());
+                    cx.notify();
+                } else {
+                    self.submit_add_modal(cx);
                 }
-                FieldId::ModalPath | FieldId::ModalCustomGroup => {
-                    if self.modal_group_choice == "__new__"
-                        && self.modal_custom_group.value.trim().is_empty()
-                    {
-                        self.modal_error = Some("Enter a group name.".to_string());
-                        cx.notify();
-                    } else {
-                        self.submit_add_modal(cx);
-                    }
-                }
-                FieldId::SettingsBranch => {
-                    self.commit_settings_branch(cx);
-                }
-            },
+            }
+            FieldId::SettingsBranch => self.commit_settings_branch(cx),
+            FieldId::CommitMessage => self.commit_selected(cx),
         }
     }
 
@@ -1311,13 +1777,22 @@ impl VantageApp {
             .cursor_text()
             .on_mouse_down(
                 MouseButton::Left,
-                cx.listener(move |this, _e, window, cx| {
+                cx.listener(move |this, event: &gpui::MouseDownEvent, window, cx| {
                     if matches!(id, FieldId::ModalPath | FieldId::ModalCustomGroup) {
                         this.modal_group_menu_open = false;
                     }
+                    // This press belongs to a text field, so the window-level
+                    // handler must leave focus alone.
+                    this.text_click_claimed = true;
                     window.focus(&this.field_focus(id));
                     let state = this.field_state_mut(id);
-                    state.end();
+                    if event.click_count >= 2 {
+                        // No glyph metrics here, so a double-click selects the
+                        // whole line rather than guessing a word boundary.
+                        state.select_all();
+                    } else {
+                        state.end();
+                    }
                     cx.notify();
                 }),
             )
@@ -1419,7 +1894,20 @@ impl Render for VantageApp {
             .text_size(px(crate::theme::TEXT_SM))
             .line_height(crate::theme::LH_SM)
             .child(self.render_top_bar(window, cx))
-            .child(content);
+            .child(content)
+            // Any press a text field did not claim drops focus, so clicking into
+            // empty space leaves the commit box blurred instead of still taking
+            // keystrokes.
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(|this, _event: &gpui::MouseDownEvent, window, cx| {
+                    if std::mem::take(&mut this.text_click_claimed) {
+                        return;
+                    }
+                    window.blur();
+                    cx.notify();
+                }),
+            );
 
         // A transparent full-window catcher behind the deferred group menu:
         // any press outside the menu closes it. The menu itself is painted in
@@ -1452,6 +1940,75 @@ impl Render for VantageApp {
     }
 }
 
+/// What the detail pane offers to undo, if anything.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct UndoOffer {
+    /// Commit subject the strip shows.
+    pub summary: String,
+    /// True when this session made the commit, so the strip can say "just now".
+    pub just_now: bool,
+    /// Local commits that never reached the remote, for the strip's count.
+    pub unpushed: u32,
+}
+
+/// Resolve which files a commit includes: the user's tick wins over the flag the
+/// last scan reported, so a rescan landing between a tick and the commit cannot
+/// drop that file from the commit.
+fn ticked_paths(
+    overrides: Option<&std::collections::HashMap<String, bool>>,
+    repo: &Repository,
+) -> Vec<String> {
+    repo.uncommitted_files
+        .iter()
+        .filter(|file| {
+            overrides
+                .and_then(|chosen| chosen.get(&file.path))
+                .copied()
+                .unwrap_or(file.staged)
+        })
+        .map(|file| file.path.clone())
+        .collect()
+}
+
+/// The commit an Undo would reset, given the row's state and this session's
+/// last commit.
+///
+/// The offer exists whenever the branch has commits the remote does not, which
+/// is exactly when a soft reset is safe to offer. The session record widens it
+/// by one rescan: right after committing, the row still shows the commit we
+/// replaced, so without it the strip would appear a beat late.
+fn undo_offer(record: Option<&LastCommit>, repo: &Repository) -> Option<UndoOffer> {
+    let tip = repo.recent_commits.first()?;
+
+    if let Some(record) = record {
+        if record.repo_id == repo.id {
+            // Our commit, before the row list caught up with it.
+            if record.previous_tip.as_deref() == Some(tip.sha.as_str()) {
+                return Some(UndoOffer {
+                    summary: record.summary.clone(),
+                    just_now: true,
+                    unpushed: repo.ahead_count.max(1) as u32,
+                });
+            }
+            if record.short == tip.sha {
+                return Some(UndoOffer {
+                    summary: tip.message.clone(),
+                    just_now: true,
+                    unpushed: repo.ahead_count.max(1) as u32,
+                });
+            }
+        }
+    }
+
+    // Any other commit that is still local — including one made before this
+    // session, or from a terminal.
+    (repo.ahead_count > 0).then(|| UndoOffer {
+        summary: tip.message.clone(),
+        just_now: false,
+        unpushed: repo.ahead_count as u32,
+    })
+}
+
 /// `~` expansion for repo paths that come back from the UI model.
 pub fn expand_home(path: &str) -> std::path::PathBuf {
     if let Some(home) = dirs::home_dir() {
@@ -1463,4 +2020,164 @@ pub fn expand_home(path: &str) -> std::path::PathBuf {
         }
     }
     std::path::PathBuf::from(path)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::model::{ChangedFile, FileChangeStatus};
+
+    fn file(path: &str, staged: bool) -> ChangedFile {
+        ChangedFile {
+            path: path.to_string(),
+            status: FileChangeStatus::Modified,
+            additions: 1,
+            deletions: 0,
+            staged,
+            diff_preview: Vec::new(),
+        }
+    }
+
+    fn repo_with(files: Vec<ChangedFile>) -> Repository {
+        Repository {
+            id: "repo-1".to_string(),
+            name: "fixture".to_string(),
+            workspace: "Ungrouped".to_string(),
+            local_path: "/tmp/fixture".to_string(),
+            remote_repo: "github.com/example/fixture".to_string(),
+            has_remote: true,
+            current_branch: "main".to_string(),
+            author: None,
+            sync_state: RepoSyncState::Modified,
+            ahead_count: 0,
+            behind_count: 0,
+            has_upstream: true,
+            last_activity_label: "just now".to_string(),
+            last_activity_minutes: 0,
+            primary_language: "Rust".to_string(),
+            uncommitted_files: files,
+            branches: Vec::new(),
+            recent_commits: Vec::new(),
+        }
+    }
+
+    fn repo_with_commits(shas: &[&str]) -> Repository {
+        let mut repo = repo_with(Vec::new());
+        repo.recent_commits = shas
+            .iter()
+            .map(|sha| crate::model::CommitEntry {
+                sha: sha.to_string(),
+                message: format!("subject of {sha}"),
+                author: "QA".to_string(),
+                relative_time: "just now".to_string(),
+            })
+            .collect();
+        repo
+    }
+
+    fn record(short: &str, previous_tip: Option<&str>) -> LastCommit {
+        LastCommit {
+            repo_id: "repo-1".to_string(),
+            short: short.to_string(),
+            summary: "Added commit ability".to_string(),
+            previous_tip: previous_tip.map(str::to_string),
+        }
+    }
+
+    #[test]
+    fn undo_is_offered_for_a_local_commit_that_was_never_pushed() {
+        let mut repo = repo_with_commits(&["abc1234", "older99"]);
+        repo.ahead_count = 1;
+        let offer = undo_offer(None, &repo).expect("an unpushed commit can be undone");
+        assert_eq!(offer.summary, "subject of abc1234");
+        assert!(!offer.just_now, "it was not made from this session");
+        assert_eq!(offer.unpushed, 1);
+    }
+
+    #[test]
+    fn undo_is_not_offered_when_every_commit_is_pushed() {
+        let mut repo = repo_with_commits(&["abc1234"]);
+        repo.ahead_count = 0;
+        assert_eq!(undo_offer(None, &repo), None);
+    }
+
+    #[test]
+    fn undo_is_offered_immediately_after_committing() {
+        // The tip our row still shows; the record's own commit is newer.
+        let mut repo = repo_with_commits(&["older99"]);
+        repo.ahead_count = 0;
+        let record = record("abc1234", Some("older99"));
+        let offer = undo_offer(Some(&record), &repo).expect("own commit is undoable at once");
+        assert!(offer.just_now);
+        assert_eq!(offer.summary, "Added commit ability");
+    }
+
+    #[test]
+    fn undo_uses_the_tip_subject_once_the_row_catches_up() {
+        let mut repo = repo_with_commits(&["abc1234", "older99"]);
+        repo.ahead_count = 1;
+        let record = record("abc1234", Some("older99"));
+        let offer = undo_offer(Some(&record), &repo).expect("tip is our commit");
+        assert!(offer.just_now);
+        assert_eq!(offer.summary, "subject of abc1234");
+    }
+
+    #[test]
+    fn commits_from_another_repository_do_not_hide_a_local_commit() {
+        let mut repo = repo_with_commits(&["abc1234"]);
+        repo.id = "repo-2".to_string();
+        repo.ahead_count = 2;
+        let record = record("abc1234", None);
+        let offer = undo_offer(Some(&record), &repo).expect("repo-2 has its own unpushed work");
+        assert!(!offer.just_now);
+        assert_eq!(offer.unpushed, 2);
+    }
+
+    fn overrides(pairs: &[(&str, bool)]) -> std::collections::HashMap<String, bool> {
+        pairs
+            .iter()
+            .map(|(path, staged)| (path.to_string(), *staged))
+            .collect()
+    }
+
+    #[test]
+    fn commit_includes_the_files_git_reported_as_staged() {
+        let repo = repo_with(vec![
+            file("staged.rs", true),
+            file("untracked.rs", false),
+            file("also-staged.md", true),
+        ]);
+        assert_eq!(
+            ticked_paths(None, &repo),
+            vec!["staged.rs".to_string(), "also-staged.md".to_string()],
+            "unstaged work must never be swept into a commit"
+        );
+    }
+
+    #[test]
+    fn a_tick_survives_a_scan_that_still_reports_the_file_unstaged() {
+        // The tick was applied, the git write had not landed when the rescan
+        // ran, and the row came back saying "unstaged". The commit must still
+        // include it — this was the bug where ticked files stayed behind.
+        let repo = repo_with(vec![file("late.rs", false)]);
+        let chosen = overrides(&[("late.rs", true)]);
+        assert_eq!(
+            ticked_paths(Some(&chosen), &repo),
+            vec!["late.rs".to_string()]
+        );
+    }
+
+    #[test]
+    fn an_untick_survives_a_scan_that_still_reports_the_file_staged() {
+        let repo = repo_with(vec![file("staged.rs", true)]);
+        let chosen = overrides(&[("staged.rs", false)]);
+        assert!(ticked_paths(Some(&chosen), &repo).is_empty());
+    }
+
+    #[test]
+    fn commit_with_nothing_ticked_yields_no_paths() {
+        let repo = repo_with(vec![file("untracked.rs", false)]);
+        assert!(ticked_paths(None, &repo).is_empty());
+        assert!(ticked_paths(Some(&overrides(&[("untracked.rs", false)])), &repo).is_empty());
+    }
 }

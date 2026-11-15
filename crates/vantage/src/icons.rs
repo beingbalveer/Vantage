@@ -94,6 +94,15 @@ impl AssetSource for Assets {
 
 /// A Lucide icon at `size` px, tinted with `color` (Tailwind `h-3.5 w-3.5 text-…`).
 pub fn icon(name: &'static str, size: f32, color: Rgba) -> impl gpui::IntoElement {
+    icon_svg(name, size, color)
+}
+
+/// The concrete `Svg` element behind [`icon`].
+///
+/// Only needed by callers that transform the glyph itself — the in-flight
+/// spinner rotates it, and `Transformation` is a method on `Svg` rather than on
+/// `IntoElement`.
+pub fn icon_svg(name: &'static str, size: f32, color: Rgba) -> gpui::Svg {
     svg()
         .path(format!("icons/{name}.svg"))
         .flex_shrink_0()

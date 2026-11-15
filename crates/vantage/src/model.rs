@@ -36,6 +36,30 @@ impl NavSection {
     }
 }
 
+/// What one line of a patch does.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum PreviewKind {
+    /// Unchanged line shown around a change.
+    Context,
+    Added,
+    Removed,
+    /// `@@ -a,b +c,d @@` boundary between hunks.
+    Hunk,
+}
+
+/// One rendered line of a diff preview.
+///
+/// Line numbers are resolved while parsing so the view can print a gutter
+/// instead of re-reading the patch: `None` means the line does not exist on
+/// that side (an addition has no old line, a deletion no new line).
+#[derive(Clone, Debug)]
+pub struct PreviewLine {
+    pub kind: PreviewKind,
+    pub old_line: Option<u32>,
+    pub new_line: Option<u32>,
+    pub text: String,
+}
+
 #[derive(Clone, Debug)]
 pub struct ChangedFile {
     pub path: String,
@@ -43,7 +67,7 @@ pub struct ChangedFile {
     pub additions: u32,
     pub deletions: u32,
     pub staged: bool,
-    pub diff_preview: Vec<String>,
+    pub diff_preview: Vec<PreviewLine>,
 }
 
 #[derive(Clone, Debug)]
@@ -65,6 +89,17 @@ pub struct CommitEntry {
     pub relative_time: String,
 }
 
+/// Who git will attribute the next commit to in a repository.
+///
+/// This is the *effective* `user.name` / `user.email`, so a repository that
+/// overrides the global config reports its own identity — the one a commit made
+/// from here will actually carry.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CommitIdentity {
+    pub name: String,
+    pub email: String,
+}
+
 #[derive(Clone, Debug)]
 pub struct Repository {
     pub id: String,
@@ -72,10 +107,18 @@ pub struct Repository {
     pub workspace: String,
     pub local_path: String,
     pub remote_repo: String,
+    /// `remote_repo` names a real origin rather than the "no remote" placeholder.
+    pub has_remote: bool,
     pub current_branch: String,
+    /// `None` when git has no usable `user.name` / `user.email` here, which
+    /// also means a commit would fail.
+    pub author: Option<CommitIdentity>,
     pub sync_state: RepoSyncState,
     pub ahead_count: i32,
     pub behind_count: i32,
+    /// The checked-out branch tracks a remote branch, so `Push` needs no
+    /// `--set-upstream` and `Pull` has something to pull from.
+    pub has_upstream: bool,
     pub last_activity_label: String,
     pub last_activity_minutes: i64,
     pub primary_language: String,

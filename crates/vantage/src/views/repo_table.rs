@@ -1,12 +1,12 @@
 //! All Repositories / Needs Attention table: one bordered container, collapsible
-//! group headers, six columns.
+//! group headers, five columns plus a row action strip.
 
 use gpui::{div, prelude::*, px, relative, Context, Div, IntoElement, Styled};
 
-use crate::app::VantageApp;
+use crate::app::{RepoOp, VantageApp};
 use crate::model::RepoSyncState;
 use crate::theme::Theme;
-use crate::ui::{icon, IconSize};
+use crate::ui::{icon, icon_button_sm, spinner, IconSize};
 use crate::ui::{primary_button, Txt};
 use crate::widgets::{status_text, sync_arrows};
 
@@ -15,8 +15,6 @@ const COL_BRANCH: f32 = 0.19;
 const COL_TREE: f32 = 0.165;
 const COL_SYNC: f32 = 0.085;
 const COL_UPDATED: f32 = 0.075;
-const COL_LATEST: f32 = 1.0 - (COL_REPO + COL_BRANCH + COL_TREE + COL_SYNC + COL_UPDATED);
-const COL_LATEST_MAX: f32 = 320.0; // `max-w-xs` on the browser cell
 
 fn repo_column(compact: bool) -> f32 {
     if compact {
@@ -51,7 +49,8 @@ struct TableRow {
     uncommitted: usize,
     ahead: i32,
     behind: i32,
-    latest: String,
+    /// Drives the row's fetch enabled state.
+    has_remote: bool,
     activity: String,
 }
 
@@ -75,11 +74,7 @@ fn make_row(repo: &crate::model::Repository) -> TableRow {
         uncommitted: repo.uncommitted_files.len(),
         ahead: repo.ahead_count,
         behind: repo.behind_count,
-        latest: repo
-            .recent_commits
-            .first()
-            .map(|c| c.message.clone())
-            .unwrap_or_else(|| "—".to_string()),
+        has_remote: repo.has_remote,
         activity: repo.last_activity_label.clone(),
     }
 }
@@ -91,11 +86,8 @@ impl VantageApp {
         viewport_width: gpui::Pixels,
     ) -> impl IntoElement {
         let theme = self.theme;
-        let wide = viewport_width >= px(1050.0);
         let compact = viewport_width < px(900.0);
         let container_width = (viewport_width - px(48.0)).max(px(0.0)).min(px(1440.0));
-        let latest_width =
-            crate::text::column_width(container_width, COL_LATEST, 16.0).min(px(COL_LATEST_MAX));
         let branch_width =
             (crate::text::column_width(container_width, branch_column(compact), 16.0) - px(20.0))
                 .max(px(24.0));
@@ -193,7 +185,7 @@ impl VantageApp {
             );
         }
 
-        table = table.child(self.render_table_head(theme, wide, compact));
+        table = table.child(self.render_table_head(theme, compact));
 
         for section in &sections {
             let mut card = div()
@@ -209,15 +201,7 @@ impl VantageApp {
 
             if !self.collapsed_groups.contains(&section.key) {
                 for row in &section.rows {
-                    card = card.child(self.render_row(
-                        theme,
-                        row,
-                        wide,
-                        compact,
-                        latest_width,
-                        branch_width,
-                        cx,
-                    ));
+                    card = card.child(self.render_row(theme, row, compact, branch_width, cx));
                 }
             }
 
@@ -227,7 +211,7 @@ impl VantageApp {
         table
     }
 
-    fn render_table_head(&self, theme: Theme, wide: bool, compact: bool) -> impl IntoElement {
+    fn render_table_head(&self, theme: Theme, compact: bool) -> impl IntoElement {
         let mut head = div()
             .flex()
             .items_center()
@@ -272,17 +256,9 @@ impl VantageApp {
             );
         }
 
-        if wide {
-            head = head.child(
-                div()
-                    .flex_1()
-                    .min_w(px(0.0))
-                    .py(px(10.0))
-                    .px(px(16.0))
-                    .whitespace_nowrap()
-                    .child("Latest Commit"),
-            );
-        }
+        // Spacer for the per-row action strip, so the columns after it stay
+        // aligned with the body. The strip carries no heading of its own.
+        head = head.child(div().flex_1().min_w(px(0.0)));
 
         if !compact {
             head = head.child(
@@ -359,14 +335,11 @@ impl VantageApp {
             )
     }
 
-    #[allow(clippy::too_many_arguments)]
     fn render_row(
         &self,
         theme: Theme,
         row: &TableRow,
-        wide: bool,
         compact: bool,
-        latest_width: gpui::Pixels,
         branch_width: gpui::Pixels,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
@@ -461,27 +434,54 @@ impl VantageApp {
             );
         }
 
-        if wide {
-            let latest = crate::text::ellipsize(
-                cx,
-                &row.latest,
-                crate::theme::FONT_SANS,
-                crate::theme::W_REGULAR,
-                crate::theme::TEXT_XS,
-                latest_width,
-            );
-            line = line.child(
-                div()
-                    .flex_1()
-                    .min_w(px(0.0))
-                    .py(px(12.0))
-                    .px(px(16.0))
-                    .xs()
-                    .fg(theme.text_body)
-                    .whitespace_nowrap()
-                    .child(latest),
-            );
-        }
+        // Row action: fetch this one repository. Pull and Push live in the
+        // detail pane, which has room to name them.
+        let fetching = self.repo_op(&row.id) == Some(RepoOp::Fetch);
+        let busy = self.repo_op(&row.id).is_some();
+        let fetch_id = row.id.clone();
+        let fetch_control: gpui::AnyElement = if fetching {
+            // Spinner replaces the glyph for as long as the fetch runs; the row
+            // stays on screen because a scan does not blank the table.
+            div()
+                .flex()
+                .items_center()
+                .justify_center()
+                .w(px(22.0))
+                .h(px(22.0))
+                .flex_shrink_0()
+                .child(spinner(
+                    format!("row-fetch-{}", row.id),
+                    "refresh-cw",
+                    IconSize::Xs,
+                    theme.accent_text,
+                ))
+                .into_any_element()
+        } else if row.has_remote && !busy {
+            icon_button_sm(&theme, "refresh-cw")
+                .id(gpui::SharedString::from(format!("row-fetch-{}", row.id)))
+                // Stop the click so it never also selects the row underneath.
+                .on_click(cx.listener(move |this, _e, _w, cx| {
+                    cx.stop_propagation();
+                    if let Some(repo) = this.repos.iter().find(|r| r.id == fetch_id).cloned() {
+                        this.fetch_repo(&repo, cx);
+                    }
+                }))
+                .into_any_element()
+        } else {
+            icon_button_sm(&theme, "refresh-cw")
+                .opacity(0.35)
+                .into_any_element()
+        };
+        line = line.child(
+            div()
+                .flex_1()
+                .min_w(px(0.0))
+                .flex()
+                .items_center()
+                .justify_end()
+                .pr(px(8.0))
+                .child(fetch_control),
+        );
 
         // Updated + disclosure chevron
         if !compact {
@@ -587,7 +587,7 @@ fn clone_row(row: &TableRow) -> TableRow {
         uncommitted: row.uncommitted,
         ahead: row.ahead,
         behind: row.behind,
-        latest: row.latest.clone(),
+        has_remote: row.has_remote,
         activity: row.activity.clone(),
     }
 }
