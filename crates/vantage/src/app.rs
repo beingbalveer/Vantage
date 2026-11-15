@@ -546,6 +546,12 @@ impl VantageApp {
         match self.settings.sort {
             SortOrder::Recent => list.sort_by_key(|repo| repo.last_activity_minutes),
             SortOrder::Name => list.sort_by(|a, b| a.name.cmp(&b.name)),
+            SortOrder::Attention => list.sort_by(|a, b| {
+                attention_rank(a)
+                    .cmp(&attention_rank(b))
+                    .then(a.last_activity_minutes.cmp(&b.last_activity_minutes))
+                    .then(a.name.cmp(&b.name))
+            }),
             SortOrder::Changes => list.sort_by(|a, b| {
                 let count = |repo: &Repository| {
                     let files = repo.uncommitted_files.len();
@@ -2026,6 +2032,25 @@ pub struct UndoOffer {
     pub unpushed: u32,
 }
 
+/// Sort key for "attention first": a conflict, then unpushed work, then
+/// uncommitted changes, then anything behind its remote, then the quiet ones.
+/// Lower ranks sort first; the second element keeps the newest first within a
+/// rank.
+fn attention_rank(repo: &Repository) -> (u8, i64) {
+    let rank = if repo.sync_state == RepoSyncState::Conflict {
+        0
+    } else if repo.ahead_count > 0 {
+        1
+    } else if !repo.uncommitted_files.is_empty() {
+        2
+    } else if repo.behind_count > 0 {
+        3
+    } else {
+        4
+    };
+    (rank, repo.last_activity_minutes)
+}
+
 /// A repository with nothing to look at: no changes, nothing unpushed, not
 /// behind, no conflict.
 fn repo_is_clean(repo: &Repository) -> bool {
@@ -2221,6 +2246,29 @@ mod tests {
             .iter()
             .map(|(path, staged)| (path.to_string(), *staged))
             .collect()
+    }
+
+    #[test]
+    fn attention_first_puts_the_loud_repositories_on_top() {
+        let rank = |repo: &Repository| attention_rank(repo).0;
+
+        let mut conflict = repo_with_commits(&["a"]);
+        conflict.sync_state = RepoSyncState::Conflict;
+        let mut unpushed = repo_with_commits(&["b"]);
+        unpushed.ahead_count = 2;
+        let mut dirty = repo_with_commits(&["c"]);
+        dirty.uncommitted_files = vec![file("x.rs", false)];
+        let mut behind = repo_with_commits(&["d"]);
+        behind.behind_count = 1;
+        let quiet = repo_with_commits(&["e"]);
+
+        let mut ordered = [&quiet, &behind, &dirty, &unpushed, &conflict];
+        ordered.sort_by_key(|repo| rank(repo));
+        assert_eq!(
+            ordered.map(|repo| repo.recent_commits[0].sha.as_str()),
+            ["a", "b", "c", "d", "e"],
+            "conflict, unpushed, changes, behind, quiet"
+        );
     }
 
     #[test]

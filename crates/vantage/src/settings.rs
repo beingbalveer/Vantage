@@ -65,6 +65,8 @@ pub enum SortOrder {
     Recent,
     Name,
     Changes,
+    /// Repositories that need a decision first, then by activity.
+    Attention,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

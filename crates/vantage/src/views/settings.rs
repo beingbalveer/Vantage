@@ -189,6 +189,7 @@ impl VantageApp {
         let mut sort_choices = div().flex().gap(px(6.0));
         for (index, (sort, label)) in [
             (SortOrder::Recent, "Recent activity"),
+            (SortOrder::Attention, "Attention first"),
             (SortOrder::Name, "Name"),
             (SortOrder::Changes, "Most changes"),
         ]
