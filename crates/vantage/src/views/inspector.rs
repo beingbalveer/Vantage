@@ -352,12 +352,12 @@ impl VantageApp {
                 format!("Changes ({})", repo.uncommitted_files.len()),
             ),
             (
-                InspectorTab::Branches,
-                format!("Branches ({})", repo.branches.len()),
-            ),
-            (
                 InspectorTab::Commits,
                 format!("Commits ({})", repo.recent_commits.len()),
+            ),
+            (
+                InspectorTab::Branches,
+                format!("Branches ({})", repo.branches.len()),
             ),
         ];
 
@@ -902,50 +902,23 @@ impl VantageApp {
             .overflow_hidden();
 
         for (index, branch) in repo.branches.iter().enumerate() {
-            let repo_id = repo.id.clone();
-            let branch_name = branch.name.clone();
-
-            let mut right = div()
+            let right = div()
                 .flex()
                 .items_center()
                 .gap(px(12.0))
                 .flex_shrink_0()
                 .child(
                     div()
-                        .mono_xs()
+                        .xs()
                         .fg(theme.label_muted)
                         .whitespace_nowrap()
-                        .child(format!(
-                            "\u{2191}{} \u{2193}{}",
-                            branch.ahead, branch.behind
-                        )),
+                        .child(branch.last_commit_time.clone()),
                 );
 
-            if !branch.is_current {
-                right = right.child(
-                    div()
-                        .id(gpui::SharedString::from(format!(
-                            "checkout-{}",
-                            branch.name
-                        )))
-                        .px(px(10.0))
-                        .py(px(4.0))
-                        .rounded(px(6.0))
-                        .border_1()
-                        .border_color(theme.secondary_border)
-                        .cursor_pointer()
-                        .whitespace_nowrap()
-                        .xs()
-                        .medium()
-                        .fg(theme.secondary_text)
-                        .hover(move |s| s.bg(theme.secondary_bg_hover))
-                        .on_click(cx.listener(move |this, _e, _w, cx| {
-                            this.switch_branch(&repo_id, &branch_name, cx);
-                        }))
-                        .child("Checkout"),
-                );
-            }
-
+            let menu_repo = repo.id.clone();
+            let menu_name = branch.name.clone();
+            let menu_is_current = branch.is_current;
+            let menu_is_default = branch.is_default;
             list = list.child(
                 div()
                     .flex()
@@ -956,59 +929,56 @@ impl VantageApp {
                     .py(px(12.0))
                     .w_full()
                     .bg(theme.panel)
+                    .on_mouse_down(
+                        gpui::MouseButton::Right,
+                        cx.listener(move |this, event: &gpui::MouseDownEvent, _w, cx| {
+                            this.open_branch_menu(
+                                &menu_repo,
+                                &menu_name,
+                                menu_is_current,
+                                menu_is_default,
+                                f32::from(event.position.x),
+                                f32::from(event.position.y),
+                                cx,
+                            );
+                        }),
+                    )
                     .when(index > 0, |d| d.border_t_1().border_color(theme.row_border))
                     .child(
-                        div()
-                            .flex()
-                            .flex_col()
-                            .flex_1()
-                            .min_w(px(0.0))
-                            .child(
-                                div()
-                                    .flex()
-                                    .items_center()
-                                    .gap(px(8.0))
-                                    .child(icon("git-branch", IconSize::Sm, theme.icon_idle))
-                                    .child(
+                        div().flex().flex_col().flex_1().min_w(px(0.0)).child(
+                            div()
+                                .flex()
+                                .items_center()
+                                .gap(px(8.0))
+                                .child(icon("git-branch", IconSize::Sm, theme.icon_idle))
+                                .child(
+                                    div()
+                                        .mono_xs()
+                                        .medium()
+                                        .fg(theme.text_app)
+                                        .truncate()
+                                        .child(branch.name.clone()),
+                                )
+                                .when(branch.is_current, |d| {
+                                    d.child(
                                         div()
-                                            .mono_xs()
+                                            .xs()
                                             .medium()
-                                            .fg(theme.text_app)
-                                            .truncate()
-                                            .child(branch.name.clone()),
+                                            .fg(theme.accent_text)
+                                            .whitespace_nowrap()
+                                            .child("\u{00b7} Current"),
                                     )
-                                    .when(branch.is_current, |d| {
-                                        d.child(
-                                            div()
-                                                .xs()
-                                                .medium()
-                                                .fg(theme.accent_text)
-                                                .whitespace_nowrap()
-                                                .child("\u{00b7} Current"),
-                                        )
-                                    })
-                                    .when(branch.is_default, |d| {
-                                        d.child(
-                                            div()
-                                                .xs()
-                                                .fg(theme.label_muted)
-                                                .whitespace_nowrap()
-                                                .child("\u{00b7} Default"),
-                                        )
-                                    }),
-                            )
-                            .child(
-                                div()
-                                    .mt(px(4.0))
-                                    .w_full()
-                                    .xs()
-                                    .fg(theme.label_muted)
-                                    .truncate()
-                                    .child(format!(
-                                        "{} \u{00b7} {}",
-                                        branch.last_commit_msg, branch.last_commit_time
-                                    )),
-                            ),
+                                })
+                                .when(branch.is_default, |d| {
+                                    d.child(
+                                        div()
+                                            .xs()
+                                            .fg(theme.label_muted)
+                                            .whitespace_nowrap()
+                                            .child("\u{00b7} Default"),
+                                    )
+                                }),
+                        ),
                     )
                     .child(right),
             );
@@ -1118,11 +1088,29 @@ impl VantageApp {
                             .gap(px(2.0))
                             .child(
                                 div()
-                                    .xs()
-                                    .medium()
-                                    .fg(theme.text_app)
-                                    .whitespace_nowrap()
-                                    .child(message),
+                                    .flex()
+                                    .items_center()
+                                    .justify_between()
+                                    .gap(px(12.0))
+                                    .w_full()
+                                    .min_w(px(0.0))
+                                    .child(
+                                        div()
+                                            .flex_1()
+                                            .min_w(px(0.0))
+                                            .xs()
+                                            .medium()
+                                            .fg(theme.text_app)
+                                            .whitespace_nowrap()
+                                            .child(message),
+                                    )
+                                    .child(
+                                        div()
+                                            .flex_shrink_0()
+                                            .mono_xs()
+                                            .fg(theme.label_muted)
+                                            .child(short_sha.clone()),
+                                    ),
                             )
                             .child(
                                 div()
@@ -1141,13 +1129,13 @@ impl VantageApp {
                                             .gap(px(6.0))
                                             .flex_1()
                                             .min_w(px(0.0))
-                                            .child(
-                                                div()
-                                                    .font_family(crate::theme::FONT_MONO)
-                                                    .flex_shrink_0()
-                                                    .child(short_sha),
-                                            )
-                                            .child(div().flex_shrink_0().child("·"))
+                                            .child(crate::ui::avatar(
+                                                &theme,
+                                                &commit.author,
+                                                &commit.author_email,
+                                                self.avatar_for(&commit.author_email),
+                                                16.0,
+                                            ))
                                             .child(div().truncate().child(commit.author.clone())),
                                     )
                                     .child({

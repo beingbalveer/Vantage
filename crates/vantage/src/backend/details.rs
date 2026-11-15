@@ -24,7 +24,6 @@ const COMMIT_LIMIT: u32 = 15;
 /// Generous enough to show whole hunks with their context, bounded so a
 /// thousand-line rewrite cannot be put into the row model.
 const PREVIEW_LINES: usize = 200;
-const NO_COMMITS: &str = "no commits";
 const UNKNOWN_AUTHOR: &str = "unknown";
 
 // ---------------- Branches ----------------
@@ -65,14 +64,10 @@ pub fn branches(
             BranchInfo {
                 is_current: branch.is_head || name == current,
                 is_default: name == default,
-                ahead: tip.map(|tip| tip.ahead).unwrap_or(0),
-                behind: tip.map(|tip| tip.behind).unwrap_or(0),
-                last_commit_msg: tip.map(|tip| tip.subject.clone()).unwrap_or_default(),
-                last_commit_time: if seconds > 0 {
-                    relative_label(now, seconds)
-                } else {
-                    NO_COMMITS.to_string()
-                },
+                last_commit_time: tip
+                    .and_then(|tip| tip.seconds)
+                    .map(|seconds| relative_label(now, seconds))
+                    .unwrap_or_default(),
                 name,
             },
             seconds,
@@ -88,15 +83,11 @@ pub fn branches(
 }
 
 struct BranchTip {
-    ahead: i32,
-    behind: i32,
     /// Seconds since the epoch of the branch tip, `None` for an unborn branch.
     seconds: Option<i64>,
-    subject: String,
 }
 
-const BRANCH_TIP_FORMAT: &str =
-    "%(refname:short)\x1f%(upstream:track)\x1f%(committerdate:unix)\x1f%(subject)";
+const BRANCH_TIP_FORMAT: &str = "%(refname:short)\x1f%(committerdate:unix)";
 
 /// Ahead/behind and tip-commit metadata for every local branch in one call.
 /// `state::BranchInfo` (what `refs::list_branches` returns) only carries the
@@ -114,45 +105,21 @@ async fn branch_tips(runner: &GitRunner, repo_path: &Path) -> HashMap<String, Br
     let mut tips = HashMap::new();
     for line in out.stdout_string().lines() {
         let fields: Vec<&str> = line.split('\x1f').collect();
-        if fields.len() < 4 {
+        let (Some(name), Some(seconds)) = (fields.first(), fields.last()) else {
             continue;
-        }
-        let name = fields[0].trim();
+        };
+        let name = name.trim();
         if name.is_empty() {
             continue;
         }
-        let (ahead, behind) = parse_track(fields[1]);
         tips.insert(
             name.to_string(),
             BranchTip {
-                ahead,
-                behind,
-                seconds: fields[2].trim().parse::<i64>().ok(),
-                subject: fields[3].trim().to_string(),
+                seconds: seconds.trim().parse::<i64>().ok(),
             },
         );
     }
     tips
-}
-
-/// `%(upstream:track)` renders as `[ahead 2, behind 1]`, `[gone]` or nothing.
-fn parse_track(track: &str) -> (i32, i32) {
-    let mut ahead = 0;
-    let mut behind = 0;
-    for part in track
-        .trim()
-        .trim_start_matches('[')
-        .trim_end_matches(']')
-        .split(',')
-    {
-        let part = part.trim();
-        if let Some(value) = part.strip_prefix("ahead ") {
-            ahead = value.trim().parse().unwrap_or(0);
-        } else if let Some(value) = part.strip_prefix("behind ") {
-            behind = value.trim().parse().unwrap_or(0);
-        }
-    }
-    (ahead, behind)
 }
 
 // ---------------- Commits ----------------
@@ -189,10 +156,11 @@ pub fn commits(
             sha: short_sha(&commit.sha, &commit.short),
             message: commit.subject,
             author: if commit.author_name.trim().is_empty() {
-                commit.author_email
+                commit.author_email.clone()
             } else {
                 commit.author_name
             },
+            author_email: commit.author_email,
             relative_time: relative_iso_label(now, &commit.date),
         })
         .collect()
@@ -825,15 +793,6 @@ mod tests {
             .to_rfc3339();
         assert_eq!(relative_iso_label(now, &stamp), "2m ago");
         assert_eq!(relative_iso_label(now, ""), UNKNOWN_AUTHOR);
-    }
-
-    #[test]
-    fn parse_track_reads_ahead_behind_counts() {
-        assert_eq!(parse_track(""), (0, 0));
-        assert_eq!(parse_track("[gone]"), (0, 0));
-        assert_eq!(parse_track("[ahead 2]"), (2, 0));
-        assert_eq!(parse_track("[ahead 2, behind 1]"), (2, 1));
-        assert_eq!(parse_track("[behind 7]"), (0, 7));
     }
 
     #[test]

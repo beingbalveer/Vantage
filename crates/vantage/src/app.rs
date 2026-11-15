@@ -22,8 +22,8 @@ use crate::ui::{apply_field_key, FieldKey, FieldState, Txt};
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum InspectorTab {
     Changes,
-    Branches,
     Commits,
+    Branches,
 }
 
 /// The git network operation a repository is currently running.
@@ -39,6 +39,7 @@ pub enum RepoOp {
     Push,
     Commit,
     Undo,
+    Branch,
 }
 
 impl RepoOp {
@@ -49,6 +50,7 @@ impl RepoOp {
             Self::Fetch => "Fetching…",
             Self::Discard => "Discarding…",
             Self::Amend => "Amending…",
+            Self::Branch => "Updating branch…",
             Self::Pull => "Pulling…",
             Self::Push => "Pushing…",
             Self::Commit => "Committing…",
@@ -108,6 +110,7 @@ pub enum FieldId {
     ModalCustomGroup,
     SettingsBranch,
     CommitMessage,
+    BranchName,
 }
 
 pub struct VantageApp {
@@ -177,6 +180,11 @@ pub struct VantageApp {
     pub context_menu: Option<ContextMenu>,
     /// The commit bar is in amend mode: the next commit rewrites the tip.
     pub amending: bool,
+    /// A branch action waiting for its name or confirmation.
+    pub branch_prompt: Option<BranchPrompt>,
+    /// Name typed for the pending create/rename.
+    pub branch_field: FieldState,
+    branch_focus: FocusHandle,
     /// The commit created from this session, while it is still the branch tip.
     pub last_commit: Option<LastCommit>,
     /// Paths the user ticked in the detail pane, per repository, until a commit
@@ -270,6 +278,9 @@ impl VantageApp {
             last_commit: None,
             context_menu: None,
             amending: false,
+            branch_prompt: None,
+            branch_field: FieldState::new(),
+            branch_focus: cx.focus_handle(),
             selection: std::collections::HashMap::new(),
             avatars: std::collections::HashMap::new(),
             avatars_pending: HashSet::new(),
@@ -643,6 +654,14 @@ impl VantageApp {
         self.save_settings(cx);
         if let Some(repo) = self.selected_repo().cloned() {
             self.ensure_avatar(&repo, cx);
+            let seen: Vec<(String, String)> = repo
+                .recent_commits
+                .iter()
+                .map(|commit| (commit.author_email.clone(), repo.local_path.clone()))
+                .collect();
+            for (email, path) in seen {
+                self.ensure_avatar_for(&email, &path, cx);
+            }
         }
         cx.notify();
     }
@@ -695,13 +714,22 @@ impl VantageApp {
         let Some(author) = repo.author.clone() else {
             return;
         };
-        let key = author.email.clone();
+        self.ensure_avatar_for(&author.email, &repo.local_path, cx);
+    }
+
+    /// Fetch the GitHub photo for one email, once. Commit rows use this for the
+    /// author icons, so history shows faces where the cache can resolve a login.
+    fn ensure_avatar_for(&mut self, email: &str, local_path: &str, cx: &mut Context<Self>) {
+        if email.trim().is_empty() {
+            return;
+        }
+        let key = email.to_string();
         if self.avatars.contains_key(&key) || self.avatars_pending.contains(&key) {
             return;
         }
         self.avatars_pending.insert(key.clone());
 
-        let path = expand_home(&repo.local_path);
+        let path = expand_home(local_path);
         let load_key = key.clone();
         cx.spawn(async move |this, cx| {
             let avatar = cx
@@ -1528,6 +1556,201 @@ impl VantageApp {
         cx.notify();
     }
 
+    /// Open the branch actions menu.
+    #[allow(clippy::too_many_arguments)]
+    pub fn open_branch_menu(
+        &mut self,
+        repo_id: &str,
+        name: &str,
+        is_current: bool,
+        is_default: bool,
+        x: f32,
+        y: f32,
+        cx: &mut Context<Self>,
+    ) {
+        self.context_menu = Some(ContextMenu::Branch {
+            repo_id: repo_id.to_string(),
+            name: name.to_string(),
+            is_current,
+            is_default,
+            x,
+            y,
+        });
+        cx.notify();
+    }
+
+    /// Start a branch action and pre-fill its name field where it makes sense.
+    pub fn start_branch_prompt(&mut self, prompt: BranchPrompt, cx: &mut Context<Self>) {
+        self.context_menu = None;
+        match &prompt {
+            BranchPrompt::Create { .. } => self.branch_field.clear(),
+            BranchPrompt::Rename { from } => self.branch_field.set(from.clone()),
+            BranchPrompt::Delete { .. } => self.branch_field.clear(),
+        }
+        self.branch_prompt = Some(prompt);
+        cx.notify();
+    }
+
+    pub fn cancel_branch_prompt(&mut self, cx: &mut Context<Self>) {
+        self.branch_prompt = None;
+        self.branch_field.clear();
+        cx.notify();
+    }
+
+    /// Enter in the name field (or the row's Save button) runs the action.
+    pub fn submit_branch_prompt(&mut self, cx: &mut Context<Self>) {
+        let Some(prompt) = self.branch_prompt.clone() else {
+            return;
+        };
+        let Some(repo) = self.selected_repo().cloned() else {
+            return;
+        };
+        let typed = self.branch_field.value.trim().to_string();
+
+        let (ok, fail, op): (
+            String,
+            String,
+            Box<dyn FnOnce(&Backend, &str) -> anyhow::Result<()> + Send>,
+        ) = match &prompt {
+            BranchPrompt::Create { base } => {
+                if typed.is_empty() {
+                    self.show_toast("Type a branch name first", cx);
+                    return;
+                }
+                let base = base.clone();
+                (
+                    format!("Created {typed} from {base}"),
+                    format!("Could not create {typed}"),
+                    Box::new(move |backend, id| backend.create_branch(id, &typed, &base)),
+                )
+            }
+            BranchPrompt::Rename { from } => {
+                if typed.is_empty() {
+                    self.show_toast("Type a branch name first", cx);
+                    return;
+                }
+                let from = from.clone();
+                (
+                    format!("Renamed {from} to {typed}"),
+                    format!("Could not rename {from}"),
+                    Box::new(move |backend, id| backend.rename_branch(id, &from, &typed)),
+                )
+            }
+            BranchPrompt::Delete { name } => {
+                let name = name.clone();
+                (
+                    format!("Deleted {name}"),
+                    format!("Could not delete {name}"),
+                    Box::new(move |backend, id| backend.delete_branch(id, &name, false)),
+                )
+            }
+        };
+
+        self.branch_prompt = None;
+        self.branch_field.clear();
+        self.run_repo_op(&repo, cx, RepoOp::Branch, RepoOpReport::new(ok, fail), op);
+    }
+
+    /// Small dialog for a branch action: a name to type, or a delete to confirm.
+    fn render_branch_modal(&self, window: &mut Window, cx: &mut Context<Self>) -> gpui::AnyElement {
+        let theme = self.theme;
+        let Some(prompt) = self.branch_prompt.clone() else {
+            return div().into_any_element();
+        };
+
+        // The dialog owns the keyboard while it is open.
+        if !self.branch_focus.is_focused(window) {
+            window.focus(&self.branch_focus);
+        }
+
+        let (title, action_label, destructive) = match &prompt {
+            BranchPrompt::Create { base } => {
+                (format!("New branch from {base}"), "Create branch", false)
+            }
+            BranchPrompt::Rename { from } => (format!("Rename {from}"), "Rename", false),
+            BranchPrompt::Delete { name } => (format!("Delete {name}?"), "Delete", true),
+        };
+
+        let mut body = div().flex().flex_col().gap(px(12.0)).w_full();
+        match &prompt {
+            BranchPrompt::Delete { name } => {
+                body = body.child(div().xs().fg(theme.text_body).child(format!(
+                    "{name} will be removed. Git refuses when the branch has unmerged work."
+                )))
+            }
+            _ => {
+                body = body.child(self.text_field(
+                    FieldId::BranchName,
+                    "Branch name",
+                    crate::ui::FieldVariant::Form,
+                    window,
+                    cx,
+                ))
+            }
+        }
+
+        let mut confirm = crate::ui::accent_button(&theme, action_label)
+            .id("branch-modal-confirm")
+            .on_click(cx.listener(|this, _e, _w, cx| this.submit_branch_prompt(cx)));
+        if destructive {
+            confirm = confirm
+                .bg(theme.status_red)
+                .hover(move |s| s.bg(theme.del_text));
+        }
+
+        let card = div()
+            .w(px(420.0))
+            .flex()
+            .flex_col()
+            .gap(px(14.0))
+            .p(px(20.0))
+            .bg(theme.panel)
+            .border_1()
+            .border_color(theme.divider)
+            .rounded(px(12.0))
+            .shadow_lg()
+            // A click inside the dialog is not a click on the backdrop.
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(|_this, _e, _w, cx| cx.stop_propagation()),
+            )
+            .child(div().sm().medium().fg(theme.text_app).child(title))
+            .child(body)
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .justify_end()
+                    .gap(px(8.0))
+                    .child(
+                        crate::ui::secondary_button(&theme, "Cancel", None)
+                            .id("branch-modal-cancel")
+                            .on_click(
+                                cx.listener(|this, _e, _w, cx| this.cancel_branch_prompt(cx)),
+                            ),
+                    )
+                    .child(confirm),
+            );
+
+        // One absolute layer covers the window: dim it, centre the card in it,
+        // and dismiss on any press that the card itself did not take.
+        div()
+            .absolute()
+            .top(px(0.0))
+            .left(px(0.0))
+            .size_full()
+            .flex()
+            .items_center()
+            .justify_center()
+            .bg(theme.overlay)
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(|this, _e, _w, cx| this.cancel_branch_prompt(cx)),
+            )
+            .child(card)
+            .into_any_element()
+    }
+
     /// Rewrite the tip commit instead of making a new one: the message field is
     /// pre-filled with the commit's subject and the usual file ticks apply.
     pub fn begin_amend(&mut self, subject: &str, cx: &mut Context<Self>) {
@@ -1865,6 +2088,7 @@ impl VantageApp {
             FieldId::ModalCustomGroup => &mut self.modal_custom_group,
             FieldId::SettingsBranch => &mut self.settings_branch_field,
             FieldId::CommitMessage => &mut self.commit_field,
+            FieldId::BranchName => &mut self.branch_field,
         }
     }
 
@@ -1875,6 +2099,7 @@ impl VantageApp {
             FieldId::ModalCustomGroup => &self.modal_custom_group,
             FieldId::SettingsBranch => &self.settings_branch_field,
             FieldId::CommitMessage => &self.commit_field,
+            FieldId::BranchName => &self.branch_field,
         }
     }
 
@@ -1885,6 +2110,7 @@ impl VantageApp {
             FieldId::ModalCustomGroup => self.modal_custom_group_focus.clone(),
             FieldId::SettingsBranch => self.settings_branch_focus.clone(),
             FieldId::CommitMessage => self.commit_focus.clone(),
+            FieldId::BranchName => self.branch_focus.clone(),
         }
     }
 
@@ -1910,6 +2136,12 @@ impl VantageApp {
 
     /// Escape in a field: close whichever surface owns it.
     fn cancel_field(&mut self, id: FieldId, cx: &mut Context<Self>) {
+        if id == FieldId::BranchName {
+            self.branch_prompt = None;
+            self.branch_field.clear();
+            cx.notify();
+            return;
+        }
         if id == FieldId::CommitMessage && self.amending {
             self.cancel_amend(cx);
             return;
@@ -1948,6 +2180,7 @@ impl VantageApp {
             }
             FieldId::SettingsBranch => self.commit_settings_branch(cx),
             FieldId::CommitMessage => self.commit_selected(cx),
+            FieldId::BranchName => self.submit_branch_prompt(cx),
         }
     }
 
@@ -2136,6 +2369,27 @@ impl Render for VantageApp {
                     let items: Vec<(&'static str, bool, u64)> = vec![("Discard changes", true, 0)];
                     (*x, *y, name, items)
                 }
+                ContextMenu::Branch {
+                    name,
+                    is_current,
+                    is_default,
+                    x,
+                    y,
+                    ..
+                } => {
+                    let mut items: Vec<(&'static str, bool, u64)> = Vec::new();
+                    if !*is_current {
+                        items.push(("Checkout branch", false, 0));
+                    }
+                    items.push(("New branch from this branch", false, 0));
+                    if *is_current {
+                        items.push(("Rename current branch", false, 0));
+                    }
+                    if !*is_current && !*is_default {
+                        items.push(("Delete branch", true, 0));
+                    }
+                    (*x, *y, name.clone(), items)
+                }
                 ContextMenu::Commit {
                     short,
                     subject,
@@ -2211,6 +2465,52 @@ impl Render for VantageApp {
                                 (ContextMenu::File { repo_id, path, .. }, "Discard changes") => {
                                     this.discard_file(repo_id, path, cx)
                                 }
+                                (ContextMenu::Branch { repo_id, name, .. }, "Checkout branch") => {
+                                    if this.selected_repo_id.as_deref() == Some(repo_id.as_str()) {
+                                        this.close_file_menu(cx);
+                                        this.switch_branch(repo_id, name, cx);
+                                    } else {
+                                        this.close_file_menu(cx);
+                                    }
+                                }
+                                (
+                                    ContextMenu::Branch { repo_id, name, .. },
+                                    "New branch from this branch",
+                                ) => {
+                                    // The action belongs to the repository the
+                                    // menu came from, not whatever is selected now.
+                                    if this.selected_repo_id.as_deref() == Some(repo_id.as_str()) {
+                                        this.start_branch_prompt(
+                                            BranchPrompt::Create { base: name.clone() },
+                                            cx,
+                                        );
+                                    } else {
+                                        this.close_file_menu(cx);
+                                    }
+                                }
+                                (
+                                    ContextMenu::Branch { repo_id, name, .. },
+                                    "Rename current branch",
+                                ) => {
+                                    if this.selected_repo_id.as_deref() == Some(repo_id.as_str()) {
+                                        this.start_branch_prompt(
+                                            BranchPrompt::Rename { from: name.clone() },
+                                            cx,
+                                        );
+                                    } else {
+                                        this.close_file_menu(cx);
+                                    }
+                                }
+                                (ContextMenu::Branch { repo_id, name, .. }, "Delete branch") => {
+                                    if this.selected_repo_id.as_deref() == Some(repo_id.as_str()) {
+                                        this.start_branch_prompt(
+                                            BranchPrompt::Delete { name: name.clone() },
+                                            cx,
+                                        );
+                                    } else {
+                                        this.close_file_menu(cx);
+                                    }
+                                }
                                 (
                                     ContextMenu::Commit {
                                         repo_id, subject, ..
@@ -2246,6 +2546,10 @@ impl Render for VantageApp {
                 )
                 .child(deferred(panel));
         }
+        if self.branch_prompt.is_some() {
+            let modal = self.render_branch_modal(window, cx);
+            root = root.child(deferred(modal));
+        }
         if self.is_add_modal_open {
             root = root.child(self.render_add_repo_modal(window, cx));
         }
@@ -2259,6 +2563,17 @@ impl Render for VantageApp {
     }
 }
 
+/// An in-progress branch action, answered by the inline row in the Branches tab.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum BranchPrompt {
+    /// Create a branch from an existing one.
+    Create { base: String },
+    /// Rename the current branch.
+    Rename { from: String },
+    /// Delete a branch after a confirm.
+    Delete { name: String },
+}
+
 /// A right-click menu, anchored at the pointer.
 #[derive(Clone, Debug)]
 pub enum ContextMenu {
@@ -2266,6 +2581,15 @@ pub enum ContextMenu {
     File {
         repo_id: String,
         path: String,
+        x: f32,
+        y: f32,
+    },
+    /// Actions for one branch.
+    Branch {
+        repo_id: String,
+        name: String,
+        is_current: bool,
+        is_default: bool,
         x: f32,
         y: f32,
     },
@@ -2455,6 +2779,7 @@ mod tests {
                 sha: sha.to_string(),
                 message: format!("subject of {sha}"),
                 author: "QA".to_string(),
+                author_email: "qa@example.com".to_string(),
                 relative_time: "just now".to_string(),
             })
             .collect();

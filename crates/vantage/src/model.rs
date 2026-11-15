@@ -77,9 +77,7 @@ pub struct BranchInfo {
     pub name: String,
     pub is_current: bool,
     pub is_default: bool,
-    pub ahead: i32,
-    pub behind: i32,
-    pub last_commit_msg: String,
+    /// How long ago the branch last moved, for the row's timestamp.
     pub last_commit_time: String,
 }
 
@@ -88,6 +86,8 @@ pub struct CommitEntry {
     pub sha: String,
     pub message: String,
     pub author: String,
+    /// The author's email, used to look up their GitHub photo for the row icon.
+    pub author_email: String,
     pub relative_time: String,
 }
 

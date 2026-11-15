@@ -461,6 +461,13 @@ mod tests {
         );
         assert!(!clean.has_upstream);
         assert!(!clean.local_path.is_empty());
+        assert!(
+            clean
+                .branches
+                .iter()
+                .any(|branch| !branch.last_commit_time.is_empty()),
+            "branch rows show when the branch last moved"
+        );
         assert_eq!(
             clean.author,
             Some(crate::model::CommitIdentity {

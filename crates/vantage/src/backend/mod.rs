@@ -19,8 +19,8 @@ use anyhow::{anyhow, Context, Result};
 use tokio::runtime::Runtime;
 use vantage_core::git::ops;
 use vantage_core::git::refs::{
-    checkout_branch, has_upstream, is_commit_on_remote, sync_fetch, sync_pull, sync_push,
-    PullStrategy,
+    checkout_branch, create_branch, delete_branch, has_upstream, is_commit_on_remote,
+    rename_branch, sync_fetch, sync_pull, sync_push, PullStrategy,
 };
 use vantage_core::git::status::query_repo_status;
 use vantage_core::persist::PersistedState;
@@ -204,6 +204,36 @@ impl Backend {
         let path = self.known_path(repo_id)?;
         self.runtime
             .block_on(checkout_branch(&self.runner, &path, branch))?;
+        Ok(())
+    }
+
+    /// Create `name` at `start_point` and check it out.
+    pub fn create_branch(&self, repo_id: &str, name: &str, start_point: &str) -> Result<()> {
+        let repo_path = self.known_path(repo_id)?;
+        self.runtime.block_on(create_branch(
+            &self.runner,
+            &repo_path,
+            name,
+            Some(start_point),
+            true,
+        ))?;
+        Ok(())
+    }
+
+    /// Rename the current branch.
+    pub fn rename_branch(&self, repo_id: &str, from: &str, to: &str) -> Result<()> {
+        let repo_path = self.known_path(repo_id)?;
+        self.runtime
+            .block_on(rename_branch(&self.runner, &repo_path, Some(from), to))?;
+        Ok(())
+    }
+
+    /// Delete a branch. Unmerged work needs `force`, which the UI only asks for
+    /// after git refuses.
+    pub fn delete_branch(&self, repo_id: &str, name: &str, force: bool) -> Result<()> {
+        let repo_path = self.known_path(repo_id)?;
+        self.runtime
+            .block_on(delete_branch(&self.runner, &repo_path, name, force))?;
         Ok(())
     }
 
