@@ -121,6 +121,8 @@ pub struct VantageApp {
     /// "All" or a group name.
     pub active_group: String,
     pub status_filter: Option<RepoSyncState>,
+    /// Filter chosen from the summary strip above the repository list.
+    pub summary_filter: Option<SummaryFilter>,
     pub search_query: String,
     pub selected_repo_id: Option<String>,
     pub is_add_modal_open: bool,
@@ -220,6 +222,7 @@ impl VantageApp {
             active_section: settings.default_view.nav_section(),
             active_group: "All".to_string(),
             status_filter: None,
+            summary_filter: None,
             search_query: String::new(),
             selected_repo_id: None,
             is_add_modal_open: false,
@@ -502,6 +505,20 @@ impl VantageApp {
 
         if self.active_section == NavSection::Attention {
             list.retain(|r| r.needs_attention());
+        }
+
+        if let Some(filter) = self.summary_filter {
+            list.retain(|repo| match filter {
+                SummaryFilter::All => true,
+                SummaryFilter::Uncommitted => !repo.uncommitted_files.is_empty(),
+                SummaryFilter::Unpushed => repo.ahead_count > 0,
+                SummaryFilter::Clean => {
+                    repo.uncommitted_files.is_empty()
+                        && repo.ahead_count <= 0
+                        && repo.behind_count <= 0
+                        && repo.sync_state != RepoSyncState::Conflict
+                }
+            });
         }
 
         if let Some(filter) = self.status_filter {
@@ -1391,15 +1408,31 @@ impl VantageApp {
             if repo.ahead_count > 0 {
                 summary.unpushed += 1;
             }
-            let quiet = repo.uncommitted_files.is_empty()
-                && repo.ahead_count <= 0
-                && repo.behind_count <= 0
-                && repo.sync_state != RepoSyncState::Conflict;
-            if quiet {
+            if repo_is_clean(repo) {
                 summary.clean += 1;
             }
         }
         summary
+    }
+
+    /// Show only the slice a summary item stands for; clicking it again (or a
+    /// different one) changes or clears the filter.
+    pub fn toggle_summary_filter(&mut self, filter: SummaryFilter, cx: &mut Context<Self>) {
+        self.summary_filter = match self.summary_filter {
+            Some(current) if current == filter => None,
+            _ if filter == SummaryFilter::All => None,
+            _ => Some(filter),
+        };
+        // The summary and the "Needs Attention" view are different lenses; the
+        // summary filter wins so the numbers always match the list.
+        self.status_filter = None;
+        cx.notify();
+    }
+
+    /// Clear every list filter at once.
+    pub fn clear_summary_filter(&mut self, cx: &mut Context<Self>) {
+        self.summary_filter = None;
+        cx.notify();
     }
 
     /// The commit a detail pane may offer to undo: still the branch tip of
@@ -1964,6 +1997,15 @@ impl Render for VantageApp {
     }
 }
 
+/// Which slice of the list the summary strip is showing.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SummaryFilter {
+    All,
+    Uncommitted,
+    Unpushed,
+    Clean,
+}
+
 /// Repository counts shown above the list.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct RepoSummary {
@@ -1982,6 +2024,15 @@ pub struct UndoOffer {
     pub just_now: bool,
     /// Local commits that never reached the remote, for the strip's count.
     pub unpushed: u32,
+}
+
+/// A repository with nothing to look at: no changes, nothing unpushed, not
+/// behind, no conflict.
+fn repo_is_clean(repo: &Repository) -> bool {
+    repo.uncommitted_files.is_empty()
+        && repo.ahead_count <= 0
+        && repo.behind_count <= 0
+        && repo.sync_state != RepoSyncState::Conflict
 }
 
 /// Resolve which files a commit includes: the user's tick wins over the flag the

@@ -3,7 +3,7 @@
 
 use gpui::{div, prelude::*, px, relative, Context, Div, IntoElement, Rgba, Styled};
 
-use crate::app::{RepoOp, RepoSummary, VantageApp};
+use crate::app::{RepoOp, SummaryFilter, VantageApp};
 use crate::model::RepoSyncState;
 use crate::theme::Theme;
 use crate::ui::{icon, icon_button_sm, spinner, IconSize};
@@ -92,7 +92,7 @@ impl VantageApp {
             .flex_col()
             .w_full()
             .gap(px(10.0))
-            .child(summary_strip(&theme, self.repo_summary()));
+            .child(self.render_summary_strip(theme, cx));
 
         if self.is_refreshing {
             return table.child(
@@ -456,39 +456,101 @@ fn badge(icon_name: &'static str, label: &str, color: Rgba) -> Div {
         .child(div().xs().medium().fg(color).child(label.to_string()))
 }
 
-/// One quiet line of totals above the list: no cards, no chrome.
-fn summary_strip(theme: &Theme, summary: RepoSummary) -> Div {
-    let mut strip = div()
-        .flex()
-        .items_center()
-        .flex_wrap()
-        .gap(px(14.0))
-        .w_full()
-        .px(px(4.0));
-
-    let item = |count: usize, label: &str, color: Rgba| {
-        div()
+/// One quiet line of totals above the list: no cards, no chrome. Each item is a
+/// filter, and the active one is marked so the list state is never ambiguous.
+impl VantageApp {
+    fn render_summary_strip(&self, theme: Theme, cx: &mut Context<Self>) -> Div {
+        let summary = self.repo_summary();
+        let active = self.summary_filter;
+        let mut strip = div()
             .flex()
             .items_center()
-            .gap(px(5.0))
-            .whitespace_nowrap()
-            .child(div().w(px(6.0)).h(px(6.0)).rounded(px(3.0)).bg(color))
-            .child(
-                div()
-                    .xs()
-                    .medium()
-                    .fg(theme.text_body)
-                    .child(count.to_string()),
-            )
-            .child(div().xs().fg(theme.label_muted).child(label.to_string()))
-    };
+            .flex_wrap()
+            .gap(px(6.0))
+            .w_full()
+            .px(px(4.0));
 
-    strip = strip
-        .child(item(summary.total, "repositories", theme.text_dim))
-        .child(item(summary.uncommitted, "uncommitted", theme.status_amber))
-        .child(item(summary.unpushed, "unpushed", theme.status_blue))
-        .child(item(summary.clean, "clean", theme.status_green));
-    strip
+        let items = [
+            (
+                SummaryFilter::All,
+                summary.total,
+                "repositories",
+                theme.text_dim,
+            ),
+            (
+                SummaryFilter::Uncommitted,
+                summary.uncommitted,
+                "uncommitted",
+                theme.status_amber,
+            ),
+            (
+                SummaryFilter::Unpushed,
+                summary.unpushed,
+                "unpushed",
+                theme.status_blue,
+            ),
+            (
+                SummaryFilter::Clean,
+                summary.clean,
+                "clean",
+                theme.status_green,
+            ),
+        ];
+
+        for (filter, count, label, color) in items {
+            let selected = active == Some(filter);
+            strip = strip.child(
+                div()
+                    .id(gpui::SharedString::from(format!("summary-{label}")))
+                    .flex()
+                    .items_center()
+                    .gap(px(5.0))
+                    .px(px(6.0))
+                    .py(px(3.0))
+                    .rounded(px(5.0))
+                    .cursor_pointer()
+                    .whitespace_nowrap()
+                    .when(selected, |d| d.bg(theme.nav_active_bg))
+                    .when(!selected, |d| d.hover(move |s| s.bg(theme.nav_hover_bg)))
+                    .child(div().w(px(6.0)).h(px(6.0)).rounded(px(3.0)).bg(color))
+                    .child(
+                        div()
+                            .xs()
+                            .medium()
+                            .fg(if selected {
+                                theme.text_app
+                            } else {
+                                theme.text_body
+                            })
+                            .child(count.to_string()),
+                    )
+                    .child(div().xs().fg(theme.label_muted).child(label))
+                    .on_click(cx.listener(move |this, _e, _w, cx| {
+                        this.toggle_summary_filter(filter, cx);
+                    })),
+            );
+        }
+
+        if active.is_some() {
+            strip = strip.child(
+                div()
+                    .id("summary-clear")
+                    .flex()
+                    .items_center()
+                    .gap(px(4.0))
+                    .px(px(6.0))
+                    .py(px(3.0))
+                    .rounded(px(5.0))
+                    .cursor_pointer()
+                    .hover(move |s| s.bg(theme.nav_hover_bg))
+                    .child(icon("x", IconSize::Xs, theme.label_muted))
+                    .child(div().xs().medium().fg(theme.text_soft).child("Clear"))
+                    .on_click(cx.listener(|this, _e, _w, cx| this.clear_summary_filter(cx))),
+            );
+        }
+
+        strip
+    }
 }
 
 fn clone_row(row: &TableRow) -> TableRow {
