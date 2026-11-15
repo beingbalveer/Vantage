@@ -490,7 +490,7 @@ impl VantageApp {
                         .justify_between()
                         .gap(px(12.0))
                         .px(px(14.0))
-                        .py(px(10.0))
+                        .py(px(8.0))
                         .xs()
                         .hover(move |s| s.bg(theme.row_hover_bg))
                         .child(
@@ -523,14 +523,19 @@ impl VantageApp {
                                 )
                                 .child({
                                     let path = file.path.clone();
-                                    div()
+                                    // File name first (what you look for), its
+                                    // folder second (where it lives).
+                                    let (directory, name) = split_path(&file.path);
+                                    let mut label = div()
                                         .id(gpui::SharedString::from(format!(
                                             "file-toggle-{}",
                                             file.path
                                         )))
-                                        .mono_xs()
-                                        .fg(theme.text_soft)
-                                        .truncate()
+                                        .flex()
+                                        .items_center()
+                                        .gap(px(6.0))
+                                        .flex_1()
+                                        .min_w(px(0.0))
                                         .cursor_pointer()
                                         .hover(|s| s.underline())
                                         .on_click(cx.listener(move |this, _e, _w, cx| {
@@ -542,8 +547,28 @@ impl VantageApp {
                                                 Some(path.clone())
                                             };
                                             cx.notify();
-                                        }))
-                                        .child(file.path.clone())
+                                        }));
+                                    if !directory.is_empty() {
+                                        label = label.child(
+                                            div()
+                                                .flex_shrink()
+                                                .min_w(px(0.0))
+                                                .truncate()
+                                                .mono_xs()
+                                                .fg(theme.label_muted)
+                                                .child(format!("{directory}/")),
+                                        );
+                                    }
+                                    label.child(
+                                        div()
+                                            .flex_shrink()
+                                            .min_w(px(0.0))
+                                            .truncate()
+                                            .xs()
+                                            .medium()
+                                            .fg(theme.text_app)
+                                            .child(name),
+                                    )
                                 }),
                         )
                         .child(
@@ -1190,6 +1215,14 @@ impl VantageApp {
     }
 }
 
+/// Repo-relative path split into `(folder, file name)` for the row label.
+fn split_path(path: &str) -> (String, String) {
+    match path.rsplit_once('/') {
+        Some((directory, name)) => (directory.to_string(), name.to_string()),
+        None => (String::new(), path.to_string()),
+    }
+}
+
 /// One rendered patch line: gutter numbers, sign and content.
 ///
 /// Colour carries the meaning (added / removed / hunk) and a faint tint marks
@@ -1254,4 +1287,21 @@ fn preview_row(theme: &Theme, line: &crate::model::PreviewLine) -> Div {
                 .child(sign),
         )
         .child(div().flex_1().fg(color).child(line.text.clone()))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::split_path;
+
+    #[test]
+    fn split_path_keeps_the_file_name() {
+        assert_eq!(
+            split_path("src/views/inspector.rs"),
+            ("src/views".to_string(), "inspector.rs".to_string())
+        );
+        assert_eq!(
+            split_path("README.md"),
+            (String::new(), "README.md".to_string())
+        );
+    }
 }
