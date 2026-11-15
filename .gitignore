@@ -1,6 +1,9 @@
 # Rust / Cargo
 /target/
 
+# Release artifacts (scripts/bundle-macos.sh)
+/dist/
+
 # Environment & Secrets
 .env
 .env.*

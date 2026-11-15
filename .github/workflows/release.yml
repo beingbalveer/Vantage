@@ -7,6 +7,7 @@ on:
 
 jobs:
   build-macos:
+    name: Build, package and publish
     permissions:
       contents: write
     runs-on: macos-latest
@@ -17,20 +18,41 @@ jobs:
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
 
-      - name: Cache cargo
-        uses: Swatinem/rust-cache@v2
-
-      - name: Build native app
-        run: cargo build --release -p vantage
-
-      - name: Package
+      # A tag that disagrees with the crate version ships a bundle whose About
+      # panel and CFBundleShortVersionString both lie, so fail before building.
+      - name: Check the tag matches the workspace version
         run: |
-          mkdir -p dist
-          cp target/release/vantage dist/
-          cd dist
-          zip -r "vantage-${GITHUB_REF_NAME}-macos-arm64.zip" vantage
+          version="$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)"
+          tag="${GITHUB_REF_NAME#v}"
+          echo "tag=$tag workspace=$version"
+          if [ "$tag" != "$version" ]; then
+            echo "::error::tag $tag does not match workspace version $version"
+            exit 1
+          fi
 
-      - name: Upload release asset
+      - name: Build release binary
+        run: cargo build --release -p vantage --locked
+
+      # Produces dist/Vantage.app, the DMG, the zipped bundle and a cask whose
+      # sha256 is the real one for this build.
+      - name: Package app bundle, DMG and cask
+        run: ./scripts/bundle-macos.sh "$GITHUB_REF_NAME"
+
+      - name: Verify the artifacts
+        run: |
+          plutil -lint dist/Vantage.app/Contents/Info.plist
+          codesign --verify --deep --strict dist/Vantage.app
+          hdiutil attach -nobrowse -readonly dist/Vantage_*_arm64.dmg
+          test -d /Volumes/Vantage/Vantage.app
+          hdiutil detach /Volumes/Vantage
+          shasum -a 256 dist/Vantage_*_arm64.dmg
+
+      - name: Upload release assets
         uses: softprops/action-gh-release@v2
         with:
-          files: dist/*.zip
+          name: Vantage ${{ github.ref_name }}
+          generate_release_notes: true
+          files: |
+            dist/Vantage_*_arm64.dmg
+            dist/Vantage_*_arm64.app.zip
+            dist/vantage.rb

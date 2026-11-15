@@ -108,15 +108,24 @@ There is no file editor, no embedded terminal, no command palette, no fuzzy file
 
 ## Installation
 
-Vantage v2 is **not published yet**. There is no v2 DMG, installer or Homebrew release. The existing cask and older release artifacts predate this dashboard and do not contain it.
+macOS 13 or newer on Apple silicon. Download the latest DMG from the
+[releases page](https://github.com/beingbalveer/Vantage/releases), open it and
+drag **Vantage** into Applications.
 
-Until a v2 build is published, run it from source:
+Each release publishes three files:
 
-```bash
-cargo run -p vantage
-```
+| Asset | What it is |
+|---|---|
+| `Vantage_<version>_arm64.dmg` | Drag-to-Applications installer |
+| `Vantage_<version>_arm64.app.zip` | The same bundle, zipped |
+| `vantage.rb` | Homebrew cask for that exact build, with its `sha256` |
 
-The build instructions are below.
+The bundle is ad-hoc signed rather than notarized, so the first launch may need
+**right-click → Open** instead of a double click. Vantage has no account, no
+telemetry and no updater daemon: check the releases page for new versions.
+
+Linux builds from source (below); the release pipeline currently publishes
+macOS only.
 
 ---
 

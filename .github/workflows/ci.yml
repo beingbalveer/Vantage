@@ -2,9 +2,14 @@ name: CI
 
 on:
   push:
-    branches: [main]
+    branches: [main, staging]
   pull_request:
-    branches: [main]
+    branches: [main, staging]
+
+# A newer push supersedes an in-flight run for the same ref.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   lint-and-test:
@@ -19,6 +24,8 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      # GPUI links against the system windowing and font libraries on Linux,
+      # and `cargo test` builds the app binary, so these are needed to link.
       - name: Install system dependencies (Linux)
         if: runner.os == 'Linux'
         run: |
@@ -52,13 +59,13 @@ jobs:
         run: cargo fmt --all -- --check
 
       - name: Run Rust unit tests
-        run: cargo test --workspace
+        run: cargo test --workspace --locked
 
       - name: Run Clippy
-        run: cargo clippy --workspace --all-targets -- -D warnings
+        run: cargo clippy --workspace --all-targets --locked -- -D warnings
 
   build-app:
-    name: Build app (macos-latest)
+    name: Build & package app (macos-latest)
     runs-on: macos-latest
 
     steps:
@@ -73,5 +80,22 @@ jobs:
         with:
           workspaces: "."
 
-      - name: Build Vantage
-        run: cargo build -p vantage
+      - name: Build Vantage (debug)
+        run: cargo build -p vantage --locked
+
+      # The release job runs the same script, so a broken bundle or DMG fails
+      # here instead of on a tag.
+      - name: Build Vantage (release)
+        run: cargo build --release -p vantage --locked
+
+      - name: Package app bundle and DMG
+        run: ./scripts/bundle-macos.sh
+
+      - name: Verify the bundle
+        run: |
+          plutil -lint dist/Vantage.app/Contents/Info.plist
+          codesign --verify --deep --strict dist/Vantage.app
+          lipo -archs dist/Vantage.app/Contents/MacOS/vantage
+          hdiutil attach -nobrowse -readonly dist/Vantage_*_arm64.dmg
+          test -d /Volumes/Vantage/Vantage.app
+          hdiutil detach /Volumes/Vantage

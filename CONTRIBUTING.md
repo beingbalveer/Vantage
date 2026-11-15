@@ -63,14 +63,17 @@ Before submitting a pull request, please ensure all checks pass:
 
 ```bash
 # Run all workspace tests
-cargo test --workspace
+cargo test --workspace --locked
 
 # Run the strict linter
-cargo clippy --workspace --all-targets -- -D warnings
+cargo clippy --workspace --all-targets --locked -- -D warnings
 
 # Check code formatting
 cargo fmt --all -- --check
 ```
+
+A pull request to `main` or `staging` runs exactly these, on macOS and Linux,
+plus the release packaging step so a broken bundle fails before a tag.
 
 ---
 
@@ -79,7 +82,38 @@ cargo fmt --all -- --check
 To build an optimized binary for your operating system:
 
 ```bash
-cargo build --release -p vantage
+cargo build --release -p vantage --locked
 ```
 
 The compiled binary is written to `target/release/vantage`.
+
+To produce the macOS app bundle, DMG and a cask pinned to that DMG (macOS
+only — it uses `sips`, `iconutil`, `hdiutil` and `codesign` from the system):
+
+```bash
+./scripts/bundle-macos.sh
+```
+
+Everything lands in `dist/`: `Vantage.app`, `Vantage_<version>_arm64.dmg`,
+`Vantage_<version>_arm64.app.zip` and `vantage.rb`.
+
+---
+
+## Releasing
+
+1. Bump `version` in the workspace `Cargo.toml`. Both crates inherit it, so
+   there is exactly one number to change.
+2. Update the README if the install story changed, and commit.
+3. Merge `staging` into `main` and push; wait for CI to go green.
+4. Tag and push:
+
+   ```bash
+   git tag v0.6.0
+   git push origin v0.6.0
+   ```
+
+   The Release workflow refuses to build when the tag and the workspace version
+   disagree.
+5. Confirm the release has the DMG, the zipped bundle and `vantage.rb`, then
+   commit that `vantage.rb` into `Casks/` so Homebrew installs pin this build's
+   `sha256`.
