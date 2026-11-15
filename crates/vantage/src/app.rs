@@ -182,6 +182,10 @@ pub struct VantageApp {
     pub amending: bool,
     /// A branch action waiting for its name or confirmation.
     pub branch_prompt: Option<BranchPrompt>,
+    /// The commit opened in the Commits tab, if any.
+    pub commit_view: Option<CommitView>,
+    /// The pane borrows width from the list while a commit diff is open.
+    pub commit_wide: bool,
     /// Name typed for the pending create/rename.
     pub branch_field: FieldState,
     branch_focus: FocusHandle,
@@ -279,6 +283,8 @@ impl VantageApp {
             context_menu: None,
             amending: false,
             branch_prompt: None,
+            commit_view: None,
+            commit_wide: false,
             branch_field: FieldState::new(),
             branch_focus: cx.focus_handle(),
             selection: std::collections::HashMap::new(),
@@ -1556,6 +1562,76 @@ impl VantageApp {
         cx.notify();
     }
 
+    /// Pane width to render with: a commit diff borrows space from the list.
+    pub fn panel_fraction(&self) -> f32 {
+        if self.commit_wide && self.commit_view.is_some() {
+            0.8
+        } else {
+            self.settings.right_panel_fraction
+        }
+    }
+
+    /// Open one commit: the header shows immediately, files stream in from git.
+    pub fn open_commit_view(
+        &mut self,
+        repo: &Repository,
+        commit: &crate::model::CommitEntry,
+        cx: &mut Context<Self>,
+    ) {
+        self.context_menu = None;
+        self.commit_view = Some(CommitView {
+            repo_id: repo.id.clone(),
+            sha: commit.sha.clone(),
+            subject: commit.message.clone(),
+            author: commit.author.clone(),
+            author_email: commit.author_email.clone(),
+            time: commit.relative_time.clone(),
+            files: Vec::new(),
+            selected: 0,
+            loading: true,
+        });
+
+        let Some(backend) = self.backend.clone() else {
+            return;
+        };
+        let repo_id = repo.id.clone();
+        let sha = commit.sha.clone();
+        cx.spawn(async move |this, cx| {
+            let files = cx
+                .background_executor()
+                .spawn(async move { backend.commit_files(&repo_id, &sha) })
+                .await;
+            this.update(cx, |app, cx| {
+                if let Some(view) = app.commit_view.as_mut() {
+                    view.files = files.unwrap_or_default();
+                    view.loading = false;
+                }
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
+        cx.notify();
+    }
+
+    pub fn close_commit_view(&mut self, cx: &mut Context<Self>) {
+        self.commit_view = None;
+        self.commit_wide = false;
+        cx.notify();
+    }
+
+    pub fn toggle_commit_wide(&mut self, cx: &mut Context<Self>) {
+        self.commit_wide = !self.commit_wide;
+        cx.notify();
+    }
+
+    pub fn select_commit_file(&mut self, index: usize, cx: &mut Context<Self>) {
+        if let Some(view) = self.commit_view.as_mut() {
+            view.selected = index;
+        }
+        cx.notify();
+    }
+
     /// Open the branch actions menu.
     #[allow(clippy::too_many_arguments)]
     pub fn open_branch_menu(
@@ -2288,7 +2364,7 @@ impl Render for VantageApp {
                         }
                         let delta = (f32::from(event.position.x) - start_x) / content_width;
                         this.settings.right_panel_fraction =
-                            (start_fraction - delta).clamp(0.3, 0.7);
+                            (start_fraction - delta).clamp(0.3, 0.8);
                         cx.notify();
                     },
                 ))
@@ -2561,6 +2637,20 @@ impl Render for VantageApp {
         }
         root
     }
+}
+
+/// A commit opened in the detail view: its files, and which one is on screen.
+#[derive(Clone, Debug)]
+pub struct CommitView {
+    pub repo_id: String,
+    pub sha: String,
+    pub subject: String,
+    pub author: String,
+    pub author_email: String,
+    pub time: String,
+    pub files: Vec<crate::model::CommitFile>,
+    pub selected: usize,
+    pub loading: bool,
 }
 
 /// An in-progress branch action, answered by the inline row in the Branches tab.

@@ -36,6 +36,16 @@ impl NavSection {
     }
 }
 
+/// One file changed by a commit, with its patch lines ready to render.
+#[derive(Clone, Debug)]
+pub struct CommitFile {
+    pub path: String,
+    pub additions: u32,
+    pub deletions: u32,
+    pub lines: Vec<PreviewLine>,
+    pub truncated: bool,
+}
+
 /// What one line of a patch does.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum PreviewKind {

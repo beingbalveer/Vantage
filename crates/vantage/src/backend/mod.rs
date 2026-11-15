@@ -237,6 +237,17 @@ impl Backend {
         Ok(())
     }
 
+    /// Files and patch lines for one commit.
+    pub fn commit_files(&self, repo_id: &str, sha: &str) -> Result<Vec<crate::model::CommitFile>> {
+        let repo_path = self.known_path(repo_id)?;
+        Ok(details::commit_files(
+            &self.runtime,
+            &self.runner,
+            &repo_path,
+            sha,
+        ))
+    }
+
     /// Rewrite the tip commit: its message, plus any paths given (they are
     /// staged first, so the same ticked-file rule as a normal commit applies).
     pub fn amend(&self, repo_id: &str, paths: &[String], summary: &str) -> Result<String> {

@@ -659,6 +659,79 @@ fn untracked_preview(repo_path: &Path, relative: &str) -> (Vec<PreviewLine>, boo
     (preview, truncated)
 }
 
+// ---------------- One commit ----------------
+
+/// The files a commit touched, each with its own patch lines and counts.
+///
+/// `git show` gives the patch with the same shape as a working-tree diff, so it
+/// reuses the parser the Changes tab already relies on.
+pub fn commit_files(
+    rt: &tokio::runtime::Runtime,
+    runner: &GitRunner,
+    path: &Path,
+    sha: &str,
+) -> Vec<crate::model::CommitFile> {
+    let patch = rt.block_on(async {
+        runner
+            .run_read(
+                path,
+                &[
+                    "show",
+                    "--no-color",
+                    "--no-ext-diff",
+                    "-M",
+                    "--format=",
+                    sha,
+                ],
+            )
+            .await
+    });
+    let patch = match patch {
+        Ok(out) if out.success() => out.stdout_string(),
+        _ => return Vec::new(),
+    };
+
+    let counts = rt.block_on(async {
+        runner
+            .run_read(path, &["show", "--numstat", "-M", "--format=", "-z", sha])
+            .await
+    });
+    let mut by_path: HashMap<String, (u32, u32)> = HashMap::new();
+    if let Ok(out) = counts {
+        if out.success() {
+            for change in vantage_core::git::diff::parse_numstat_z(&out.stdout) {
+                by_path.insert(change.path, (change.additions, change.deletions));
+            }
+        }
+    }
+
+    let mut files: Vec<crate::model::CommitFile> = parse_diff_previews(&patch)
+        .into_iter()
+        .map(|(path, lines)| {
+            let (additions, deletions) = by_path.get(&path).copied().unwrap_or((
+                lines
+                    .iter()
+                    .filter(|l| l.kind == PreviewKind::Added)
+                    .count() as u32,
+                lines
+                    .iter()
+                    .filter(|l| l.kind == PreviewKind::Removed)
+                    .count() as u32,
+            ));
+            let truncated = lines.len() == PREVIEW_LINES;
+            crate::model::CommitFile {
+                path,
+                additions,
+                deletions,
+                lines,
+                truncated,
+            }
+        })
+        .collect();
+    files.sort_by(|a, b| a.path.cmp(&b.path));
+    files
+}
+
 // ---------------- Commit identity ----------------
 
 /// The identity git will use for the next commit in `path`.

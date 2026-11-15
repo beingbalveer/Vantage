@@ -32,7 +32,7 @@ impl VantageApp {
             .id("repository-detail")
             .flex()
             .flex_col()
-            .w(relative(self.settings.right_panel_fraction))
+            .w(relative(self.panel_fraction()))
             .min_w(px(420.0))
             .h_full()
             .flex_shrink_0()
@@ -42,26 +42,35 @@ impl VantageApp {
             .child(self.render_inspector_header(&repo, copied, cx))
             .child(self.render_inspector_bar(&repo, cx))
             .child(self.render_inspector_tabs(&repo, menu_open, cx))
-            .child(
-                div()
-                    .flex_1()
-                    .min_h(px(0.0))
-                    .id("inspector-body")
-                    .overflow_y_scroll()
-                    .px(px(24.0))
-                    .py(px(16.0))
-                    .child(match tab {
-                        InspectorTab::Changes => self
-                            .render_changes_tab(&repo, expanded.as_deref(), cx)
-                            .into_any_element(),
-                        InspectorTab::Branches => {
-                            self.render_branches_tab(&repo, cx).into_any_element()
-                        }
-                        InspectorTab::Commits => self
-                            .render_commits_tab(&repo, window, cx)
-                            .into_any_element(),
-                    }),
-            )
+            .child({
+                // A commit view owns its own scrolling: the file list and the
+                // diff each scroll, the tab around them does not.
+                let detail_open = tab == InspectorTab::Commits
+                    && self
+                        .commit_view
+                        .as_ref()
+                        .is_some_and(|view| view.repo_id == repo.id);
+                let content = match tab {
+                    InspectorTab::Changes => self
+                        .render_changes_tab(&repo, expanded.as_deref(), cx)
+                        .into_any_element(),
+                    InspectorTab::Branches => {
+                        self.render_branches_tab(&repo, cx).into_any_element()
+                    }
+                    InspectorTab::Commits => self
+                        .render_commits_tab(&repo, window, cx)
+                        .into_any_element(),
+                };
+                let body = div().flex_1().min_h(px(0.0)).id("inspector-body");
+                if detail_open {
+                    body.p(px(12.0)).child(content)
+                } else {
+                    body.overflow_y_scroll()
+                        .px(px(24.0))
+                        .py(px(16.0))
+                        .child(content)
+                }
+            })
             // Pinned to the bottom of the pane, so a long file list never
             // scrolls the commit controls away. The undo strip sits directly
             // above them, while the commit it offers is still local.
@@ -886,105 +895,262 @@ impl VantageApp {
             .into_any_element()
     }
 
-    fn render_branches_tab(
-        &self,
-        repo: &crate::model::Repository,
-        cx: &mut Context<Self>,
-    ) -> impl IntoElement {
+    /// One commit, opened: a thin header, one scrolling row of files, and the
+    /// patch filling whatever height is left.
+    fn render_commit_detail(&self, view: &crate::app::CommitView, cx: &mut Context<Self>) -> Div {
         let theme = self.theme;
-        let mut list = div()
+
+        let back = div()
+            .id("commit-back")
+            .flex()
+            .items_center()
+            .gap(px(4.0))
+            .px(px(6.0))
+            .py(px(3.0))
+            .rounded(px(5.0))
+            .cursor_pointer()
+            .xs()
+            .medium()
+            .fg(theme.text_soft)
+            .hover(move |s| s.bg(theme.nav_hover_bg))
+            .child(icon("chevron-right", IconSize::Xs, theme.label_muted))
+            .child("Commits")
+            .on_click(cx.listener(|this, _e, _w, cx| this.close_commit_view(cx)));
+
+        let header = div()
+            .flex()
+            .items_center()
+            .gap(px(10.0))
+            .w_full()
+            .px(px(10.0))
+            .py(px(8.0))
+            .bg(theme.table_head_bg)
+            .border_b_1()
+            .border_color(theme.row_border)
+            .child(back)
+            .child(
+                div()
+                    .flex_1()
+                    .min_w(px(0.0))
+                    .truncate()
+                    .xs()
+                    .medium()
+                    .fg(theme.text_app)
+                    .child(view.subject.clone()),
+            )
+            .child(
+                div()
+                    .mono_xs()
+                    .fg(theme.label_muted)
+                    .flex_shrink_0()
+                    .child(view.sha.clone()),
+            )
+            .child(crate::ui::avatar(
+                &theme,
+                &view.author,
+                &view.author_email,
+                self.avatar_for(&view.author_email),
+                16.0,
+            ))
+            .child(
+                div()
+                    .flex_shrink_0()
+                    .xs()
+                    .fg(theme.label_muted)
+                    .whitespace_nowrap()
+                    .child(view.time.clone()),
+            )
+            .when(view.files.get(view.selected).is_some(), |d| {
+                let file = &view.files[view.selected];
+                d.child(
+                    div()
+                        .flex()
+                        .items_center()
+                        .gap(px(8.0))
+                        .flex_shrink_0()
+                        .font_family(crate::theme::FONT_MONO)
+                        .text_size(px(11.0))
+                        .child(
+                            div()
+                                .fg(theme.add_text)
+                                .child(format!("+{}", file.additions)),
+                        )
+                        .child(
+                            div()
+                                .fg(theme.del_text)
+                                .child(format!("-{}", file.deletions)),
+                        ),
+                )
+            })
+            .child(
+                div()
+                    .id("commit-wide")
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .w(px(22.0))
+                    .h(px(22.0))
+                    .rounded(px(5.0))
+                    .cursor_pointer()
+                    .flex_shrink_0()
+                    .hover(move |s| s.bg(theme.nav_hover_bg))
+                    .child(icon("panel-right", IconSize::Xs, theme.icon_idle))
+                    .on_click(cx.listener(|this, _e, _w, cx| this.toggle_commit_wide(cx))),
+            );
+
+        // Files on the left, diff on the right: the diff keeps the room and the
+        // list stays a thin, scrollable column.
+        let mut files = div()
+            .id("commit-files")
             .flex()
             .flex_col()
+            .w(px(196.0))
+            .flex_shrink_0()
+            .min_h(px(0.0))
+            .h_full()
+            .overflow_y_scroll()
+            .border_r_1()
+            .border_color(theme.row_border);
+        for (index, file) in view.files.iter().enumerate() {
+            let selected = index == view.selected;
+            let (_, name) = split_path(&file.path);
+            // Same shell as a change row: status letter, then the file name.
+            let added = file
+                .lines
+                .iter()
+                .filter(|l| l.kind == crate::model::PreviewKind::Added)
+                .count();
+            let removed = file
+                .lines
+                .iter()
+                .filter(|l| l.kind == crate::model::PreviewKind::Removed)
+                .count();
+            let (code, code_color) = if removed == 0 && added > 0 {
+                ("A", theme.add_text)
+            } else if added == 0 && removed > 0 {
+                ("D", theme.del_text)
+            } else {
+                ("M", theme.status_amber)
+            };
+            let tooltip_path = file.path.clone();
+            files = files.child(
+                div()
+                    .id(gpui::SharedString::from(format!("commit-file-{index}")))
+                    .flex()
+                    .items_center()
+                    .gap(px(8.0))
+                    .w_full()
+                    .px(px(10.0))
+                    .py(px(6.0))
+                    .cursor_pointer()
+                    .when(selected, |d| d.bg(theme.accent_soft))
+                    .when(!selected, |d| d.hover(move |s| s.bg(theme.row_hover_bg)))
+                    // No room for the folder: it appears on hover.
+                    .tooltip(move |_window, cx| {
+                        cx.new(|_| crate::ui::TextTooltip::new(theme, tooltip_path.clone()))
+                            .into()
+                    })
+                    .on_click(cx.listener(move |this, _e, _w, cx| {
+                        this.select_commit_file(index, cx);
+                    }))
+                    .child(
+                        div()
+                            .w(px(12.0))
+                            .flex_shrink_0()
+                            .text_center()
+                            .font_family(crate::theme::FONT_MONO)
+                            .text_size(px(11.0))
+                            .semibold()
+                            .fg(code_color)
+                            .child(code),
+                    )
+                    .child(
+                        div()
+                            .flex_shrink()
+                            .min_w(px(0.0))
+                            .truncate()
+                            .xs()
+                            .medium()
+                            .fg(theme.text_app)
+                            .child(name),
+                    ),
+            );
+        }
+
+        // Diff for the selected file.
+        let body = match view.files.get(view.selected) {
+            Some(file) => {
+                let mut diff = div()
+                    .flex()
+                    .flex_col()
+                    .w_full()
+                    .py(px(4.0))
+                    .font_family(crate::theme::FONT_MONO)
+                    .text_size(px(11.0))
+                    .line_height(px(16.0));
+                for line in &file.lines {
+                    diff = diff.child(preview_row(&theme, line));
+                }
+                if file.truncated {
+                    diff = diff.child(
+                        div()
+                            .px(px(10.0))
+                            .py(px(4.0))
+                            .xs()
+                            .fg(theme.label_muted)
+                            .child("Preview stops here — open the file for the rest."),
+                    );
+                }
+                diff
+            }
+            None if view.loading => div()
+                .py(px(24.0))
+                .w_full()
+                .flex()
+                .justify_center()
+                .xs()
+                .fg(theme.label_muted)
+                .child("Loading the commit…"),
+            None => div()
+                .py(px(24.0))
+                .w_full()
+                .flex()
+                .justify_center()
+                .xs()
+                .fg(theme.label_muted)
+                .child("This commit has no textual changes."),
+        };
+
+        div()
+            .flex()
+            .flex_col()
+            .flex_1()
+            .min_h(px(0.0))
             .w_full()
             .border_1()
             .border_color(theme.divider)
             .rounded(px(8.0))
-            .overflow_hidden();
-
-        for (index, branch) in repo.branches.iter().enumerate() {
-            let right = div()
-                .flex()
-                .items_center()
-                .gap(px(12.0))
-                .flex_shrink_0()
-                .child(
-                    div()
-                        .xs()
-                        .fg(theme.label_muted)
-                        .whitespace_nowrap()
-                        .child(branch.last_commit_time.clone()),
-                );
-
-            let menu_repo = repo.id.clone();
-            let menu_name = branch.name.clone();
-            let menu_is_current = branch.is_current;
-            let menu_is_default = branch.is_default;
-            list = list.child(
+            .overflow_hidden()
+            .child(header)
+            .child(
                 div()
                     .flex()
-                    .items_center()
-                    .justify_between()
-                    .gap(px(16.0))
-                    .px(px(16.0))
-                    .py(px(12.0))
+                    .flex_1()
                     .w_full()
-                    .bg(theme.panel)
-                    .on_mouse_down(
-                        gpui::MouseButton::Right,
-                        cx.listener(move |this, event: &gpui::MouseDownEvent, _w, cx| {
-                            this.open_branch_menu(
-                                &menu_repo,
-                                &menu_name,
-                                menu_is_current,
-                                menu_is_default,
-                                f32::from(event.position.x),
-                                f32::from(event.position.y),
-                                cx,
-                            );
-                        }),
-                    )
-                    .when(index > 0, |d| d.border_t_1().border_color(theme.row_border))
+                    .min_h(px(0.0))
+                    .when(!view.files.is_empty(), |d| d.child(files))
                     .child(
-                        div().flex().flex_col().flex_1().min_w(px(0.0)).child(
-                            div()
-                                .flex()
-                                .items_center()
-                                .gap(px(8.0))
-                                .child(icon("git-branch", IconSize::Sm, theme.icon_idle))
-                                .child(
-                                    div()
-                                        .mono_xs()
-                                        .medium()
-                                        .fg(theme.text_app)
-                                        .truncate()
-                                        .child(branch.name.clone()),
-                                )
-                                .when(branch.is_current, |d| {
-                                    d.child(
-                                        div()
-                                            .xs()
-                                            .medium()
-                                            .fg(theme.accent_text)
-                                            .whitespace_nowrap()
-                                            .child("\u{00b7} Current"),
-                                    )
-                                })
-                                .when(branch.is_default, |d| {
-                                    d.child(
-                                        div()
-                                            .xs()
-                                            .fg(theme.label_muted)
-                                            .whitespace_nowrap()
-                                            .child("\u{00b7} Default"),
-                                    )
-                                }),
-                        ),
-                    )
-                    .child(right),
-            );
-        }
-
-        list
+                        div()
+                            .id("commit-diff")
+                            .flex()
+                            .flex_col()
+                            .flex_1()
+                            .min_w(px(0.0))
+                            .bg(theme.diff_bg)
+                            .overflow_scroll()
+                            .child(body),
+                    ),
+            )
     }
 
     fn render_commits_tab(
@@ -994,6 +1160,16 @@ impl VantageApp {
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
         let theme = self.theme;
+
+        // One commit opened: it takes the tab, and the diff takes the height.
+        if let Some(view) = self
+            .commit_view
+            .as_ref()
+            .filter(|view| view.repo_id == repo.id)
+        {
+            return self.render_commit_detail(view, cx);
+        }
+
         let sidebar_width = if self.sidebar_collapsed { 56.0 } else { 256.0 };
         let content_width = f32::from(window.viewport_size().width) - sidebar_width;
         let panel_width = (content_width * self.settings.right_panel_fraction).max(420.0);
@@ -1049,6 +1225,7 @@ impl VantageApp {
             let can_amend = index == 0 && repo.commit_is_local_only(0);
             list = list.child(
                 div()
+                    .id(gpui::SharedString::from(format!("commit-{}", commit.sha)))
                     .flex()
                     .items_center()
                     .gap(px(12.0))
@@ -1071,6 +1248,15 @@ impl VantageApp {
                         }),
                     )
                     .when(index > 0, |d| d.border_t_1().border_color(theme.row_border))
+                    .cursor_pointer()
+                    .hover(move |s| s.bg(theme.row_hover_bg))
+                    .on_click(cx.listener({
+                        let open_repo = repo.clone();
+                        let open_commit = commit.clone();
+                        move |this, _e, _w, cx| {
+                            this.open_commit_view(&open_repo, &open_commit, cx);
+                        }
+                    }))
                     .child(
                         div()
                             .flex()
@@ -1190,6 +1376,107 @@ impl VantageApp {
     /// Toolbar under the identity block: the three git actions for this
     /// repository. Branch, counts and tree status live in the header above, so
     /// nothing here repeats them.
+    fn render_branches_tab(
+        &self,
+        repo: &crate::model::Repository,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
+        let theme = self.theme;
+        let mut list = div()
+            .flex()
+            .flex_col()
+            .w_full()
+            .border_1()
+            .border_color(theme.divider)
+            .rounded(px(8.0))
+            .overflow_hidden();
+
+        for (index, branch) in repo.branches.iter().enumerate() {
+            let right = div()
+                .flex()
+                .items_center()
+                .gap(px(12.0))
+                .flex_shrink_0()
+                .child(
+                    div()
+                        .xs()
+                        .fg(theme.label_muted)
+                        .whitespace_nowrap()
+                        .child(branch.last_commit_time.clone()),
+                );
+
+            let menu_repo = repo.id.clone();
+            let menu_name = branch.name.clone();
+            let menu_is_current = branch.is_current;
+            let menu_is_default = branch.is_default;
+            list = list.child(
+                div()
+                    .flex()
+                    .items_center()
+                    .justify_between()
+                    .gap(px(16.0))
+                    .px(px(16.0))
+                    .py(px(12.0))
+                    .w_full()
+                    .bg(theme.panel)
+                    .on_mouse_down(
+                        gpui::MouseButton::Right,
+                        cx.listener(move |this, event: &gpui::MouseDownEvent, _w, cx| {
+                            this.open_branch_menu(
+                                &menu_repo,
+                                &menu_name,
+                                menu_is_current,
+                                menu_is_default,
+                                f32::from(event.position.x),
+                                f32::from(event.position.y),
+                                cx,
+                            );
+                        }),
+                    )
+                    .when(index > 0, |d| d.border_t_1().border_color(theme.row_border))
+                    .child(
+                        div().flex().flex_col().flex_1().min_w(px(0.0)).child(
+                            div()
+                                .flex()
+                                .items_center()
+                                .gap(px(8.0))
+                                .child(icon("git-branch", IconSize::Sm, theme.icon_idle))
+                                .child(
+                                    div()
+                                        .mono_xs()
+                                        .medium()
+                                        .fg(theme.text_app)
+                                        .truncate()
+                                        .child(branch.name.clone()),
+                                )
+                                .when(branch.is_current, |d| {
+                                    d.child(
+                                        div()
+                                            .xs()
+                                            .medium()
+                                            .fg(theme.accent_text)
+                                            .whitespace_nowrap()
+                                            .child("\u{00b7} Current"),
+                                    )
+                                })
+                                .when(branch.is_default, |d| {
+                                    d.child(
+                                        div()
+                                            .xs()
+                                            .fg(theme.label_muted)
+                                            .whitespace_nowrap()
+                                            .child("\u{00b7} Default"),
+                                    )
+                                }),
+                        ),
+                    )
+                    .child(right),
+            );
+        }
+
+        list
+    }
+
     fn render_inspector_bar(
         &self,
         repo: &crate::model::Repository,

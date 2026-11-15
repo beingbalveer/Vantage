@@ -27,4 +27,4 @@ pub use tabs::{choice_button, tab};
 pub use text::Txt;
 pub use toggle::{checkbox, switch};
 pub use tokens::IconSize;
-pub use tooltip::IdentityTooltip;
+pub use tooltip::{IdentityTooltip, TextTooltip};

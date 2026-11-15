@@ -219,7 +219,7 @@ impl Default for UiSettings {
             remember_window: true,
             window_bounds: None,
             right_panel_open: false,
-            right_panel_fraction: 0.5,
+            right_panel_fraction: 0.67,
         }
     }
 }
@@ -275,9 +275,14 @@ impl UiSettings {
             }
         }
         if !self.right_panel_fraction.is_finite() {
-            self.right_panel_fraction = 0.5;
+            self.right_panel_fraction = 0.67;
         }
-        self.right_panel_fraction = self.right_panel_fraction.clamp(0.3, 0.7);
+        // 0.5 was the old default; move those settings to the new one so the
+        // pane opens wider without the user having to drag it.
+        if (self.right_panel_fraction - 0.5).abs() < f32::EPSILON {
+            self.right_panel_fraction = 0.67;
+        }
+        self.right_panel_fraction = self.right_panel_fraction.clamp(0.3, 0.8);
         self
     }
 }
@@ -314,7 +319,17 @@ mod tests {
         assert_eq!(settings.pull_strategy, PullStrategy::FastForward);
         assert!(settings.remember_window);
         assert!(!settings.right_panel_open);
-        assert_eq!(settings.right_panel_fraction, 0.5);
+        assert_eq!(settings.right_panel_fraction, 0.67);
+    }
+
+    #[test]
+    fn the_old_half_width_pane_moves_to_two_thirds() {
+        let settings = UiSettings {
+            right_panel_fraction: 0.5,
+            ..UiSettings::default()
+        }
+        .sanitized();
+        assert_eq!(settings.right_panel_fraction, 0.67);
     }
 
     #[test]
