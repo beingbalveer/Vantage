@@ -624,6 +624,16 @@ impl VantageApp {
                     for line in &file.diff_preview {
                         diff = diff.child(preview_row(&theme, line));
                     }
+                    if file.preview_truncated {
+                        diff = diff.child(
+                            div()
+                                .px(px(10.0))
+                                .py(px(4.0))
+                                .xs()
+                                .fg(theme.label_muted)
+                                .child("Preview stops here — open the file for the rest."),
+                        );
+                    }
                 }
                 row = row.child(diff);
             }

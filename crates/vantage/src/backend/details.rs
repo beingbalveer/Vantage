@@ -240,16 +240,18 @@ pub fn changed_files(
             entry.status
         };
         let (additions, deletions) = totals.get(&entry.path).copied().unwrap_or((0, 0));
-        let diff_preview = if matches!(state, FileChangeStatus::Untracked) {
-            // Untracked paths have no patch in `git diff`.
-            Vec::new()
+        let (diff_preview, preview_truncated) = if matches!(state, FileChangeStatus::Untracked) {
+            // Untracked paths have no patch in `git diff`: show the file.
+            untracked_preview(path, &entry.path)
         } else {
             let previews = if entry.staged {
                 &staged_previews
             } else {
                 &unstaged_previews
             };
-            previews.get(&entry.path).cloned().unwrap_or_default()
+            let lines = previews.get(&entry.path).cloned().unwrap_or_default();
+            let truncated = lines.len() == PREVIEW_LINES;
+            (lines, truncated)
         };
         files.push(ChangedFile {
             path: entry.path,
@@ -258,6 +260,7 @@ pub fn changed_files(
             deletions,
             staged: entry.staged,
             diff_preview,
+            preview_truncated,
         });
     }
 
@@ -275,6 +278,7 @@ pub fn changed_files(
             deletions,
             staged: false,
             diff_preview: Vec::new(),
+            preview_truncated: false,
         });
     }
 
@@ -475,7 +479,8 @@ fn insert_block_preview(previews: &mut HashMap<String, Vec<PreviewLine>>, block:
     let Some(path) = block_path(block) else {
         return;
     };
-    previews.insert(path, preview_lines(&block.join("\n")));
+    let (lines, _truncated) = preview_lines(&block.join("\n"));
+    previews.insert(path, lines);
 }
 
 /// Path a patch block changes, from its `+++`/`---` headers before the first
@@ -540,14 +545,16 @@ fn unquote_path(path: &str) -> String {
 /// dropped: it says nothing about the change and used to fill the whole preview.
 /// Hunk headers and context lines are kept, and both line numbers are tracked so
 /// the view can draw a real gutter.
-fn preview_lines(patch: &str) -> Vec<PreviewLine> {
+fn preview_lines(patch: &str) -> (Vec<PreviewLine>, bool) {
     let mut preview: Vec<PreviewLine> = Vec::new();
     // (next old line, next new line) from the current `@@` header.
     let mut old_number: Option<u32> = None;
     let mut new_number: Option<u32> = None;
 
+    let mut truncated = false;
     for line in patch.lines() {
         if preview.len() == PREVIEW_LINES {
+            truncated = true;
             break;
         }
 
@@ -602,7 +609,7 @@ fn preview_lines(patch: &str) -> Vec<PreviewLine> {
         });
     }
 
-    preview
+    (preview, truncated)
 }
 
 /// The `(old, new)` first line of a `@@ -a,b +c,d @@` header.
@@ -644,6 +651,44 @@ fn is_patch_metadata(line: &str) -> bool {
         "Binary files ",
     ];
     PREFIXES.iter().any(|prefix| line.starts_with(prefix))
+}
+
+/// Preview for a path git has never tracked: the file's own first lines, shown
+/// as additions, so a new file can be read here instead of in an editor.
+fn untracked_preview(repo_path: &Path, relative: &str) -> (Vec<PreviewLine>, bool) {
+    /// Anything bigger is not a review-friendly preview.
+    const MAX_BYTES: u64 = 64 * 1024;
+
+    let full = repo_path.join(relative);
+    let Ok(meta) = std::fs::metadata(&full) else {
+        return (Vec::new(), false);
+    };
+    if meta.len() > MAX_BYTES {
+        return (Vec::new(), true);
+    }
+    let Ok(bytes) = std::fs::read(&full) else {
+        return (Vec::new(), false);
+    };
+    // A binary file has no readable lines; the row keeps its "no preview" text.
+    let Ok(text) = String::from_utf8(bytes) else {
+        return (Vec::new(), false);
+    };
+
+    let mut preview = Vec::new();
+    let mut truncated = false;
+    for (index, line) in text.lines().enumerate() {
+        if preview.len() == PREVIEW_LINES {
+            truncated = true;
+            break;
+        }
+        preview.push(PreviewLine {
+            kind: PreviewKind::Added,
+            old_line: None,
+            new_line: Some(index as u32 + 1),
+            text: line.to_string(),
+        });
+    }
+    (preview, truncated)
 }
 
 // ---------------- Commit identity ----------------
@@ -851,7 +896,8 @@ u UU N... 100644 100644 100644 100644 aaaaaaa bbbbbbb ccccccc conflicted.rs\0\
         ]
         .join("\n");
 
-        let preview = preview_lines(&patch);
+        let (preview, truncated) = preview_lines(&patch);
+        assert!(!truncated, "six lines fit well under the cap");
         assert_eq!(
             preview
                 .iter()
@@ -880,7 +926,35 @@ u UU N... 100644 100644 100644 100644 aaaaaaa bbbbbbb ccccccc conflicted.rs\0\
         for index in 0..400 {
             patch.push_str(&format!("+line {index}\n"));
         }
-        assert_eq!(preview_lines(&patch).len(), PREVIEW_LINES);
+        let (preview, truncated) = preview_lines(&patch);
+        assert_eq!(preview.len(), PREVIEW_LINES);
+        assert!(truncated, "the view needs to know it stopped early");
+    }
+
+    #[test]
+    fn untracked_files_preview_their_own_lines_as_additions() {
+        let dir = std::env::temp_dir().join(format!("vantage_untracked_{}", std::process::id()));
+        std::fs::remove_dir_all(&dir).ok();
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("new.rs"), "fn one() {}\nfn two() {}\n").unwrap();
+
+        let (preview, truncated) = untracked_preview(&dir, "new.rs");
+        assert!(!truncated);
+        assert_eq!(
+            preview
+                .iter()
+                .map(|line| (line.kind, line.new_line, line.text.as_str()))
+                .collect::<Vec<_>>(),
+            vec![
+                (PreviewKind::Added, Some(1), "fn one() {}"),
+                (PreviewKind::Added, Some(2), "fn two() {}"),
+            ]
+        );
+
+        // A file that is not UTF-8 text has no readable preview.
+        std::fs::write(dir.join("blob.bin"), [0xff, 0xfe, 0x00]).unwrap();
+        assert!(untracked_preview(&dir, "blob.bin").0.is_empty());
+        std::fs::remove_dir_all(&dir).ok();
     }
 
     #[test]

@@ -2119,6 +2119,7 @@ mod tests {
             deletions: 0,
             staged,
             diff_preview: Vec::new(),
+            preview_truncated: false,
         }
     }
 

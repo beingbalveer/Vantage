@@ -68,6 +68,8 @@ pub struct ChangedFile {
     pub deletions: u32,
     pub staged: bool,
     pub diff_preview: Vec<PreviewLine>,
+    /// The preview stopped at the line cap; the view says so.
+    pub preview_truncated: bool,
 }
 
 #[derive(Clone, Debug)]
