@@ -5,8 +5,8 @@ use gpui::{deferred, div, prelude::*, px, relative, Context, Div, IntoElement, S
 use crate::app::{InspectorTab, RepoOp, VantageApp};
 use crate::theme::Theme;
 use crate::ui::{
-    accent_button, accent_button_with, checkbox, secondary_button, secondary_button_with, spinner,
-    Txt,
+    accent_button, accent_button_with, checkbox, disabled_button, secondary_button,
+    secondary_button_with, spinner, Txt,
 };
 use crate::ui::{icon, IconSize};
 
@@ -661,13 +661,17 @@ impl VantageApp {
 
         let label = if committing {
             RepoOp::Commit.in_progress_label().to_string()
+        } else if staged == 0 {
+            "Commit".to_string()
         } else if staged == 1 {
             "Commit 1 file".to_string()
         } else {
             format!("Commit {staged} files")
         };
 
-        let mut commit_button = if committing {
+        // Three faces: running, available, unavailable. The unavailable one is
+        // a flat muted chip rather than a faded blue button.
+        let commit_button: gpui::AnyElement = if committing {
             accent_button_with(
                 &theme,
                 label,
@@ -682,15 +686,17 @@ impl VantageApp {
                 ),
             )
             .id("commit-staged")
+            .into_any_element()
+        } else if can_commit {
+            accent_button(&theme, label)
+                .id("commit-staged")
+                .on_click(cx.listener(|this, _e, _w, cx| this.commit_selected(cx)))
+                .into_any_element()
         } else {
-            accent_button(&theme, label).id("commit-staged")
+            disabled_button(&theme, label)
+                .id("commit-staged")
+                .into_any_element()
         };
-        if can_commit {
-            commit_button =
-                commit_button.on_click(cx.listener(|this, _e, _w, cx| this.commit_selected(cx)));
-        } else {
-            commit_button = commit_button.opacity(0.5);
-        }
 
         // Left of the message field: the account this commit will be
         // attributed to. Hovering the tile names that account.

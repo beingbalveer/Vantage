@@ -126,3 +126,23 @@ pub fn accent_button_with(
     }
     button.child(label)
 }
+
+/// The disabled face of [`accent_button`]: same footprint, flat and muted, so a
+/// button that cannot run looks unavailable instead of just faded.
+pub fn disabled_button(theme: &Theme, label: impl IntoElement) -> Div {
+    div()
+        .flex()
+        .items_center()
+        .justify_center()
+        .gap(px(6.0))
+        .h(px(ROW_CONTROL_HEIGHT))
+        .px(px(14.0))
+        .rounded(px(RADIUS_MD))
+        .bg(crate::theme::alpha(theme.label_muted, 0.14))
+        .whitespace_nowrap()
+        .flex_shrink_0()
+        .xs()
+        .medium()
+        .fg(theme.label_muted)
+        .child(label)
+}

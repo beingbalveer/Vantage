@@ -17,7 +17,8 @@ pub mod tooltip;
 
 pub use avatar::{avatar, AVATAR_SM};
 pub use button::{
-    accent_button, accent_button_with, primary_button, secondary_button, secondary_button_with,
+    accent_button, accent_button_with, disabled_button, primary_button, secondary_button,
+    secondary_button_with,
 };
 pub use icon::{icon, icon_button, icon_button_sm, spinner};
 pub use input::{apply_field_key, field, FieldKey, FieldState, FieldVariant};
