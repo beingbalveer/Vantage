@@ -190,7 +190,7 @@ impl VantageApp {
                     .justify_between()
                     .gap(px(16.0))
                     .w_full()
-                    .px(px(20.0))
+                    .px(px(12.0))
                     .py(px(9.0))
                     .cursor_pointer()
                     .hover(move |s| s.bg(theme.nav_hover_bg))
@@ -239,7 +239,7 @@ impl VantageApp {
             .flex_col()
             .w_full()
             .gap(px(5.0))
-            .px(px(16.0))
+            .px(px(12.0))
             .py(px(10.0))
             .cursor_pointer()
             .border_t_1()
@@ -387,8 +387,7 @@ impl VantageApp {
             .items_center()
             .flex_wrap()
             .gap(px(6.0))
-            .w_full()
-            .px(px(4.0));
+            .w_full();
 
         let items = [
             (

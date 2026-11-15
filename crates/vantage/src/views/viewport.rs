@@ -43,8 +43,8 @@ impl VantageApp {
                     .w_full()
                     .max_w(px(1440.0))
                     .mx_auto()
-                    .px(px(24.0))
-                    .py(px(20.0))
+                    .px(px(12.0))
+                    .py(px(14.0))
                     .gap(px(16.0))
                     .when_some(banner, |shell, banner| shell.child(banner))
                     .child(content),

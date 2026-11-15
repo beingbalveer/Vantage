@@ -40,7 +40,6 @@ impl VantageApp {
             .border_l_1()
             .border_color(theme.divider)
             .child(self.render_inspector_header(&repo, copied, cx))
-            .child(self.render_inspector_bar(&repo, cx))
             .child(self.render_inspector_tabs(&repo, menu_open, cx))
             .child({
                 // A commit view owns its own scrolling: the file list and the
@@ -158,11 +157,11 @@ impl VantageApp {
 
         div()
             .flex()
-            .items_start()
+            .items_center()
             .justify_between()
-            .gap(px(16.0))
-            .px(px(24.0))
-            .py(px(16.0))
+            .gap(px(12.0))
+            .px(px(16.0))
+            .py(px(10.0))
             .border_b_1()
             .border_color(theme.divider)
             .child(
@@ -172,27 +171,16 @@ impl VantageApp {
                     .flex_1()
                     .min_w(px(0.0))
                     .child(
-                        div()
-                            .flex()
-                            .items_center()
-                            .gap(px(10.0))
-                            .child(
-                                div()
-                                    .flex_1()
-                                    .min_w(px(0.0))
-                                    .display_lg()
-                                    .font_weight(crate::theme::W_MEDIUM)
-                                    .fg(theme.text_app)
-                                    .truncate()
-                                    .child(repo.name.clone()),
-                            )
-                            .child(crate::ui::status_badges(
-                                &theme,
-                                repo.uncommitted_files.len(),
-                                repo.ahead_count,
-                                repo.behind_count,
-                                repo.sync_state == crate::model::RepoSyncState::Conflict,
-                            )),
+                        div().flex().items_center().gap(px(10.0)).child(
+                            div()
+                                .flex_1()
+                                .min_w(px(0.0))
+                                .display_lg()
+                                .font_weight(crate::theme::W_MEDIUM)
+                                .fg(theme.text_app)
+                                .truncate()
+                                .child(repo.name.clone()),
+                        ),
                     )
                     .child(
                         div()
@@ -287,6 +275,7 @@ impl VantageApp {
                                 }),
                             ),
                     )
+                    .child(self.render_action_buttons(repo, cx))
                     .child(
                         crate::ui::icon_button(&theme, "x")
                             .id("close-inspector")
@@ -1620,7 +1609,8 @@ impl VantageApp {
         list
     }
 
-    fn render_inspector_bar(
+    /// The git actions for the repository, sized for the header band.
+    fn render_action_buttons(
         &self,
         repo: &crate::model::Repository,
         cx: &mut Context<Self>,
@@ -1660,13 +1650,8 @@ impl VantageApp {
         div()
             .flex()
             .items_center()
-            .justify_end()
-            .flex_wrap()
             .gap(px(8.0))
-            .px(px(24.0))
-            .py(px(8.0))
-            .border_b_1()
-            .border_color(theme.divider)
+            .flex_shrink_0()
             .child(
                 div()
                     .flex()
