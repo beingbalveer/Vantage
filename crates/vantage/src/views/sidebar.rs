@@ -7,7 +7,6 @@ use crate::app::{FieldId, VantageApp};
 use crate::ui::{icon, IconSize};
 use crate::ui::{FieldVariant, Txt};
 
-const SIDEBAR_WIDTH: f32 = 256.0;
 const SIDEBAR_COLLAPSED_WIDTH: f32 = 56.0;
 
 impl VantageApp {
@@ -26,7 +25,7 @@ impl VantageApp {
             .w(px(if collapsed {
                 SIDEBAR_COLLAPSED_WIDTH
             } else {
-                SIDEBAR_WIDTH
+                self.sidebar_width()
             }))
             .h_full()
             .flex_shrink_0()

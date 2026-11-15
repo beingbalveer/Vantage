@@ -189,6 +189,8 @@ pub struct UiSettings {
     pub sort: SortOrder,
     /// Last sidebar state; toggling the rail persists this immediately.
     pub sidebar_collapsed: bool,
+    /// Sidebar width in points while it is expanded.
+    pub sidebar_width: f32,
     /// Off = 0. Otherwise one of 1, 5, 15, 30 or 60 minutes.
     pub auto_fetch_minutes: u32,
     pub fetch_on_launch: bool,
@@ -212,6 +214,7 @@ impl Default for UiSettings {
             default_view: DefaultView::Overview,
             sort: SortOrder::Recent,
             sidebar_collapsed: false,
+            sidebar_width: 256.0,
             auto_fetch_minutes: 0,
             fetch_on_launch: false,
             pull_strategy: PullStrategy::FastForward,
@@ -283,6 +286,10 @@ impl UiSettings {
             self.right_panel_fraction = 0.67;
         }
         self.right_panel_fraction = self.right_panel_fraction.clamp(0.3, 0.8);
+        if !self.sidebar_width.is_finite() {
+            self.sidebar_width = 256.0;
+        }
+        self.sidebar_width = self.sidebar_width.clamp(200.0, 360.0);
         self
     }
 }

@@ -118,6 +118,8 @@ pub enum FieldId {
     BranchName,
     CloneUrl,
     CloneParent,
+    NewRepoName,
+    NewRepoParent,
 }
 
 pub struct VantageApp {
@@ -196,6 +198,14 @@ pub struct VantageApp {
     pub confirm: Option<ConfirmPrompt>,
     /// Clone dialog: url, destination and whether git is running.
     pub is_clone_modal_open: bool,
+    /// Create-repository dialog.
+    pub is_new_repo_modal_open: bool,
+    pub new_repo_name: FieldState,
+    pub new_repo_parent: FieldState,
+    pub new_repo_gitignore: bool,
+    pub is_creating_repo: bool,
+    new_repo_name_focus: FocusHandle,
+    new_repo_parent_focus: FocusHandle,
     pub clone_url: FieldState,
     pub clone_parent: FieldState,
     pub is_cloning: bool,
@@ -205,6 +215,8 @@ pub struct VantageApp {
     pub commit_view: Option<CommitView>,
     /// The pane borrows width from the list while a commit diff is open.
     pub commit_wide: bool,
+    /// `(pointer x, starting width)` while the sidebar divider is dragged.
+    pub sidebar_drag_start: Option<(f32, f32)>,
     /// Name typed for the pending create/rename.
     pub branch_field: FieldState,
     branch_focus: FocusHandle,
@@ -306,6 +318,13 @@ impl VantageApp {
             branch_prompt: None,
             confirm: None,
             is_clone_modal_open: false,
+            is_new_repo_modal_open: false,
+            new_repo_name: FieldState::new(),
+            new_repo_parent: FieldState::new(),
+            new_repo_gitignore: true,
+            is_creating_repo: false,
+            new_repo_name_focus: cx.focus_handle(),
+            new_repo_parent_focus: cx.focus_handle(),
             clone_url: FieldState::new(),
             clone_parent: FieldState::new(),
             is_cloning: false,
@@ -313,6 +332,7 @@ impl VantageApp {
             clone_parent_focus: cx.focus_handle(),
             commit_view: None,
             commit_wide: false,
+            sidebar_drag_start: None,
             branch_field: FieldState::new(),
             branch_focus: cx.focus_handle(),
             selection: std::collections::HashMap::new(),
@@ -1596,6 +1616,15 @@ impl VantageApp {
         cx.notify();
     }
 
+    /// Sidebar width in points while it is expanded.
+    pub fn sidebar_width(&self) -> f32 {
+        if self.sidebar_collapsed {
+            56.0
+        } else {
+            self.settings.sidebar_width
+        }
+    }
+
     /// Pane width to render with: a commit diff borrows space from the list.
     pub fn panel_fraction(&self) -> f32 {
         if self.commit_wide && self.commit_view.is_some() {
@@ -1847,6 +1876,76 @@ impl VantageApp {
         cx.notify();
     }
 
+    pub fn open_new_repo_modal(&mut self, cx: &mut Context<Self>) {
+        self.context_menu = None;
+        self.new_repo_name.clear();
+        if self.new_repo_parent.value.trim().is_empty() {
+            let parent = dirs::home_dir()
+                .map(|home| home.join("Projects"))
+                .filter(|path| path.is_dir())
+                .or_else(dirs::home_dir)
+                .map(|path| crate::path::contract(&path))
+                .unwrap_or_default();
+            self.new_repo_parent.set(parent);
+        }
+        self.is_new_repo_modal_open = true;
+        cx.notify();
+    }
+
+    pub fn close_new_repo_modal(&mut self, cx: &mut Context<Self>) {
+        self.is_new_repo_modal_open = false;
+        self.is_creating_repo = false;
+        cx.notify();
+    }
+
+    /// Run `git init` in a new folder and add it to the list.
+    pub fn submit_new_repo(&mut self, cx: &mut Context<Self>) {
+        if self.is_creating_repo {
+            return;
+        }
+        let name = self.new_repo_name.value.trim().to_string();
+        let parent = self.new_repo_parent.value.trim().to_string();
+        if name.is_empty() {
+            self.show_toast("Name the repository first", cx);
+            return;
+        }
+        if parent.is_empty() {
+            self.show_toast("Choose where to create it", cx);
+            return;
+        }
+        let Some(backend) = self.backend.clone() else {
+            return;
+        };
+        let parent_path = expand_home(&parent);
+        let with_gitignore = self.new_repo_gitignore;
+        self.is_creating_repo = true;
+        cx.notify();
+
+        cx.spawn(async move |this, cx| {
+            let result = cx
+                .background_executor()
+                .spawn(async move {
+                    backend.create_repo(&parent_path.to_string_lossy(), &name, with_gitignore)
+                })
+                .await;
+            this.update(cx, |app, cx| {
+                app.is_creating_repo = false;
+                match result {
+                    Ok(()) => {
+                        app.is_new_repo_modal_open = false;
+                        app.new_repo_name.clear();
+                        app.show_toast("Repository created", cx);
+                        app.start_scan(cx);
+                    }
+                    Err(error) => app.show_toast(format!("Could not create it: {error}"), cx),
+                }
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
+    }
+
     /// Clone the URL into the chosen folder, then rescan the workspace.
     pub fn submit_clone(&mut self, cx: &mut Context<Self>) {
         if self.is_cloning {
@@ -1908,6 +2007,28 @@ impl VantageApp {
             RepoOpReport::new(format!("Reverted {sha}"), format!("Could not revert {sha}")),
             move |backend, id| backend.revert(id, &sha).map(|_| ()),
         );
+    }
+
+    /// Open the repository's page in the browser.
+    pub fn open_repo_page(&mut self, repo_id: &str, cx: &mut Context<Self>) {
+        self.context_menu = None;
+        let Some(backend) = self.backend.clone() else {
+            return;
+        };
+        let id = repo_id.to_string();
+        cx.spawn(async move |this, cx| {
+            let page = cx
+                .background_executor()
+                .spawn(async move { backend.origin_page(&id) })
+                .await;
+            this.update(cx, |app, cx| match page {
+                Ok(Some(url)) => app.open_url(&url, cx),
+                Ok(None) => app.show_toast("This repository has no origin", cx),
+                Err(error) => app.show_toast(format!("Could not read the remote: {error}"), cx),
+            })
+            .ok();
+        })
+        .detach();
     }
 
     /// Show the repository in Finder.
@@ -2091,6 +2212,118 @@ impl VantageApp {
         self.branch_prompt = None;
         self.branch_field.clear();
         self.run_repo_op(&repo, cx, RepoOp::Branch, RepoOpReport::new(ok, fail), op);
+    }
+
+    /// Dialog for starting a repository: name, folder, and a starter ignore file.
+    fn render_new_repo_modal(&self, window: &mut Window, cx: &mut Context<Self>) -> gpui::Div {
+        let theme = self.theme;
+        if !self.new_repo_name_focus.is_focused(window) {
+            window.focus(&self.new_repo_name_focus);
+        }
+
+        let label = if self.is_creating_repo {
+            "Creating…"
+        } else {
+            "Create repository"
+        };
+        let mut confirm = crate::ui::accent_button(&theme, label)
+            .id("new-repo-confirm")
+            .on_click(cx.listener(|this, _e, _w, cx| this.submit_new_repo(cx)));
+        if self.is_creating_repo {
+            confirm = confirm.opacity(0.6);
+        }
+
+        let ignore = self.new_repo_gitignore;
+        let toggle = div()
+            .flex()
+            .items_center()
+            .gap(px(8.0))
+            .child(
+                crate::ui::checkbox(&theme, ignore)
+                    .id("new-repo-gitignore")
+                    .on_click(cx.listener(|this, _e, _w, cx| {
+                        this.new_repo_gitignore = !this.new_repo_gitignore;
+                        cx.notify();
+                    })),
+            )
+            .child(
+                div()
+                    .xs()
+                    .fg(theme.text_body)
+                    .child("Add a starter .gitignore"),
+            );
+
+        let card = div()
+            .w(px(460.0))
+            .flex()
+            .flex_col()
+            .gap(px(12.0))
+            .p(px(20.0))
+            .bg(theme.panel)
+            .border_1()
+            .border_color(theme.divider)
+            .rounded(px(12.0))
+            .shadow_lg()
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(|_this, _e, _w, cx| cx.stop_propagation()),
+            )
+            .child(
+                div()
+                    .sm()
+                    .medium()
+                    .fg(theme.text_app)
+                    .child("New repository"),
+            )
+            .child(div().xs().fg(theme.label_muted).child(
+                "A folder is created inside the destination, initialised as a Git repository and \
+                 added to the list.",
+            ))
+            .child(self.text_field(
+                FieldId::NewRepoName,
+                "Repository name",
+                crate::ui::FieldVariant::Form,
+                window,
+                cx,
+            ))
+            .child(self.text_field(
+                FieldId::NewRepoParent,
+                "Destination folder",
+                crate::ui::FieldVariant::Form,
+                window,
+                cx,
+            ))
+            .child(toggle)
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .justify_end()
+                    .gap(px(8.0))
+                    .child(
+                        crate::ui::secondary_button(&theme, "Cancel", None)
+                            .id("new-repo-cancel")
+                            .on_click(
+                                cx.listener(|this, _e, _w, cx| this.close_new_repo_modal(cx)),
+                            ),
+                    )
+                    .child(confirm),
+            );
+
+        div()
+            .absolute()
+            .top(px(0.0))
+            .left(px(0.0))
+            .size_full()
+            .flex()
+            .items_center()
+            .justify_center()
+            .bg(theme.overlay)
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(|this, _e, _w, cx| this.close_new_repo_modal(cx)),
+            )
+            .child(card)
     }
 
     /// Dialog for cloning a repository: where from, and into which folder.
@@ -2683,6 +2916,8 @@ impl VantageApp {
             FieldId::BranchName => &mut self.branch_field,
             FieldId::CloneUrl => &mut self.clone_url,
             FieldId::CloneParent => &mut self.clone_parent,
+            FieldId::NewRepoName => &mut self.new_repo_name,
+            FieldId::NewRepoParent => &mut self.new_repo_parent,
         }
     }
 
@@ -2697,6 +2932,8 @@ impl VantageApp {
             FieldId::BranchName => &self.branch_field,
             FieldId::CloneUrl => &self.clone_url,
             FieldId::CloneParent => &self.clone_parent,
+            FieldId::NewRepoName => &self.new_repo_name,
+            FieldId::NewRepoParent => &self.new_repo_parent,
         }
     }
 
@@ -2711,6 +2948,8 @@ impl VantageApp {
             FieldId::BranchName => self.branch_focus.clone(),
             FieldId::CloneUrl => self.clone_url_focus.clone(),
             FieldId::CloneParent => self.clone_parent_focus.clone(),
+            FieldId::NewRepoName => self.new_repo_name_focus.clone(),
+            FieldId::NewRepoParent => self.new_repo_parent_focus.clone(),
         }
     }
 
@@ -2784,6 +3023,8 @@ impl VantageApp {
             FieldId::CommitBody => self.commit_selected(cx),
             FieldId::CloneUrl => self.submit_clone(cx),
             FieldId::CloneParent => self.submit_clone(cx),
+            FieldId::NewRepoName => self.submit_new_repo(cx),
+            FieldId::NewRepoParent => self.submit_new_repo(cx),
         }
     }
 
@@ -2859,7 +3100,7 @@ impl Render for VantageApp {
             );
 
         if let Some(panel) = inspector {
-            let sidebar_width = if self.sidebar_collapsed { 56.0 } else { 256.0 };
+            let sidebar_width = self.sidebar_width();
             // Invisible 4px drag target: the panel's own 1px left border is the
             // visible divider, so the splitter does not add a thicker bar.
             let splitter = div()
@@ -2905,13 +3146,47 @@ impl Render for VantageApp {
                 );
         }
 
+        let sidebar_splitter = div()
+            .id("sidebar-splitter")
+            .w(px(4.0))
+            .h_full()
+            .flex_shrink_0()
+            .cursor(gpui::CursorStyle::ResizeColumn)
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(move |this, event: &gpui::MouseDownEvent, _w, _cx| {
+                    this.sidebar_drag_start =
+                        Some((f32::from(event.position.x), this.settings.sidebar_width));
+                }),
+            );
+
         let content = div()
             .flex()
             .flex_1()
             .min_h(px(0.0))
             .w_full()
             .child(self.render_sidebar(window, cx))
-            .child(main);
+            .when(!self.sidebar_collapsed, |d| d.child(sidebar_splitter))
+            .child(main)
+            .on_mouse_move(
+                cx.listener(move |this, event: &gpui::MouseMoveEvent, window, cx| {
+                    let Some((start_x, start_width)) = this.sidebar_drag_start else {
+                        return;
+                    };
+                    let delta = f32::from(event.position.x) - start_x;
+                    this.settings.sidebar_width = (start_width + delta).clamp(200.0, 360.0);
+                    let _ = window;
+                    cx.notify();
+                }),
+            )
+            .on_mouse_up(
+                MouseButton::Left,
+                cx.listener(|this, _event: &gpui::MouseUpEvent, _window, cx| {
+                    if this.sidebar_drag_start.take().is_some() {
+                        this.save_settings(cx);
+                    }
+                }),
+            );
 
         let mut root = div()
             .relative()
@@ -2995,6 +3270,7 @@ impl Render for VantageApp {
                             items.push(("Discard all changes", true, 0));
                         }
                     } else {
+                        items.push(("View on GitHub", false, 0));
                         items.push(("Remove from list", true, 0));
                         items.push(("Reveal in Finder", false, 0));
                         items.push(("Open in Terminal", false, 0));
@@ -3111,6 +3387,10 @@ impl Render for VantageApp {
                                     let id = repo_id.clone();
                                     this.ask_discard_repo(&id, cx);
                                 }
+                                (ContextMenu::Repo { repo_id, .. }, "View on GitHub") => {
+                                    let id = repo_id.clone();
+                                    this.open_repo_page(&id, cx);
+                                }
                                 (ContextMenu::Repo { repo_id, .. }, "Remove from list") => {
                                     let id = repo_id.clone();
                                     this.ask_forget_repo(&id, cx);
@@ -3212,6 +3492,10 @@ impl Render for VantageApp {
                         })),
                 )
                 .child(deferred(panel));
+        }
+        if self.is_new_repo_modal_open {
+            let modal = self.render_new_repo_modal(window, cx);
+            root = root.child(deferred(modal));
         }
         if self.is_clone_modal_open {
             let modal = self.render_clone_modal(window, cx);

@@ -4,10 +4,9 @@
 //! an ~84px left inset. The app name lives in the macOS menu bar, so the header
 //! starts with the sidebar toggle and breadcrumb instead of a second wordmark.
 
-use gpui::{div, prelude::*, px, rgb, Context, IntoElement, MouseButton, Styled, Window};
+use gpui::{div, prelude::*, px, Context, IntoElement, MouseButton, Styled, Window};
 
 use crate::app::{FieldId, VantageApp};
-use crate::theme::{SLATE_300, SLATE_700};
 use crate::ui::icon_button;
 use crate::ui::Txt;
 
@@ -18,16 +17,9 @@ impl VantageApp {
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
         let theme = self.theme;
-        let group_label = if self.active_group == "All" {
-            "All Groups".to_string()
-        } else {
-            self.active_group.clone()
-        };
-        let view_label = self.active_section.label();
-        let slash_color = if theme.is_dark {
-            rgb(SLATE_700)
-        } else {
-            rgb(SLATE_300)
+        let heading = match self.active_section {
+            crate::model::NavSection::Overview => "Repositories".to_string(),
+            section => section.label().to_string(),
         };
         let left_pad = if cfg!(target_os = "macos") && !window.is_fullscreen() {
             px(84.0)
@@ -86,19 +78,11 @@ impl VantageApp {
                     .sm()
                     .child(
                         div()
-                            .flex_shrink_0()
-                            .whitespace_nowrap()
-                            .fg(theme.label_muted)
-                            .child(group_label),
-                    )
-                    .child(div().flex_shrink_0().fg(slash_color).child("/"))
-                    .child(
-                        div()
                             .display_sm()
                             .semibold()
                             .truncate()
                             .fg(theme.text_app)
-                            .child(view_label),
+                            .child(heading),
                     ),
             )
             .child(

@@ -238,6 +238,43 @@ impl Backend {
         Ok(())
     }
 
+    /// Create a fresh repository under `parent` and register it.
+    pub fn create_repo(&self, parent: &str, name: &str, with_gitignore: bool) -> Result<()> {
+        let name = name.trim();
+        if !vantage_core::git::clone::is_safe_folder_name(name) {
+            return Err(anyhow!("Use a plain folder name, like my-project."));
+        }
+        let folder = Path::new(parent).join(name);
+        if folder.exists() {
+            return Err(anyhow!("{} already exists.", folder.display()));
+        }
+        std::fs::create_dir_all(&folder).with_context(|| format!("create {}", folder.display()))?;
+
+        let branch = self.ui_settings().default_branch.trim().to_string();
+        let branch = if branch.is_empty() {
+            "main".to_string()
+        } else {
+            branch
+        };
+        self.runtime
+            .block_on(self.runner.run_write(&folder, &["init", "-b", &branch], 30))
+            .and_then(|out| {
+                if out.success() {
+                    Ok(())
+                } else {
+                    Err(vantage_core::AppError::other(out.stderr))
+                }
+            })?;
+
+        if with_gitignore {
+            let body = "# macOS\n.DS_Store\n\n# Editor\n.vscode/\n.idea/\n";
+            std::fs::write(folder.join(".gitignore"), body).ok();
+        }
+
+        self.add_repo(&folder.to_string_lossy())?;
+        Ok(())
+    }
+
     /// Drop a repository from the workspace list; the folder stays on disk.
     pub fn forget(&self, repo_id: &str) -> Result<()> {
         let mut state = self.state();
@@ -264,6 +301,26 @@ impl Backend {
         ))?;
         self.add_repo(&path)?;
         Ok(())
+    }
+
+    /// The browser page for the repository's `origin`, when it is a hosted one.
+    pub fn origin_page(&self, repo_id: &str) -> Result<Option<String>> {
+        let repo_path = self.known_path(repo_id)?;
+        let url = self
+            .runtime
+            .block_on(vantage_core::git::refs::get_remote_url(
+                &self.runner,
+                &repo_path,
+            ))?;
+        let Some(url) = url else {
+            return Ok(None);
+        };
+        let page = match vantage_core::git::github::parse_remote(&url) {
+            Some(target) => format!("https://{}/{}/{}", target.host, target.owner, target.repo),
+            // Anything that is not a hosted remote is shown as it is.
+            None => url,
+        };
+        Ok(Some(page))
     }
 
     /// Create a commit that undoes `sha`, leaving history intact.
