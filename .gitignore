@@ -1,13 +1,8 @@
 # Rust / Cargo
 /target/
-src-tauri/target/
 
-# Node / Frontend
-node_modules/
-dist/
-dist-ssr/
-coverage/
-*.local
+# Release artifacts (scripts/bundle-macos.sh)
+/dist/
 
 # Environment & Secrets
 .env
@@ -17,16 +12,8 @@ coverage/
 *.key
 *.cert
 
-# Tauri build artifacts
-src-tauri/gen/
-native-preview/
-
 # Logs & temp files
 *.log
-npm-debug.log*
-yarn-debug.log*
-yarn-error.log*
-pnpm-debug.log*
 
 # OS / Editor files
 .DS_Store

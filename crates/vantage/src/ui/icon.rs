@@ -1,0 +1,83 @@
+//! Icon and icon-button primitives.
+
+use std::time::Duration;
+
+use gpui::{
+    div, prelude::*, px, Animation, AnimationExt, Div, ElementId, IntoElement, Rgba, SharedString,
+    Styled, Transformation,
+};
+
+use crate::icons::{icon as raw_icon, icon_svg};
+use crate::theme::Theme;
+
+use super::tokens::{IconSize, CONTROL_MD, RADIUS_MD};
+
+/// One full turn of the spinner. Slow enough to read as "working", fast enough
+/// to look alive on a short fetch.
+const SPIN_CYCLE: Duration = Duration::from_millis(900);
+
+/// Render an icon from the central icon registry at one of the design sizes.
+pub fn icon(name: &'static str, size: IconSize, color: Rgba) -> impl IntoElement {
+    raw_icon(name, size.px(), color)
+}
+
+/// A square, borderless toolbar button. Callers add the id and click handler.
+pub fn icon_button(theme: &Theme, name: &'static str) -> Div {
+    let hover = theme.nav_hover_bg;
+
+    div()
+        .flex()
+        .items_center()
+        .justify_center()
+        .w(px(CONTROL_MD))
+        .h(px(CONTROL_MD))
+        .rounded(px(RADIUS_MD))
+        .flex_shrink_0()
+        .cursor_pointer()
+        .hover(move |s| s.bg(hover))
+        .child(icon(name, IconSize::Md, theme.label_muted))
+}
+
+/// Table-row density of [`icon_button`]: a 22px target that fits inside a
+/// single row without widening it. Callers own the id, the handler and any
+/// disabled styling, so a no-op action can drop its click listener.
+pub fn icon_button_sm(theme: &Theme, name: &'static str) -> Div {
+    let hover = theme.nav_hover_bg;
+
+    div()
+        .flex()
+        .items_center()
+        .justify_center()
+        .w(px(22.0))
+        .h(px(22.0))
+        .rounded(px(RADIUS_MD - 2.0))
+        .flex_shrink_0()
+        .cursor_pointer()
+        .hover(move |s| s.bg(hover))
+        .child(icon(name, IconSize::Xs, theme.label_muted))
+}
+
+/// A glyph that turns for as long as it stays mounted — the in-flight state of
+/// a fetch/pull/push.
+///
+/// Only render it while work is actually running: a repeating animation asks
+/// for a frame on every paint, so an always-mounted spinner keeps the window
+/// redrawing for nothing. `key` must be stable per spinner (screen position and
+/// target) or the animation restarts from zero each render.
+pub fn spinner(
+    key: impl Into<SharedString>,
+    name: &'static str,
+    size: IconSize,
+    color: Rgba,
+) -> impl IntoElement {
+    let key: SharedString = key.into();
+    icon_svg(name, size.px(), color).with_animation(
+        ElementId::Name(format!("spinner-{key}").into()),
+        Animation::new(SPIN_CYCLE).repeat(),
+        |glyph, delta| {
+            glyph.with_transformation(Transformation::rotate(gpui::radians(
+                delta * std::f32::consts::TAU,
+            )))
+        },
+    )
+}

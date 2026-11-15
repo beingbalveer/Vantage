@@ -5,69 +5,118 @@ on:
     tags:
       - "v*"
 
+permissions:
+  contents: read
+
 jobs:
-  build-and-release:
+  release-macos:
+    name: Build, notarize and publish
+    # Pinned image on Apple silicon: the runner is arm64 and cross-compiles the
+    # Intel slice, so the DMG is universal.
+    runs-on: macos-14
     permissions:
       contents: write
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - platform: "macos-latest"
-            args: "--target universal-apple-darwin"
-          - platform: "ubuntu-22.04"
-            args: ""
-          - platform: "windows-latest"
-            args: ""
+    env:
+      APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+      APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+      APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+      APPLE_ID: ${{ secrets.APPLE_ID }}
+      APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+      APPLE_APP_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
 
-    runs-on: ${{ matrix.platform }}
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
 
-      - name: Install system dependencies (Linux)
-        if: runner.os == 'Linux'
+      - name: Install Rust with both Apple targets
+        uses: dtolnay/rust-toolchain@39008827e6b4319a349e9a42dfc90579dd25f1ca # stable  # yamllint disable-line rule:line-length
+        with:
+          toolchain: stable
+          targets: aarch64-apple-darwin, x86_64-apple-darwin
+
+      # A tag that disagrees with the crate version ships a bundle whose About
+      # panel and CFBundleShortVersionString both lie, so fail before building.
+      - name: Check the tag matches the workspace version
         run: |
-          sudo apt-get update
-          sudo apt-get install -y \
-            libwebkit2gtk-4.1-dev \
-            build-essential \
-            curl \
-            wget \
-            file \
-            libssl-dev \
-            libgtk-3-dev \
-            libayatana-appindicator3-dev \
-            librsvg2-dev
+          version="$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)"
+          tag="${GITHUB_REF_NAME#v}"
+          echo "tag=$tag workspace=$version"
+          if [ "$tag" != "$version" ]; then
+            echo "::error::tag $tag does not match workspace version $version"
+            exit 1
+          fi
 
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: 20
-          cache: "npm"
+      # Only needed when the signing secrets exist; without them the bundle is
+      # ad-hoc signed by the packaging script and distribution is local-only.
+      - name: Import the Developer ID certificate
+        if: env.APPLE_CERTIFICATE != ''
+        run: |
+          echo "$APPLE_CERTIFICATE" | base64 --decode >certificate.p12
+          KEYCHAIN=build.keychain
+          security create-keychain -p actions "$KEYCHAIN"
+          security default-keychain -s "$KEYCHAIN"
+          security unlock-keychain -p actions "$KEYCHAIN"
+          security import certificate.p12 -k "$KEYCHAIN" \
+            -P "$APPLE_CERTIFICATE_PASSWORD" \
+            -T /usr/bin/codesign
+          security set-key-partition-list -S apple-tool:,apple:,codesign: \
+            -s -k actions "$KEYCHAIN"
+          rm certificate.p12
 
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: ${{ matrix.platform == 'macos-latest' && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
+      - name: Build universal release binary
+        run: |
+          cargo build --release -p vantage --locked \
+            --target aarch64-apple-darwin
+          cargo build --release -p vantage --locked \
+            --target x86_64-apple-darwin
 
-      - name: Rust cache
-        uses: swatinem/rust-cache@v2
-        with:
-          workspaces: "./src-tauri"
+      - name: Package app bundle, DMG, cask and checksums
+        run: ./scripts/bundle-macos.sh "$GITHUB_REF_NAME"
 
-      - name: Install frontend dependencies
-        run: npm ci
+      - name: Verify the artifacts
+        run: |
+          plutil -lint dist/Vantage.app/Contents/Info.plist
+          codesign --verify --deep --strict --verbose=2 dist/Vantage.app
+          lipo -archs dist/Vantage.app/Contents/MacOS/vantage
+          hdiutil attach -nobrowse -readonly dist/Vantage_*_universal.dmg
+          test -d /Volumes/Vantage/Vantage.app
+          hdiutil detach /Volumes/Vantage
+          (cd dist && shasum -a 256 -c SHA256SUMS)
+          if [ -n "$APPLE_SIGNING_IDENTITY" ]; then
+            spctl --assess --type execute --verbose=2 dist/Vantage.app
+          fi
 
-      - name: Build Tauri desktop application
-        uses: tauri-apps/tauri-action@v0
+      - name: Publish the release
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
-        with:
-          tagName: ${{ github.ref_name }}
-          releaseName: "Vantage ${{ github.ref_name }}"
-          releaseBody: "See the assets below to download the latest release of Vantage for macOS, Windows, or Linux."
-          releaseDraft: true
-          prerelease: false
-          args: ${{ matrix.args }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" \
+            --title "Vantage $GITHUB_REF_NAME" \
+            --generate-notes \
+            dist/Vantage_*_universal.dmg \
+            dist/Vantage_*_universal.app.zip \
+            dist/SHA256SUMS \
+            dist/vantage.rb
+
+      # Keeps the in-repo cask pinned to the build that was just published.
+      # A no-op when main already moved past this tag.
+      - name: Sync the cask back to main
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          mkdir -p Casks
+          cp dist/vantage.rb Casks/vantage.rb
+          if git diff --quiet -- Casks/vantage.rb; then
+            echo "cask already current"
+            exit 0
+          fi
+          gh auth setup-git
+          bot="41898282+github-actions[bot]@users.noreply.github.com"
+          git config user.name "github-actions[bot]"
+          git config user.email "$bot"
+          git add Casks/vantage.rb
+          git commit -m "chore(cask): pin $GITHUB_REF_NAME"
+          git push origin "HEAD:main"
