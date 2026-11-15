@@ -22,7 +22,7 @@ use vantage_core::git::refs::{
     checkout_branch, create_branch, delete_branch, has_upstream, is_commit_on_remote,
     merge_into_current, rename_branch, sync_fetch, sync_pull, sync_push, PullStrategy,
 };
-use vantage_core::git::stash::{stash_pop, stash_push};
+use vantage_core::git::stash::{list_stashes, stash_drop, stash_pop, stash_push};
 use vantage_core::git::status::query_repo_status;
 use vantage_core::persist::PersistedState;
 use vantage_core::{repos, GitRunner, RepoEntry};
@@ -301,6 +301,68 @@ impl Backend {
         ))?;
         self.add_repo(&path)?;
         Ok(())
+    }
+
+    /// Add one repository-relative path to `.gitignore`.
+    ///
+    /// Only untracked files take effect; the caller warns for tracked ones.
+    pub fn ignore_path(&self, repo_id: &str, path: &str) -> Result<()> {
+        let repo_path = self.known_path(repo_id)?;
+        let ignore_file = repo_path.join(".gitignore");
+        let mut body = std::fs::read_to_string(&ignore_file).unwrap_or_default();
+        // Anchor at the repository root so the rule cannot match deeper paths.
+        let rule = format!("/{path}");
+        if body.lines().any(|line| line.trim() == rule) {
+            return Ok(());
+        }
+        if !body.is_empty() && !body.ends_with('\n') {
+            body.push('\n');
+        }
+        body.push_str(&rule);
+        body.push('\n');
+        std::fs::write(&ignore_file, body)
+            .with_context(|| format!("write {}", ignore_file.display()))?;
+        Ok(())
+    }
+
+    /// Move the branch tip to `sha`, keeping the working tree untouched.
+    pub fn reset_to(&self, repo_id: &str, sha: &str) -> Result<()> {
+        let repo_path = self.known_path(repo_id)?;
+        self.runtime
+            .block_on(ops::reset_to(&self.runner, &repo_path, sha, false))?;
+        Ok(())
+    }
+
+    /// Every stash the repository keeps, newest first.
+    pub fn stashes(&self, repo_id: &str) -> Result<Vec<vantage_core::state::StashEntry>> {
+        let repo_path = self.known_path(repo_id)?;
+        Ok(self
+            .runtime
+            .block_on(list_stashes(&self.runner, &repo_path))?)
+    }
+
+    pub fn stash_drop(&self, repo_id: &str, index: u32) -> Result<()> {
+        let repo_path = self.known_path(repo_id)?;
+        self.runtime
+            .block_on(stash_drop(&self.runner, &repo_path, index))?;
+        Ok(())
+    }
+
+    /// Files changed between two branches, each with its patch lines.
+    pub fn compare(
+        &self,
+        repo_id: &str,
+        base: &str,
+        head: &str,
+    ) -> Result<Vec<crate::model::CommitFile>> {
+        let repo_path = self.known_path(repo_id)?;
+        Ok(details::compare_branches(
+            &self.runtime,
+            &self.runner,
+            &repo_path,
+            base,
+            head,
+        ))
     }
 
     /// Merge `target` into the checked-out branch. Returns whether git stopped

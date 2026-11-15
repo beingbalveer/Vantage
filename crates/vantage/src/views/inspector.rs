@@ -1086,21 +1086,23 @@ impl VantageApp {
                     .flex_shrink_0()
                     .child(view.sha.clone()),
             )
-            .child(crate::ui::avatar(
-                &theme,
-                &view.author,
-                &view.author_email,
-                self.avatar_for(&view.author_email),
-                16.0,
-            ))
-            .child(
-                div()
-                    .flex_shrink_0()
-                    .xs()
-                    .fg(theme.label_muted)
-                    .whitespace_nowrap()
-                    .child(view.time.clone()),
-            )
+            .when(!view.comparing, |d| {
+                d.child(crate::ui::avatar(
+                    &theme,
+                    &view.author,
+                    &view.author_email,
+                    self.avatar_for(&view.author_email),
+                    16.0,
+                ))
+                .child(
+                    div()
+                        .flex_shrink_0()
+                        .xs()
+                        .fg(theme.label_muted)
+                        .whitespace_nowrap()
+                        .child(view.time.clone()),
+                )
+            })
             .when(view.files.get(view.selected).is_some(), |d| {
                 let file = &view.files[view.selected];
                 d.child(

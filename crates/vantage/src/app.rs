@@ -198,6 +198,8 @@ pub struct VantageApp {
     pub branch_prompt: Option<BranchPrompt>,
     /// A destructive action waiting for its confirm.
     pub confirm: Option<ConfirmPrompt>,
+    /// Stash list dialog: repository and its entries.
+    pub stash_modal: Option<StashModal>,
     /// Clone dialog: url, destination and whether git is running.
     pub is_clone_modal_open: bool,
     /// Create-repository dialog.
@@ -319,6 +321,7 @@ impl VantageApp {
             commit_body_focus: cx.focus_handle(),
             branch_prompt: None,
             confirm: None,
+            stash_modal: None,
             is_clone_modal_open: false,
             is_new_repo_modal_open: false,
             new_repo_name: FieldState::new(),
@@ -1654,6 +1657,7 @@ impl VantageApp {
             files: Vec::new(),
             selected: 0,
             loading: true,
+            comparing: false,
         });
 
         let Some(backend) = self.backend.clone() else {
@@ -1829,6 +1833,21 @@ impl VantageApp {
                     move |backend, id| backend.update_from_default(id).map(|_| ()),
                 );
             }
+            ConfirmAction::ResetToCommit { repo_id, sha } => {
+                let Some(repo) = self.repos.iter().find(|repo| repo.id == repo_id).cloned() else {
+                    return;
+                };
+                self.run_repo_op(
+                    &repo,
+                    cx,
+                    RepoOp::Merge,
+                    RepoOpReport::new(
+                        format!("Reset to {sha}"),
+                        format!("Could not reset to {sha}"),
+                    ),
+                    move |backend, id| backend.reset_to(id, &sha),
+                );
+            }
             ConfirmAction::ForgetRepository { repo_id } => {
                 let Some(backend) = self.backend.clone() else {
                     return;
@@ -1883,6 +1902,199 @@ impl VantageApp {
                 repo_id: repo_id.to_string(),
             },
         });
+        cx.notify();
+    }
+
+    /// Open the stash list for a repository.
+    pub fn open_stash_modal(&mut self, repo_id: &str, cx: &mut Context<Self>) {
+        self.context_menu = None;
+        let Some(backend) = self.backend.clone() else {
+            return;
+        };
+        let id = repo_id.to_string();
+        let load_id = id.clone();
+        cx.spawn(async move |this, cx| {
+            let entries = cx
+                .background_executor()
+                .spawn(async move { backend.stashes(&load_id) })
+                .await;
+            this.update(cx, |app, cx| {
+                app.stash_modal = Some(StashModal {
+                    repo_id: id,
+                    entries: entries.unwrap_or_default(),
+                });
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
+        cx.notify();
+    }
+
+    pub fn close_stash_modal(&mut self, cx: &mut Context<Self>) {
+        self.stash_modal = None;
+        cx.notify();
+    }
+
+    /// Apply a stash and drop it, then rescan.
+    pub fn pop_stash_entry(&mut self, index: u32, cx: &mut Context<Self>) {
+        let Some(modal) = self.stash_modal.clone() else {
+            return;
+        };
+        self.stash_modal = None;
+        let Some(repo) = self
+            .repos
+            .iter()
+            .find(|repo| repo.id == modal.repo_id)
+            .cloned()
+        else {
+            return;
+        };
+        self.run_repo_op(
+            &repo,
+            cx,
+            RepoOp::Stash,
+            RepoOpReport::new(
+                format!("Restored stash@{index}"),
+                format!("Could not restore stash@{index}"),
+            ),
+            move |backend, id| backend.stash_pop(id, index),
+        );
+    }
+
+    /// Throw a stash away without applying it.
+    pub fn drop_stash_entry(&mut self, index: u32, cx: &mut Context<Self>) {
+        let Some(modal) = self.stash_modal.clone() else {
+            return;
+        };
+        self.stash_modal = None;
+        let Some(repo) = self
+            .repos
+            .iter()
+            .find(|repo| repo.id == modal.repo_id)
+            .cloned()
+        else {
+            return;
+        };
+        self.run_repo_op(
+            &repo,
+            cx,
+            RepoOp::Stash,
+            RepoOpReport::new(
+                format!("Dropped stash@{index}"),
+                format!("Could not drop stash@{index}"),
+            ),
+            move |backend, id| backend.stash_drop(id, index),
+        );
+    }
+
+    /// Ignore one file by adding its path to `.gitignore`.
+    ///
+    /// Git only honours ignore rules for untracked paths, so a tracked file gets
+    /// a straight answer instead of a rule that would do nothing.
+    pub fn ignore_file(&mut self, repo_id: &str, path: &str, cx: &mut Context<Self>) {
+        self.context_menu = None;
+        let Some(repo) = self.repos.iter().find(|repo| repo.id == repo_id).cloned() else {
+            return;
+        };
+        let status = repo
+            .uncommitted_files
+            .iter()
+            .find(|file| file.path == path)
+            .map(|file| file.status);
+        if !matches!(status, Some(crate::model::FileChangeStatus::Untracked)) {
+            self.show_toast(
+                "Ignoring only affects untracked files — this one is tracked",
+                cx,
+            );
+            return;
+        }
+        let Some(backend) = self.backend.clone() else {
+            return;
+        };
+        let id = repo_id.to_string();
+        let file_path = path.to_string();
+        let toast_path = file_path.clone();
+        cx.spawn(async move |this, cx| {
+            let result = cx
+                .background_executor()
+                .spawn(async move { backend.ignore_path(&id, &file_path) })
+                .await;
+            this.update(cx, |app, cx| {
+                match result {
+                    Ok(()) => app.show_toast(format!("Ignored {toast_path}"), cx),
+                    Err(error) => {
+                        app.show_toast(format!("Could not write .gitignore: {error}"), cx)
+                    }
+                }
+                app.start_scan(cx);
+            })
+            .ok();
+        })
+        .detach();
+    }
+
+    /// Ask before moving the branch tip back to a commit.
+    pub fn ask_reset_commit(&mut self, repo_id: &str, sha: &str, cx: &mut Context<Self>) {
+        self.context_menu = None;
+        let Some(repo) = self.repos.iter().find(|repo| repo.id == repo_id).cloned() else {
+            return;
+        };
+        self.confirm = Some(ConfirmPrompt {
+            title: format!("Reset {} to {sha}?", repo.current_branch),
+            body: "The branch tip moves back to that commit. Your files are not touched, so the \
+                   difference appears as uncommitted changes. A backup ref is kept first."
+                .to_string(),
+            label: "Reset",
+            action: ConfirmAction::ResetToCommit {
+                repo_id: repo_id.to_string(),
+                sha: sha.to_string(),
+            },
+        });
+        cx.notify();
+    }
+
+    /// Open the diff between the current branch and another one.
+    pub fn compare_with_branch(&mut self, repo_id: &str, other: &str, cx: &mut Context<Self>) {
+        self.context_menu = None;
+        let Some(repo) = self.repos.iter().find(|repo| repo.id == repo_id).cloned() else {
+            return;
+        };
+        let base = repo.current_branch.clone();
+        self.inspector_tab = InspectorTab::Commits;
+        self.commit_view = Some(CommitView {
+            repo_id: repo.id.clone(),
+            sha: format!("{base}\u{2026}{other}"),
+            subject: format!("Changes from {base} to {other}"),
+            author: String::new(),
+            author_email: String::new(),
+            time: String::new(),
+            files: Vec::new(),
+            selected: 0,
+            loading: true,
+            comparing: true,
+        });
+
+        let Some(backend) = self.backend.clone() else {
+            return;
+        };
+        let id = repo.id.clone();
+        let other = other.to_string();
+        cx.spawn(async move |this, cx| {
+            let files = cx
+                .background_executor()
+                .spawn(async move { backend.compare(&id, &base, &other) })
+                .await;
+            this.update(cx, |app, cx| {
+                if let Some(view) = app.commit_view.as_mut() {
+                    view.files = files.unwrap_or_default();
+                    view.loading = false;
+                }
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
         cx.notify();
     }
 
@@ -2284,6 +2496,139 @@ impl VantageApp {
         self.branch_prompt = None;
         self.branch_field.clear();
         self.run_repo_op(&repo, cx, RepoOp::Branch, RepoOpReport::new(ok, fail), op);
+    }
+
+    /// The stash list, with restore and drop per entry.
+    fn render_stash_modal(&self, cx: &mut Context<Self>) -> gpui::Div {
+        let theme = self.theme;
+        let Some(modal) = self.stash_modal.clone() else {
+            return div();
+        };
+
+        let mut list = div().flex().flex_col().gap(px(2.0)).w_full();
+        if modal.entries.is_empty() {
+            list = list.child(
+                div()
+                    .py(px(10.0))
+                    .xs()
+                    .fg(theme.label_muted)
+                    .child("No stashes in this repository."),
+            );
+        }
+        for entry in &modal.entries {
+            let index = entry.index;
+            list = list.child(
+                div()
+                    .flex()
+                    .items_center()
+                    .justify_between()
+                    .gap(px(10.0))
+                    .w_full()
+                    .px(px(8.0))
+                    .py(px(6.0))
+                    .rounded(px(6.0))
+                    .hover(move |s| s.bg(theme.row_hover_bg))
+                    .child(
+                        div()
+                            .flex()
+                            .flex_col()
+                            .flex_1()
+                            .min_w(px(0.0))
+                            .child(
+                                div()
+                                    .xs()
+                                    .medium()
+                                    .fg(theme.text_app)
+                                    .truncate()
+                                    .child(entry.subject.clone()),
+                            )
+                            .child(
+                                div()
+                                    .mono_xs()
+                                    .fg(theme.label_muted)
+                                    .child(format!("stash@{{{index}}} \u{00b7} {}", entry.date)),
+                            ),
+                    )
+                    .child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .gap(px(8.0))
+                            .flex_shrink_0()
+                            .child(
+                                div()
+                                    .id(gpui::SharedString::from(format!("stash-pop-{index}")))
+                                    .px(px(6.0))
+                                    .py(px(2.0))
+                                    .rounded(px(4.0))
+                                    .cursor_pointer()
+                                    .xs()
+                                    .medium()
+                                    .fg(theme.accent_text)
+                                    .hover(move |s| s.bg(theme.nav_hover_bg))
+                                    .child("Restore")
+                                    .on_click(cx.listener(move |this, _e, _w, cx| {
+                                        this.pop_stash_entry(index, cx);
+                                    })),
+                            )
+                            .child(
+                                div()
+                                    .id(gpui::SharedString::from(format!("stash-drop-{index}")))
+                                    .px(px(6.0))
+                                    .py(px(2.0))
+                                    .rounded(px(4.0))
+                                    .cursor_pointer()
+                                    .xs()
+                                    .fg(theme.label_muted)
+                                    .hover(move |s| s.fg(theme.status_red).underline())
+                                    .child("Drop")
+                                    .on_click(cx.listener(move |this, _e, _w, cx| {
+                                        this.drop_stash_entry(index, cx);
+                                    })),
+                            ),
+                    ),
+            );
+        }
+
+        let card = div()
+            .w(px(460.0))
+            .flex()
+            .flex_col()
+            .gap(px(12.0))
+            .p(px(20.0))
+            .bg(theme.panel)
+            .border_1()
+            .border_color(theme.divider)
+            .rounded(px(12.0))
+            .shadow_lg()
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(|_this, _e, _w, cx| cx.stop_propagation()),
+            )
+            .child(div().sm().medium().fg(theme.text_app).child("Stashes"))
+            .child(list)
+            .child(
+                div().flex().items_center().justify_end().child(
+                    crate::ui::secondary_button(&theme, "Close", None)
+                        .id("stash-close")
+                        .on_click(cx.listener(|this, _e, _w, cx| this.close_stash_modal(cx))),
+                ),
+            );
+
+        div()
+            .absolute()
+            .top(px(0.0))
+            .left(px(0.0))
+            .size_full()
+            .flex()
+            .items_center()
+            .justify_center()
+            .bg(theme.overlay)
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(|this, _e, _w, cx| this.close_stash_modal(cx)),
+            )
+            .child(card)
     }
 
     /// Dialog for starting a repository: name, folder, and a starter ignore file.
@@ -3316,7 +3661,10 @@ impl Render for VantageApp {
                         .rsplit_once('/')
                         .map_or(path.as_str(), |(_, name)| name)
                         .to_string();
-                    let items: Vec<(&'static str, bool, u64)> = vec![("Discard changes", true, 0)];
+                    let items: Vec<(&'static str, bool, u64)> = vec![
+                        ("Add to .gitignore", false, 0),
+                        ("Discard changes", true, 0),
+                    ];
                     (*x, *y, name, items)
                 }
                 ContextMenu::Repo {
@@ -3343,6 +3691,9 @@ impl Render for VantageApp {
                         }
                     } else {
                         items.push(("Update from default branch", false, 0));
+                        if *stashes > 0 {
+                            items.push(("Manage stashes…", false, 0));
+                        }
                         items.push(("View on GitHub", false, 0));
                         items.push(("Remove from list", true, 0));
                         items.push(("Reveal in Finder", false, 0));
@@ -3365,6 +3716,7 @@ impl Render for VantageApp {
                     }
                     if !*is_current {
                         items.push(("Merge into current branch", false, 0));
+                        items.push(("Compare with current", false, 0));
                     }
                     items.push(("New branch from this branch", false, 0));
                     if *is_current {
@@ -3386,7 +3738,7 @@ impl Render for VantageApp {
                     // Only the tip commit can be rewritten, and only while it is
                     // still local.
                     let mut revert_only: Vec<(&'static str, bool, u64)> =
-                        vec![("Revert commit", false, 0)];
+                        vec![("Revert commit", false, 0), ("Reset branch here", true, 0)];
                     if *is_tip {
                         revert_only.push(("Amend commit", false, 0));
                     }
@@ -3448,6 +3800,11 @@ impl Render for VantageApp {
                         .child(label)
                         .on_click(cx.listener(move |this, _e, _w, cx| {
                             match (&action_menu, label) {
+                                (ContextMenu::File { repo_id, path, .. }, "Add to .gitignore") => {
+                                    let id = repo_id.clone();
+                                    let file = path.clone();
+                                    this.ignore_file(&id, &file, cx);
+                                }
                                 (ContextMenu::File { repo_id, path, .. }, "Discard changes") => {
                                     this.discard_file(repo_id, path, cx)
                                 }
@@ -3477,6 +3834,26 @@ impl Render for VantageApp {
                                     let id = repo_id.clone();
                                     let branch = name.clone();
                                     this.ask_merge_branch(&id, &branch, cx);
+                                }
+                                (ContextMenu::Repo { repo_id, .. }, "Manage stashes…") => {
+                                    let id = repo_id.clone();
+                                    this.open_stash_modal(&id, cx);
+                                }
+                                (
+                                    ContextMenu::Branch { repo_id, name, .. },
+                                    "Compare with current",
+                                ) => {
+                                    let id = repo_id.clone();
+                                    let other = name.clone();
+                                    this.compare_with_branch(&id, &other, cx);
+                                }
+                                (
+                                    ContextMenu::Commit { repo_id, short, .. },
+                                    "Reset branch here",
+                                ) => {
+                                    let id = repo_id.clone();
+                                    let sha = short.clone();
+                                    this.ask_reset_commit(&id, &sha, cx);
                                 }
                                 (ContextMenu::Repo { repo_id, .. }, "View on GitHub") => {
                                     let id = repo_id.clone();
@@ -3584,6 +3961,10 @@ impl Render for VantageApp {
                 )
                 .child(deferred(panel));
         }
+        if self.stash_modal.is_some() {
+            let modal = self.render_stash_modal(cx);
+            root = root.child(deferred(modal));
+        }
         if self.is_new_repo_modal_open {
             let modal = self.render_new_repo_modal(window, cx);
             root = root.child(deferred(modal));
@@ -3613,6 +3994,13 @@ impl Render for VantageApp {
     }
 }
 
+/// The stash list, opened as a dialog.
+#[derive(Clone, Debug)]
+pub struct StashModal {
+    pub repo_id: String,
+    pub entries: Vec<vantage_core::state::StashEntry>,
+}
+
 /// A destructive action waiting for confirmation.
 #[derive(Clone, Debug)]
 pub struct ConfirmPrompt {
@@ -3628,6 +4016,7 @@ pub enum ConfirmAction {
     ForgetRepository { repo_id: String },
     MergeBranch { repo_id: String, target: String },
     UpdateFromDefault { repo_id: String },
+    ResetToCommit { repo_id: String, sha: String },
 }
 
 /// A commit opened in the detail view: its files, and which one is on screen.
@@ -3642,6 +4031,8 @@ pub struct CommitView {
     pub files: Vec<crate::model::CommitFile>,
     pub selected: usize,
     pub loading: bool,
+    /// True when this is a branch comparison rather than one commit.
+    pub comparing: bool,
 }
 
 /// An in-progress branch action, answered by the inline row in the Branches tab.
