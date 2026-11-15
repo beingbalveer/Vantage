@@ -1378,6 +1378,30 @@ impl VantageApp {
         );
     }
 
+    /// Counts for the summary strip above the repository list.
+    pub fn repo_summary(&self) -> RepoSummary {
+        let mut summary = RepoSummary {
+            total: self.repos.len(),
+            ..RepoSummary::default()
+        };
+        for repo in &self.repos {
+            if !repo.uncommitted_files.is_empty() {
+                summary.uncommitted += 1;
+            }
+            if repo.ahead_count > 0 {
+                summary.unpushed += 1;
+            }
+            let quiet = repo.uncommitted_files.is_empty()
+                && repo.ahead_count <= 0
+                && repo.behind_count <= 0
+                && repo.sync_state != RepoSyncState::Conflict;
+            if quiet {
+                summary.clean += 1;
+            }
+        }
+        summary
+    }
+
     /// The commit a detail pane may offer to undo: still the branch tip of
     /// this repository, and made from this session.
     pub fn undo_candidate(&self, repo: &Repository) -> Option<UndoOffer> {
@@ -1938,6 +1962,15 @@ impl Render for VantageApp {
         }
         root
     }
+}
+
+/// Repository counts shown above the list.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct RepoSummary {
+    pub total: usize,
+    pub uncommitted: usize,
+    pub unpushed: usize,
+    pub clean: usize,
 }
 
 /// What the detail pane offers to undo, if anything.

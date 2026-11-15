@@ -3,7 +3,7 @@
 
 use gpui::{div, prelude::*, px, relative, Context, Div, IntoElement, Rgba, Styled};
 
-use crate::app::{RepoOp, VantageApp};
+use crate::app::{RepoOp, RepoSummary, VantageApp};
 use crate::model::RepoSyncState;
 use crate::theme::Theme;
 use crate::ui::{icon, icon_button_sm, spinner, IconSize};
@@ -87,7 +87,12 @@ impl VantageApp {
 
         let is_empty = sections.iter().all(|s| s.rows.is_empty());
 
-        let mut table = div().flex().flex_col().w_full().gap(px(10.0));
+        let mut table = div()
+            .flex()
+            .flex_col()
+            .w_full()
+            .gap(px(10.0))
+            .child(summary_strip(&theme, self.repo_summary()));
 
         if self.is_refreshing {
             return table.child(
@@ -449,6 +454,41 @@ fn badge(icon_name: &'static str, label: &str, color: Rgba) -> Div {
         .whitespace_nowrap()
         .child(icon(icon_name, IconSize::Xs, color))
         .child(div().xs().medium().fg(color).child(label.to_string()))
+}
+
+/// One quiet line of totals above the list: no cards, no chrome.
+fn summary_strip(theme: &Theme, summary: RepoSummary) -> Div {
+    let mut strip = div()
+        .flex()
+        .items_center()
+        .flex_wrap()
+        .gap(px(14.0))
+        .w_full()
+        .px(px(4.0));
+
+    let item = |count: usize, label: &str, color: Rgba| {
+        div()
+            .flex()
+            .items_center()
+            .gap(px(5.0))
+            .whitespace_nowrap()
+            .child(div().w(px(6.0)).h(px(6.0)).rounded(px(3.0)).bg(color))
+            .child(
+                div()
+                    .xs()
+                    .medium()
+                    .fg(theme.text_body)
+                    .child(count.to_string()),
+            )
+            .child(div().xs().fg(theme.label_muted).child(label.to_string()))
+    };
+
+    strip = strip
+        .child(item(summary.total, "repositories", theme.text_dim))
+        .child(item(summary.uncommitted, "uncommitted", theme.status_amber))
+        .child(item(summary.unpushed, "unpushed", theme.status_blue))
+        .child(item(summary.clean, "clean", theme.status_green));
+    strip
 }
 
 fn clone_row(row: &TableRow) -> TableRow {
