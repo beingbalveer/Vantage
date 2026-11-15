@@ -41,6 +41,7 @@ pub enum RepoOp {
     Undo,
     Branch,
     Stash,
+    Revert,
 }
 
 impl RepoOp {
@@ -53,6 +54,7 @@ impl RepoOp {
             Self::Amend => "Amending…",
             Self::Branch => "Updating branch…",
             Self::Stash => "Stashing…",
+            Self::Revert => "Reverting…",
             Self::Pull => "Pulling…",
             Self::Push => "Pushing…",
             Self::Commit => "Committing…",
@@ -112,6 +114,7 @@ pub enum FieldId {
     ModalCustomGroup,
     SettingsBranch,
     CommitMessage,
+    CommitBody,
     BranchName,
 }
 
@@ -182,6 +185,9 @@ pub struct VantageApp {
     pub context_menu: Option<ContextMenu>,
     /// The commit bar is in amend mode: the next commit rewrites the tip.
     pub amending: bool,
+    /// Optional description paragraph for the next commit.
+    pub commit_body: FieldState,
+    commit_body_focus: FocusHandle,
     /// A branch action waiting for its name or confirmation.
     pub branch_prompt: Option<BranchPrompt>,
     /// A destructive action waiting for its confirm.
@@ -286,6 +292,8 @@ impl VantageApp {
             last_commit: None,
             context_menu: None,
             amending: false,
+            commit_body: FieldState::new(),
+            commit_body_focus: cx.focus_handle(),
             branch_prompt: None,
             confirm: None,
             commit_view: None,
@@ -1408,6 +1416,7 @@ impl VantageApp {
             return;
         };
         let message = self.commit_field.value.trim().to_string();
+        let body = self.commit_body.value.trim().to_string();
         if message.is_empty() {
             self.show_toast("Write a commit message first", cx);
             return;
@@ -1435,6 +1444,7 @@ impl VantageApp {
                 .on_success(move |app, short: String| {
                     app.amending = false;
                     app.commit_field.clear();
+                    app.commit_body.clear();
                     app.selection.remove(&record_repo);
                     app.last_commit = Some(LastCommit {
                         repo_id: record_repo,
@@ -1467,6 +1477,7 @@ impl VantageApp {
                 // commit leaves the composer intact for a retry.
                 .on_success(move |app, short: String| {
                     app.commit_field.clear();
+                    app.commit_body.clear();
                     // The commit spent these ticks; the rescan reports the real
                     // index state from here on.
                     app.selection.remove(&record_repo);
@@ -1477,7 +1488,10 @@ impl VantageApp {
                         previous_tip,
                     });
                 }),
-            move |backend, repo_id| backend.commit(repo_id, &paths, &message),
+            move |backend, repo_id| {
+                let body = (!body.is_empty()).then_some(body.as_str());
+                backend.commit(repo_id, &paths, &message, body)
+            },
         );
     }
 
@@ -1754,6 +1768,78 @@ impl VantageApp {
             }
         }
         cx.notify();
+    }
+
+    /// Create a commit that undoes `sha`.
+    pub fn revert_commit(&mut self, repo_id: &str, sha: &str, cx: &mut Context<Self>) {
+        self.context_menu = None;
+        let Some(repo) = self.repos.iter().find(|repo| repo.id == repo_id).cloned() else {
+            return;
+        };
+        let sha = sha.to_string();
+        self.run_repo_op(
+            &repo,
+            cx,
+            RepoOp::Revert,
+            RepoOpReport::new(format!("Reverted {sha}"), format!("Could not revert {sha}")),
+            move |backend, id| backend.revert(id, &sha).map(|_| ()),
+        );
+    }
+
+    /// Show the repository in Finder.
+    pub fn reveal_repo(&mut self, repo_id: &str, cx: &mut Context<Self>) {
+        self.context_menu = None;
+        let Some(repo) = self.repos.iter().find(|repo| repo.id == repo_id).cloned() else {
+            return;
+        };
+        let path = expand_home(&repo.local_path);
+        match std::process::Command::new("open")
+            .arg("-R")
+            .arg(&path)
+            .spawn()
+        {
+            Ok(_) => cx.notify(),
+            Err(error) => self.show_toast(format!("Could not reveal the folder: {error}"), cx),
+        }
+    }
+
+    /// Open the repository in Terminal.
+    pub fn open_repo_terminal(&mut self, repo_id: &str, cx: &mut Context<Self>) {
+        self.context_menu = None;
+        let Some(repo) = self.repos.iter().find(|repo| repo.id == repo_id).cloned() else {
+            return;
+        };
+        let path = expand_home(&repo.local_path);
+        match std::process::Command::new("open")
+            .args(["-a", "Terminal"])
+            .arg(&path)
+            .spawn()
+        {
+            Ok(_) => cx.notify(),
+            Err(error) => self.show_toast(format!("Could not open Terminal: {error}"), cx),
+        }
+    }
+
+    /// Open the repository in the editor the environment names.
+    pub fn open_repo_editor(&mut self, repo_id: &str, cx: &mut Context<Self>) {
+        self.context_menu = None;
+        let Some(repo) = self.repos.iter().find(|repo| repo.id == repo_id).cloned() else {
+            return;
+        };
+        let path = expand_home(&repo.local_path);
+        let editor = std::env::var("VISUAL")
+            .or_else(|_| std::env::var("EDITOR"))
+            .ok()
+            .filter(|value| !value.trim().is_empty());
+        let spawned = match editor {
+            Some(editor) => std::process::Command::new(editor).arg(&path).spawn(),
+            // `code` is on PATH for most VS Code users; otherwise open the folder.
+            None => std::process::Command::new("code").arg(&path).spawn(),
+        };
+        match spawned.or_else(|_| std::process::Command::new("open").arg(&path).spawn()) {
+            Ok(_) => cx.notify(),
+            Err(error) => self.show_toast(format!("Could not open the editor: {error}"), cx),
+        }
     }
 
     /// Move the highlighted repository up or down, without opening the pane.
@@ -2380,6 +2466,7 @@ impl VantageApp {
             FieldId::ModalCustomGroup => &mut self.modal_custom_group,
             FieldId::SettingsBranch => &mut self.settings_branch_field,
             FieldId::CommitMessage => &mut self.commit_field,
+            FieldId::CommitBody => &mut self.commit_body,
             FieldId::BranchName => &mut self.branch_field,
         }
     }
@@ -2391,6 +2478,7 @@ impl VantageApp {
             FieldId::ModalCustomGroup => &self.modal_custom_group,
             FieldId::SettingsBranch => &self.settings_branch_field,
             FieldId::CommitMessage => &self.commit_field,
+            FieldId::CommitBody => &self.commit_body,
             FieldId::BranchName => &self.branch_field,
         }
     }
@@ -2402,6 +2490,7 @@ impl VantageApp {
             FieldId::ModalCustomGroup => self.modal_custom_group_focus.clone(),
             FieldId::SettingsBranch => self.settings_branch_focus.clone(),
             FieldId::CommitMessage => self.commit_focus.clone(),
+            FieldId::CommitBody => self.commit_body_focus.clone(),
             FieldId::BranchName => self.branch_focus.clone(),
         }
     }
@@ -2473,6 +2562,7 @@ impl VantageApp {
             FieldId::SettingsBranch => self.commit_settings_branch(cx),
             FieldId::CommitMessage => self.commit_selected(cx),
             FieldId::BranchName => self.submit_branch_prompt(cx),
+            FieldId::CommitBody => self.commit_selected(cx),
         }
     }
 
@@ -2679,6 +2769,9 @@ impl Render for VantageApp {
                     if *uncommitted > 0 {
                         items.push(("Discard all changes", true, 0));
                     }
+                    items.push(("Reveal in Finder", false, 0));
+                    items.push(("Open in Terminal", false, 0));
+                    items.push(("Open in editor", false, 0));
                     (*x, *y, name.clone(), items)
                 }
                 ContextMenu::Branch {
@@ -2712,12 +2805,13 @@ impl Render for VantageApp {
                 } => {
                     // Only the tip commit can be rewritten, and only while it is
                     // still local.
-                    let items: Vec<(&'static str, bool, u64)> = if *is_tip {
-                        vec![("Amend commit", false, 0)]
-                    } else {
-                        Vec::new()
-                    };
-                    (*x, *y, format!("{short}  {subject}"), items)
+                    let mut revert_only: Vec<(&'static str, bool, u64)> =
+                        vec![("Revert commit", false, 0)];
+                    if *is_tip {
+                        revert_only.push(("Amend commit", false, 0));
+                    }
+                    let _ = is_tip;
+                    (*x, *y, format!("{short}  {subject}"), revert_only)
                 }
             };
             let x = anchor_x
@@ -2788,6 +2882,23 @@ impl Render for VantageApp {
                                 (ContextMenu::Repo { repo_id, .. }, "Discard all changes") => {
                                     let id = repo_id.clone();
                                     this.ask_discard_repo(&id, cx);
+                                }
+                                (ContextMenu::Repo { repo_id, .. }, "Reveal in Finder") => {
+                                    let id = repo_id.clone();
+                                    this.reveal_repo(&id, cx);
+                                }
+                                (ContextMenu::Repo { repo_id, .. }, "Open in Terminal") => {
+                                    let id = repo_id.clone();
+                                    this.open_repo_terminal(&id, cx);
+                                }
+                                (ContextMenu::Repo { repo_id, .. }, "Open in editor") => {
+                                    let id = repo_id.clone();
+                                    this.open_repo_editor(&id, cx);
+                                }
+                                (ContextMenu::Commit { repo_id, short, .. }, "Revert commit") => {
+                                    let id = repo_id.clone();
+                                    let sha = short.clone();
+                                    this.revert_commit(&id, &sha, cx);
                                 }
                                 (ContextMenu::Branch { repo_id, name, .. }, "Checkout branch") => {
                                     if this.selected_repo_id.as_deref() == Some(repo_id.as_str()) {

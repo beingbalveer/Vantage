@@ -864,27 +864,43 @@ impl VantageApp {
 
         div()
             .flex()
-            .items_center()
-            .gap(px(10.0))
+            .flex_col()
+            .gap(px(6.0))
             .w_full()
             .px(px(24.0))
-            .py(px(12.0))
+            .py(px(10.0))
             .border_t_1()
             .border_color(theme.divider)
             .bg(theme.table_head_bg)
-            .child(identity)
-            .child(div().flex_1().min_w(px(0.0)).child(self.text_field(
-                crate::app::FieldId::CommitMessage,
-                "Commit message",
-                crate::ui::FieldVariant::Row,
-                window,
-                cx,
-            )))
-            .child(commit_button)
+            // Message row: who commits, what it says, and the button.
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap(px(10.0))
+                    .w_full()
+                    .child(identity)
+                    .child(div().flex_1().min_w(px(0.0)).child(self.text_field(
+                        crate::app::FieldId::CommitMessage,
+                        "Commit message",
+                        crate::ui::FieldVariant::Row,
+                        window,
+                        cx,
+                    )))
+                    .child(commit_button),
+            )
+            // Optional description, one quiet line under the summary.
+            .child(div().flex().items_center().gap(px(10.0)).w_full().child(
+                div().flex_1().min_w(px(0.0)).child(self.text_field(
+                    crate::app::FieldId::CommitBody,
+                    "Description (optional)",
+                    crate::ui::FieldVariant::Row,
+                    window,
+                    cx,
+                )),
+            ))
     }
 
-    /// "Committed just now · summary [Undo]" strip, for a commit that is still
-    /// local. It disappears as soon as the tip moves away from that commit.
     fn render_undo_strip(
         &self,
         repo: &crate::model::Repository,

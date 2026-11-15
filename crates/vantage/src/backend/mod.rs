@@ -238,6 +238,15 @@ impl Backend {
         Ok(())
     }
 
+    /// Create a commit that undoes `sha`, leaving history intact.
+    pub fn revert(&self, repo_id: &str, sha: &str) -> Result<String> {
+        let repo_path = self.known_path(repo_id)?;
+        let reverted = self
+            .runtime
+            .block_on(ops::revert(&self.runner, &repo_path, sha))?;
+        Ok(reverted.short)
+    }
+
     /// Files and patch lines for one commit.
     pub fn commit_files(&self, repo_id: &str, sha: &str) -> Result<Vec<crate::model::CommitFile>> {
         let repo_path = self.known_path(repo_id)?;
@@ -353,9 +362,16 @@ impl Backend {
     /// Returns the short SHA so the UI can name the commit it just created. The
     /// engine does the staging, identity validation and conflict checks; this
     /// adapter only moves the call off the UI thread.
-    pub fn commit(&self, repo_id: &str, paths: &[String], summary: &str) -> Result<String> {
+    pub fn commit(
+        &self,
+        repo_id: &str,
+        paths: &[String],
+        summary: &str,
+        body: Option<&str>,
+    ) -> Result<String> {
         let repo_path = self.known_path(repo_id)?;
         let summary = summary.to_string();
+        let body = body.map(str::to_string);
         let paths = paths.to_vec();
         let committed = self.runtime.block_on(async {
             // Assert the index from the caller's list before committing. Each
@@ -363,7 +379,15 @@ impl Backend {
             // flight when the commit starts; without this the engine would see
             // that path as unselected and silently leave it behind.
             ops::stage_paths(&self.runner, &repo_path, &paths).await?;
-            ops::commit(&self.runner, &repo_path, &paths, &summary, None, &[]).await
+            ops::commit(
+                &self.runner,
+                &repo_path,
+                &paths,
+                &summary,
+                body.as_deref(),
+                &[],
+            )
+            .await
         })?;
         Ok(committed.short)
     }
