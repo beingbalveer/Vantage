@@ -15,6 +15,7 @@ actions!(
         About,
         Settings,
         AddRepository,
+        CloneRepository,
         RefreshStatus,
         FetchOrigin,
         PullBranch,
@@ -48,6 +49,7 @@ pub fn install(cx: &mut App, app: Entity<VantageApp>) {
         KeyBinding::new("cmd-alt-h", HideOthers, None),
         KeyBinding::new("cmd-,", Settings, None),
         KeyBinding::new("cmd-o", AddRepository, None),
+        KeyBinding::new("cmd-shift-o", CloneRepository, None),
         KeyBinding::new("cmd-r", RefreshStatus, None),
         KeyBinding::new("cmd-shift-f", FetchOrigin, None),
         KeyBinding::new("cmd-shift-p", PullBranch, None),
@@ -89,6 +91,12 @@ pub fn install(cx: &mut App, app: Entity<VantageApp>) {
         let app = app.clone();
         move |_: &AddRepository, cx: &mut App| {
             app.update(cx, |app, cx| app.open_add_modal(cx));
+        }
+    });
+    cx.on_action({
+        let app = app.clone();
+        move |_: &CloneRepository, cx: &mut App| {
+            app.update(cx, |app, cx| app.open_clone_modal(cx));
         }
     });
     cx.on_action({
@@ -215,6 +223,7 @@ pub fn install(cx: &mut App, app: Entity<VantageApp>) {
             name: "File".into(),
             items: vec![
                 MenuItem::action("Add Repository…", AddRepository),
+                MenuItem::action("Clone Repository…", CloneRepository),
                 MenuItem::separator(),
                 MenuItem::action("Refresh Status", RefreshStatus),
                 MenuItem::action("Pull", PullBranch),

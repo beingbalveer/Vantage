@@ -116,6 +116,8 @@ pub enum FieldId {
     CommitMessage,
     CommitBody,
     BranchName,
+    CloneUrl,
+    CloneParent,
 }
 
 pub struct VantageApp {
@@ -192,6 +194,13 @@ pub struct VantageApp {
     pub branch_prompt: Option<BranchPrompt>,
     /// A destructive action waiting for its confirm.
     pub confirm: Option<ConfirmPrompt>,
+    /// Clone dialog: url, destination and whether git is running.
+    pub is_clone_modal_open: bool,
+    pub clone_url: FieldState,
+    pub clone_parent: FieldState,
+    pub is_cloning: bool,
+    clone_url_focus: FocusHandle,
+    clone_parent_focus: FocusHandle,
     /// The commit opened in the Commits tab, if any.
     pub commit_view: Option<CommitView>,
     /// The pane borrows width from the list while a commit diff is open.
@@ -296,6 +305,12 @@ impl VantageApp {
             commit_body_focus: cx.focus_handle(),
             branch_prompt: None,
             confirm: None,
+            is_clone_modal_open: false,
+            clone_url: FieldState::new(),
+            clone_parent: FieldState::new(),
+            is_cloning: false,
+            clone_url_focus: cx.focus_handle(),
+            clone_parent_focus: cx.focus_handle(),
             commit_view: None,
             commit_wide: false,
             branch_field: FieldState::new(),
@@ -1750,6 +1765,24 @@ impl VantageApp {
             return;
         };
         match prompt.action {
+            ConfirmAction::ForgetRepository { repo_id } => {
+                let Some(backend) = self.backend.clone() else {
+                    return;
+                };
+                match backend.forget(&repo_id) {
+                    Ok(()) => {
+                        self.repos.retain(|repo| repo.id != repo_id);
+                        if self.selected_repo_id.as_deref() == Some(repo_id.as_str()) {
+                            self.selected_repo_id = None;
+                            self.settings.right_panel_open = false;
+                        }
+                        let _ = &backend;
+                        self.show_toast("Removed from the list", cx);
+                        self.start_scan(cx);
+                    }
+                    Err(error) => self.show_toast(format!("Could not remove it: {error}"), cx),
+                }
+            }
             ConfirmAction::DiscardRepository { repo_id, paths } => {
                 let Some(repo) = self.repos.iter().find(|repo| repo.id == repo_id).cloned() else {
                     return;
@@ -1768,6 +1801,95 @@ impl VantageApp {
             }
         }
         cx.notify();
+    }
+
+    /// Remove a repository from the list, keeping its folder.
+    pub fn ask_forget_repo(&mut self, repo_id: &str, cx: &mut Context<Self>) {
+        self.context_menu = None;
+        let Some(repo) = self.repos.iter().find(|repo| repo.id == repo_id).cloned() else {
+            return;
+        };
+        self.confirm = Some(ConfirmPrompt {
+            title: format!("Remove {} from the list?", repo.name),
+            body: "The folder and its Git history stay exactly as they are; Vantage just \
+                   stops watching it. Add it again any time."
+                .to_string(),
+            label: "Remove",
+            action: ConfirmAction::ForgetRepository {
+                repo_id: repo_id.to_string(),
+            },
+        });
+        cx.notify();
+    }
+
+    /// Open the clone dialog, with a sensible parent folder already filled in.
+    pub fn open_clone_modal(&mut self, cx: &mut Context<Self>) {
+        self.context_menu = None;
+        self.clone_url.clear();
+        if self.clone_parent.value.trim().is_empty() {
+            let parent = dirs::home_dir()
+                .map(|home| home.join("Projects"))
+                .filter(|path| path.is_dir())
+                .or_else(dirs::home_dir)
+                .map(|path| crate::path::contract(&path))
+                .unwrap_or_default();
+            self.clone_parent.set(parent);
+        }
+        self.is_clone_modal_open = true;
+        cx.notify();
+    }
+
+    pub fn close_clone_modal(&mut self, cx: &mut Context<Self>) {
+        self.is_clone_modal_open = false;
+        self.is_cloning = false;
+        cx.notify();
+    }
+
+    /// Clone the URL into the chosen folder, then rescan the workspace.
+    pub fn submit_clone(&mut self, cx: &mut Context<Self>) {
+        if self.is_cloning {
+            return;
+        }
+        let url = self.clone_url.value.trim().to_string();
+        let parent = self.clone_parent.value.trim().to_string();
+        if url.is_empty() {
+            self.show_toast("Paste a repository URL first", cx);
+            return;
+        }
+        if parent.is_empty() {
+            self.show_toast("Choose the folder to clone into", cx);
+            return;
+        }
+        let Some(backend) = self.backend.clone() else {
+            return;
+        };
+        let parent_path = expand_home(&parent);
+        self.is_cloning = true;
+        cx.notify();
+
+        cx.spawn(async move |this, cx| {
+            let result = cx
+                .background_executor()
+                .spawn(
+                    async move { backend.clone_repo(&url, &parent_path.to_string_lossy(), None) },
+                )
+                .await;
+            this.update(cx, |app, cx| {
+                app.is_cloning = false;
+                match result {
+                    Ok(()) => {
+                        app.is_clone_modal_open = false;
+                        app.clone_url.clear();
+                        app.show_toast("Cloned and added to the list", cx);
+                        app.start_scan(cx);
+                    }
+                    Err(error) => app.show_toast(format!("Clone failed: {error}"), cx),
+                }
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
     }
 
     /// Create a commit that undoes `sha`.
@@ -1967,6 +2089,95 @@ impl VantageApp {
         self.branch_prompt = None;
         self.branch_field.clear();
         self.run_repo_op(&repo, cx, RepoOp::Branch, RepoOpReport::new(ok, fail), op);
+    }
+
+    /// Dialog for cloning a repository: where from, and into which folder.
+    fn render_clone_modal(&self, window: &mut Window, cx: &mut Context<Self>) -> gpui::Div {
+        let theme = self.theme;
+        if !self.clone_url_focus.is_focused(window) {
+            window.focus(&self.clone_url_focus);
+        }
+
+        let label = if self.is_cloning {
+            "Cloning…"
+        } else {
+            "Clone"
+        };
+        let mut confirm = crate::ui::accent_button(&theme, label)
+            .id("clone-confirm")
+            .on_click(cx.listener(|this, _e, _w, cx| this.submit_clone(cx)));
+        if self.is_cloning {
+            confirm = confirm.opacity(0.6);
+        }
+
+        let card = div()
+            .w(px(460.0))
+            .flex()
+            .flex_col()
+            .gap(px(12.0))
+            .p(px(20.0))
+            .bg(theme.panel)
+            .border_1()
+            .border_color(theme.divider)
+            .rounded(px(12.0))
+            .shadow_lg()
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(|_this, _e, _w, cx| cx.stop_propagation()),
+            )
+            .child(
+                div()
+                    .sm()
+                    .medium()
+                    .fg(theme.text_app)
+                    .child("Clone a repository"),
+            )
+            .child(div().xs().fg(theme.label_muted).child(
+                "A URL, or a GitHub shorthand like owner/repo. The folder is created inside the \
+                 destination.",
+            ))
+            .child(self.text_field(
+                FieldId::CloneUrl,
+                "https://github.com/owner/repo.git",
+                crate::ui::FieldVariant::Form,
+                window,
+                cx,
+            ))
+            .child(self.text_field(
+                FieldId::CloneParent,
+                "Destination folder",
+                crate::ui::FieldVariant::Form,
+                window,
+                cx,
+            ))
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .justify_end()
+                    .gap(px(8.0))
+                    .child(
+                        crate::ui::secondary_button(&theme, "Cancel", None)
+                            .id("clone-cancel")
+                            .on_click(cx.listener(|this, _e, _w, cx| this.close_clone_modal(cx))),
+                    )
+                    .child(confirm),
+            );
+
+        div()
+            .absolute()
+            .top(px(0.0))
+            .left(px(0.0))
+            .size_full()
+            .flex()
+            .items_center()
+            .justify_center()
+            .bg(theme.overlay)
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(|this, _e, _w, cx| this.close_clone_modal(cx)),
+            )
+            .child(card)
     }
 
     /// Small dialog for a destructive action: what will happen, and one way out.
@@ -2468,6 +2679,8 @@ impl VantageApp {
             FieldId::CommitMessage => &mut self.commit_field,
             FieldId::CommitBody => &mut self.commit_body,
             FieldId::BranchName => &mut self.branch_field,
+            FieldId::CloneUrl => &mut self.clone_url,
+            FieldId::CloneParent => &mut self.clone_parent,
         }
     }
 
@@ -2480,6 +2693,8 @@ impl VantageApp {
             FieldId::CommitMessage => &self.commit_field,
             FieldId::CommitBody => &self.commit_body,
             FieldId::BranchName => &self.branch_field,
+            FieldId::CloneUrl => &self.clone_url,
+            FieldId::CloneParent => &self.clone_parent,
         }
     }
 
@@ -2492,6 +2707,8 @@ impl VantageApp {
             FieldId::CommitMessage => self.commit_focus.clone(),
             FieldId::CommitBody => self.commit_body_focus.clone(),
             FieldId::BranchName => self.branch_focus.clone(),
+            FieldId::CloneUrl => self.clone_url_focus.clone(),
+            FieldId::CloneParent => self.clone_parent_focus.clone(),
         }
     }
 
@@ -2563,6 +2780,8 @@ impl VantageApp {
             FieldId::CommitMessage => self.commit_selected(cx),
             FieldId::BranchName => self.submit_branch_prompt(cx),
             FieldId::CommitBody => self.commit_selected(cx),
+            FieldId::CloneUrl => self.submit_clone(cx),
+            FieldId::CloneParent => self.submit_clone(cx),
         }
     }
 
@@ -2769,6 +2988,8 @@ impl Render for VantageApp {
                     if *uncommitted > 0 {
                         items.push(("Discard all changes", true, 0));
                     }
+                    items.push(("Clone repository…", false, 0));
+                    items.push(("Remove from list", true, 0));
                     items.push(("Reveal in Finder", false, 0));
                     items.push(("Open in Terminal", false, 0));
                     items.push(("Open in editor", false, 0));
@@ -2883,6 +3104,13 @@ impl Render for VantageApp {
                                     let id = repo_id.clone();
                                     this.ask_discard_repo(&id, cx);
                                 }
+                                (ContextMenu::Repo { .. }, "Clone repository…") => {
+                                    this.open_clone_modal(cx);
+                                }
+                                (ContextMenu::Repo { repo_id, .. }, "Remove from list") => {
+                                    let id = repo_id.clone();
+                                    this.ask_forget_repo(&id, cx);
+                                }
                                 (ContextMenu::Repo { repo_id, .. }, "Reveal in Finder") => {
                                     let id = repo_id.clone();
                                     this.reveal_repo(&id, cx);
@@ -2981,6 +3209,10 @@ impl Render for VantageApp {
                 )
                 .child(deferred(panel));
         }
+        if self.is_clone_modal_open {
+            let modal = self.render_clone_modal(window, cx);
+            root = root.child(deferred(modal));
+        }
         if self.confirm.is_some() {
             let modal = self.render_confirm_modal(cx);
             root = root.child(deferred(modal));
@@ -3014,6 +3246,7 @@ pub struct ConfirmPrompt {
 #[derive(Clone, Debug)]
 pub enum ConfirmAction {
     DiscardRepository { repo_id: String, paths: Vec<String> },
+    ForgetRepository { repo_id: String },
 }
 
 /// A commit opened in the detail view: its files, and which one is on screen.

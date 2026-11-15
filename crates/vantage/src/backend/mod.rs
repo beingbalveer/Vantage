@@ -238,6 +238,34 @@ impl Backend {
         Ok(())
     }
 
+    /// Drop a repository from the workspace list; the folder stays on disk.
+    pub fn forget(&self, repo_id: &str) -> Result<()> {
+        let mut state = self.state();
+        if repos::remove(&mut state, repo_id) {
+            self.save(&state)?;
+        }
+        Ok(())
+    }
+
+    /// Clone `url` into `parent` (under `name` when given) and register it.
+    ///
+    /// The engine emits progress through a sink; the dashboard only needs the
+    /// finished result, so the sink is a no-op here.
+    pub fn clone_repo(&self, url: &str, parent: &str, name: Option<&str>) -> Result<()> {
+        let name = name.map(str::to_string);
+        let path = self.runtime.block_on(vantage_core::git::clone::clone_repo(
+            &self.runner,
+            &vantage_core::Sink::default(),
+            "vantage-clone",
+            url,
+            parent,
+            name.as_deref(),
+            None,
+        ))?;
+        self.add_repo(&path)?;
+        Ok(())
+    }
+
     /// Create a commit that undoes `sha`, leaving history intact.
     pub fn revert(&self, repo_id: &str, sha: &str) -> Result<String> {
         let repo_path = self.known_path(repo_id)?;
