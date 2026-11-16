@@ -3076,10 +3076,13 @@ impl VantageApp {
             return;
         };
         // One operation per repository at a time: `git` already serialises on
-        // the repo lock, so queueing a second one only delays the UI.
-        if self.busy_repos.insert(repo.id.clone(), op_kind).is_some() {
+        // the repo lock, so queueing a second one only delays the UI. Check
+        // before recording the new kind: a rejected operation must leave the
+        // running one alone, because its kind is what the spinner names.
+        if self.busy_repos.contains_key(&repo.id) {
             return;
         }
+        self.busy_repos.insert(repo.id.clone(), op_kind);
         cx.notify();
 
         let id = repo.id.clone();
@@ -4218,6 +4221,11 @@ pub fn expand_home(path: &str) -> std::path::PathBuf {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::Arc;
+
+    use gpui::{AppContext, TestAppContext};
+
     use super::*;
     use crate::model::{ChangedFile, FileChangeStatus};
 
@@ -4397,5 +4405,94 @@ mod tests {
         let repo = repo_with(vec![file("untracked.rs", false)]);
         assert!(ticked_paths(None, &repo).is_empty());
         assert!(ticked_paths(Some(&overrides(&[("untracked.rs", false)])), &repo).is_empty());
+    }
+
+    #[gpui::test]
+    fn rejected_second_operation_keeps_the_running_label(cx: &mut TestAppContext) {
+        let app = cx.new(VantageApp::new);
+        let repo = repo_with(Vec::new());
+        let started = Arc::new(AtomicUsize::new(0));
+
+        cx.update(|cx| {
+            app.update(cx, |app, cx| {
+                assert!(
+                    app.backend.is_some(),
+                    "the test needs the engine so run_repo_op reaches the busy check"
+                );
+                app.busy_repos.insert(repo.id.clone(), RepoOp::Fetch);
+                let started = started.clone();
+                app.run_repo_op(
+                    &repo,
+                    cx,
+                    RepoOp::Push,
+                    RepoOpReport::new("Pushed".to_string(), "Could not push".to_string()),
+                    move |_backend, _repo_id| {
+                        started.fetch_add(1, Ordering::SeqCst);
+                        Ok(())
+                    },
+                );
+                assert_eq!(
+                    app.repo_op(&repo.id),
+                    Some(RepoOp::Fetch),
+                    "a rejected operation must not replace the running kind"
+                );
+                assert_eq!(
+                    app.repo_op(&repo.id).map(RepoOp::in_progress_label),
+                    Some("Fetching…"),
+                    "the spinner must keep naming the operation still in flight"
+                );
+            });
+        });
+
+        cx.run_until_parked();
+        assert_eq!(
+            started.load(Ordering::SeqCst),
+            0,
+            "a rejected operation must not start its job"
+        );
+        cx.update(|cx| {
+            app.update(cx, |app, _cx| {
+                assert_eq!(app.repo_op(&repo.id), Some(RepoOp::Fetch));
+            });
+        });
+    }
+
+    #[gpui::test]
+    fn single_operation_records_and_removes_its_kind(cx: &mut TestAppContext) {
+        let app = cx.new(VantageApp::new);
+        let repo = repo_with(Vec::new());
+        let started = Arc::new(AtomicUsize::new(0));
+
+        cx.update(|cx| {
+            app.update(cx, |app, cx| {
+                let started = started.clone();
+                app.run_repo_op(
+                    &repo,
+                    cx,
+                    RepoOp::Commit,
+                    RepoOpReport::new("Committed".to_string(), "Could not commit".to_string()),
+                    move |_backend, _repo_id| {
+                        started.fetch_add(1, Ordering::SeqCst);
+                        Ok(())
+                    },
+                );
+                assert_eq!(app.repo_op(&repo.id), Some(RepoOp::Commit));
+                // The test operation returns immediately; drop the engine so the
+                // rescan that follows it does not touch the real workspace.
+                app.backend = None;
+            });
+        });
+
+        cx.run_until_parked();
+        assert_eq!(started.load(Ordering::SeqCst), 1);
+        cx.update(|cx| {
+            app.update(cx, |app, _cx| {
+                assert_eq!(
+                    app.repo_op(&repo.id),
+                    None,
+                    "a finished operation must clear its busy kind"
+                );
+            });
+        });
     }
 }
