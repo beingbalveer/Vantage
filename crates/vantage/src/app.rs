@@ -216,6 +216,11 @@ pub struct VantageApp {
     pub clone_url: FieldState,
     pub clone_parent: FieldState,
     pub is_cloning: bool,
+    /// Latest `git clone --progress` line, shown under the clone form.
+    pub clone_progress: Option<String>,
+    /// Why the last clone attempt did not finish, shown until it is retried.
+    pub clone_failure: Option<CloneFailure>,
+    clone_cancel: Option<vantage_core::CancelToken>,
     clone_url_focus: FocusHandle,
     clone_parent_focus: FocusHandle,
     /// The commit opened in the Commits tab, if any.
@@ -336,6 +341,9 @@ impl VantageApp {
             clone_url: FieldState::new(),
             clone_parent: FieldState::new(),
             is_cloning: false,
+            clone_progress: None,
+            clone_failure: None,
+            clone_cancel: None,
             clone_url_focus: cx.focus_handle(),
             clone_parent_focus: cx.focus_handle(),
             commit_view: None,
@@ -2142,8 +2150,18 @@ impl VantageApp {
 
     /// Open the clone dialog, with a sensible parent folder already filled in.
     pub fn open_clone_modal(&mut self, cx: &mut Context<Self>) {
+        // Reopening while a clone runs must not clear the URL or detach the
+        // dialog from the process it is showing progress for.
+        if self.is_cloning {
+            self.is_clone_modal_open = true;
+            cx.notify();
+            return;
+        }
         self.context_menu = None;
         self.clone_url.clear();
+        self.clone_progress = None;
+        self.clone_failure = None;
+        self.clone_cancel = None;
         if self.clone_parent.value.trim().is_empty() {
             let parent = dirs::home_dir()
                 .map(|home| home.join("Projects"))
@@ -2158,9 +2176,30 @@ impl VantageApp {
     }
 
     pub fn close_clone_modal(&mut self, cx: &mut Context<Self>) {
+        // The backdrop and Cancel both mean "stop" while git is running; the
+        // dialog stays open until the child has actually been reaped.
+        if self.is_cloning {
+            self.cancel_clone(cx);
+            return;
+        }
         self.is_clone_modal_open = false;
-        self.is_cloning = false;
+        self.clone_progress = None;
+        self.clone_failure = None;
+        self.clone_cancel = None;
         cx.notify();
+    }
+
+    /// Stop the running clone. The modal stays open and the backend reports
+    /// `Cancelled` once the child process is gone.
+    pub fn cancel_clone(&mut self, cx: &mut Context<Self>) {
+        if !self.is_cloning {
+            return;
+        }
+        if let Some(cancel) = &self.clone_cancel {
+            cancel.cancel();
+            self.clone_progress = Some("Cancelling…".to_string());
+            cx.notify();
+        }
     }
 
     pub fn open_new_repo_modal(&mut self, cx: &mut Context<Self>) {
@@ -2252,32 +2291,81 @@ impl VantageApp {
             return;
         };
         let parent_path = expand_home(&parent);
+        let cancel = vantage_core::CancelToken::new();
         self.is_cloning = true;
+        self.clone_progress = None;
+        self.clone_failure = None;
+        self.clone_cancel = Some(cancel.clone());
         cx.notify();
 
-        cx.spawn(async move |this, cx| {
-            let result = cx
-                .background_executor()
-                .spawn(
-                    async move { backend.clone_repo(&url, &parent_path.to_string_lossy(), None) },
-                )
-                .await;
-            this.update(cx, |app, cx| {
-                app.is_cloning = false;
-                match result {
-                    Ok(()) => {
-                        app.is_clone_modal_open = false;
-                        app.clone_url.clear();
-                        app.show_toast("Cloned and added to the list", cx);
-                        app.start_scan(cx);
-                    }
-                    Err(error) => app.show_toast(format!("Clone failed: {error}"), cx),
-                }
-                cx.notify();
+        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<CloneMessage>();
+        let progress_tx = tx.clone();
+        let clone_backend = backend.clone();
+        let clone_cancel = cancel.clone();
+        let parent = parent_path.to_string_lossy().to_string();
+        cx.background_executor()
+            .spawn(async move {
+                let result =
+                    clone_backend.clone_repo(&url, &parent, None, &clone_cancel, move |line| {
+                        let _ = progress_tx.send(CloneMessage::Progress(line));
+                    });
+                let _ = tx.send(CloneMessage::Done(result));
             })
-            .ok();
+            .detach();
+
+        cx.spawn(async move |this, cx| {
+            let mut finished = false;
+            while let Some(message) = rx.recv().await {
+                match message {
+                    CloneMessage::Progress(line) => {
+                        this.update(cx, |app, cx| {
+                            if app.is_cloning {
+                                app.clone_progress = Some(line);
+                                cx.notify();
+                            }
+                        })
+                        .ok();
+                    }
+                    CloneMessage::Done(result) => {
+                        this.update(cx, |app, cx| app.finish_clone(result, cx)).ok();
+                        finished = true;
+                        break;
+                    }
+                }
+            }
+            if !finished {
+                // The background task panicked or the channel closed without a
+                // result; leave the modal usable instead of stuck on "Cloning…".
+                this.update(cx, |app, cx| {
+                    app.finish_clone(
+                        Err(anyhow::anyhow!("Clone worker stopped unexpectedly")),
+                        cx,
+                    )
+                })
+                .ok();
+            }
         })
         .detach();
+    }
+
+    fn finish_clone(&mut self, result: anyhow::Result<()>, cx: &mut Context<Self>) {
+        self.is_cloning = false;
+        self.clone_cancel = None;
+        match result {
+            Ok(()) => {
+                self.is_clone_modal_open = false;
+                self.clone_url.clear();
+                self.clone_progress = None;
+                self.clone_failure = None;
+                self.show_toast("Cloned and added to the list", cx);
+                self.start_scan(cx);
+            }
+            Err(error) => {
+                self.clone_progress = None;
+                self.clone_failure = Some(clone_failure(&error));
+                cx.notify();
+            }
+        }
     }
 
     /// Create a commit that undoes `sha`.
@@ -2745,11 +2833,17 @@ impl VantageApp {
     /// Dialog for cloning a repository: where from, and into which folder.
     fn render_clone_modal(&self, window: &mut Window, cx: &mut Context<Self>) -> gpui::Div {
         let theme = self.theme;
-        if !self.clone_url_focus.is_focused(window) {
+        let cancelling = self
+            .clone_cancel
+            .as_ref()
+            .is_some_and(vantage_core::CancelToken::is_cancelled);
+        if !self.is_cloning && !self.clone_url_focus.is_focused(window) {
             window.focus(&self.clone_url_focus);
         }
 
-        let label = if self.is_cloning {
+        let label = if cancelling {
+            "Cancelling…"
+        } else if self.is_cloning {
             "Cloning…"
         } else {
             "Clone"
@@ -2760,6 +2854,26 @@ impl VantageApp {
         if self.is_cloning {
             confirm = confirm.opacity(0.6);
         }
+
+        let progress = self.clone_progress.as_deref().unwrap_or("Starting clone…");
+        let cancel_label = if cancelling {
+            "Cancelling…"
+        } else if self.is_cloning {
+            "Cancel clone"
+        } else {
+            "Cancel"
+        };
+        let cancel = crate::ui::secondary_button(&theme, cancel_label, None)
+            .id("clone-cancel")
+            .debug_selector(|| "clone-cancel".to_string())
+            .when(cancelling, |button| button.opacity(0.6))
+            .on_click(cx.listener(|this, _e, _w, cx| {
+                if this.is_cloning {
+                    this.cancel_clone(cx);
+                } else {
+                    this.close_clone_modal(cx);
+                }
+            }));
 
         let card = div()
             .w(px(460.0))
@@ -2772,6 +2886,7 @@ impl VantageApp {
             .border_color(theme.divider)
             .rounded(px(12.0))
             .shadow_lg()
+            .debug_selector(|| "clone-card".to_string())
             .on_mouse_down(
                 MouseButton::Left,
                 cx.listener(|_this, _e, _w, cx| cx.stop_propagation()),
@@ -2801,17 +2916,62 @@ impl VantageApp {
                 window,
                 cx,
             ))
+            .when_some(self.clone_failure.as_ref(), |card, failure| {
+                let (background, border, text) = match failure {
+                    CloneFailure::Cancelled => (theme.subtle_bg, theme.divider, theme.text_body),
+                    CloneFailure::Failed(_) => {
+                        (theme.error_bg, theme.error_border, theme.error_text)
+                    }
+                };
+                card.child(
+                    div()
+                        .debug_selector(|| "clone-error".to_string())
+                        .px(px(12.0))
+                        .py(px(8.0))
+                        .rounded(px(8.0))
+                        .border_1()
+                        .border_color(border)
+                        .bg(background)
+                        .xs()
+                        .fg(text)
+                        .child(failure.message().to_string()),
+                )
+            })
+            .when(self.is_cloning, |card| {
+                card.child(
+                    div()
+                        .debug_selector(|| "clone-progress".to_string())
+                        .flex()
+                        .items_center()
+                        .gap(px(8.0))
+                        .px(px(12.0))
+                        .py(px(8.0))
+                        .rounded(px(8.0))
+                        .bg(theme.subtle_bg)
+                        .child(crate::ui::spinner(
+                            "clone",
+                            "refresh-cw",
+                            crate::ui::IconSize::Xs,
+                            theme.accent,
+                        ))
+                        .child(
+                            div()
+                                .flex_1()
+                                .min_w(px(0.0))
+                                .xs()
+                                .fg(theme.text_body)
+                                .truncate()
+                                .child(progress.to_string()),
+                        ),
+                )
+            })
             .child(
                 div()
                     .flex()
                     .items_center()
                     .justify_end()
                     .gap(px(8.0))
-                    .child(
-                        crate::ui::secondary_button(&theme, "Cancel", None)
-                            .id("clone-cancel")
-                            .on_click(cx.listener(|this, _e, _w, cx| this.close_clone_modal(cx))),
-                    )
+                    .child(cancel)
                     .child(confirm),
             );
 
@@ -3993,6 +4153,37 @@ impl Render for VantageApp {
     }
 }
 
+/// Why a clone attempt did not register a repository.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum CloneFailure {
+    Cancelled,
+    Failed(String),
+}
+
+impl CloneFailure {
+    pub fn message(&self) -> &str {
+        match self {
+            Self::Cancelled => "Clone cancelled. Nothing was added to the workspace.",
+            Self::Failed(message) => message,
+        }
+    }
+}
+
+/// Messages from the background clone to its UI loop.
+enum CloneMessage {
+    Progress(String),
+    Done(anyhow::Result<()>),
+}
+
+/// Turn a backend error into the state the clone dialog shows.
+fn clone_failure(error: &anyhow::Error) -> CloneFailure {
+    match error.downcast_ref::<vantage_core::AppError>() {
+        Some(error) if error.is_cancelled() => CloneFailure::Cancelled,
+        Some(error) => CloneFailure::Failed(format!("Clone failed: {}", error.message)),
+        None => CloneFailure::Failed(format!("Clone failed: {error}")),
+    }
+}
+
 /// The stash list, opened as a dialog.
 #[derive(Clone, Debug)]
 pub struct StashModal {
@@ -4397,5 +4588,65 @@ mod tests {
         let repo = repo_with(vec![file("untracked.rs", false)]);
         assert!(ticked_paths(None, &repo).is_empty());
         assert!(ticked_paths(Some(&overrides(&[("untracked.rs", false)])), &repo).is_empty());
+    }
+
+    #[test]
+    fn clone_cancellation_is_reported_as_a_cancelled_state() {
+        let cancelled = anyhow::Error::new(vantage_core::AppError::cancelled());
+        assert_eq!(clone_failure(&cancelled), CloneFailure::Cancelled);
+
+        let failed = anyhow::Error::new(vantage_core::AppError::other("disk full"));
+        assert_eq!(
+            clone_failure(&failed),
+            CloneFailure::Failed("Clone failed: disk full".to_string())
+        );
+    }
+
+    #[gpui::test]
+    fn clone_cancel_button_stops_the_clone_without_closing_the_dialog(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        use gpui::{AppContext, Modifiers};
+
+        let app = cx.new(VantageApp::new);
+        let (_root, cx) =
+            cx.add_window_view(|_window, _cx| crate::root::RootView::new(app.clone()));
+        let cancel = vantage_core::CancelToken::new();
+
+        cx.update(|window, cx| {
+            app.update(cx, |app, cx| {
+                app.open_clone_modal(cx);
+                app.is_cloning = true;
+                app.clone_cancel = Some(cancel.clone());
+                app.clone_progress = Some("Receiving objects: 42%".to_string());
+                cx.notify();
+            });
+            window.draw(cx).clear();
+        });
+        cx.run_until_parked();
+        cx.update(|window, cx| {
+            window.draw(cx).clear();
+        });
+
+        let button = cx
+            .debug_bounds("clone-cancel")
+            .expect("the clone dialog renders a cancel button");
+        cx.simulate_click(button.center(), Modifiers::none());
+
+        assert!(
+            cancel.is_cancelled(),
+            "Cancel must signal the child process"
+        );
+        let (open, cloning, progress) = cx.update(|_window, cx| {
+            let app = app.read(cx);
+            (
+                app.is_clone_modal_open,
+                app.is_cloning,
+                app.clone_progress.clone(),
+            )
+        });
+        assert!(open, "the dialog stays open until cancellation completes");
+        assert!(cloning, "the UI waits for the child to be reaped");
+        assert_eq!(progress.as_deref(), Some("Cancelling…"));
     }
 }

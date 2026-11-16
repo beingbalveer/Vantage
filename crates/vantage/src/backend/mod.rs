@@ -17,6 +17,7 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{anyhow, Context, Result};
 use tokio::runtime::Runtime;
+use vantage_core::git::clone::{CloneProgress, CLONE_PROGRESS_EVENT};
 use vantage_core::git::ops;
 use vantage_core::git::refs::{
     checkout_branch, create_branch, delete_branch, has_upstream, is_commit_on_remote,
@@ -25,7 +26,7 @@ use vantage_core::git::refs::{
 use vantage_core::git::stash::{list_stashes, stash_drop, stash_pop, stash_push};
 use vantage_core::git::status::query_repo_status;
 use vantage_core::persist::PersistedState;
-use vantage_core::{repos, GitRunner, RepoEntry};
+use vantage_core::{repos, CancelToken, GitRunner, RepoEntry};
 
 use crate::model::Repository;
 use crate::settings::UiSettings;
@@ -286,19 +287,37 @@ impl Backend {
 
     /// Clone `url` into `parent` (under `name` when given) and register it.
     ///
-    /// The engine emits progress through a sink; the dashboard only needs the
-    /// finished result, so the sink is a no-op here.
-    pub fn clone_repo(&self, url: &str, parent: &str, name: Option<&str>) -> Result<()> {
-        let name = name.map(str::to_string);
-        let path = self.runtime.block_on(vantage_core::git::clone::clone_repo(
-            &self.runner,
-            &vantage_core::Sink::default(),
-            "vantage-clone",
-            url,
-            parent,
-            name.as_deref(),
-            None,
-        ))?;
+    /// Progress lines from `git clone --progress` are forwarded to
+    /// `on_progress` as they arrive. `cancel` stops the child process; a
+    /// cancelled or failed clone is not registered in the workspace.
+    pub fn clone_repo(
+        &self,
+        url: &str,
+        parent: &str,
+        name: Option<&str>,
+        cancel: &CancelToken,
+        on_progress: impl Fn(String) + Send + Sync + 'static,
+    ) -> Result<()> {
+        let sink = vantage_core::Sink::new(move |event, payload| {
+            if event != CLONE_PROGRESS_EVENT {
+                return;
+            }
+            if let Ok(progress) = serde_json::from_value::<CloneProgress>(payload) {
+                on_progress(progress.line);
+            }
+        });
+        let path = self
+            .runtime
+            .block_on(vantage_core::git::clone::clone_repo_with_cancel(
+                &self.runner,
+                &sink,
+                "vantage-clone",
+                url,
+                parent,
+                name,
+                None,
+                Some(cancel),
+            ))?;
         self.add_repo(&path)?;
         Ok(())
     }

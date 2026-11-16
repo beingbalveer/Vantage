@@ -16,5 +16,5 @@ pub mod watch;
 
 pub use error::AppError;
 pub use events::Sink;
-pub use git::runner::GitRunner;
+pub use git::runner::{CancelToken, GitRunner};
 pub use state::{RepoEntry, RepoStatus};

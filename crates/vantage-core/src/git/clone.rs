@@ -1,7 +1,7 @@
 use crate::error::AppError;
 use crate::events::Sink;
-use crate::git::runner::GitRunner;
-use serde::Serialize;
+use crate::git::runner::{CancelToken, GitRunner};
+use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 
 /// Event streamed to the UI while a clone is running so the dialog can show the
@@ -12,7 +12,7 @@ pub const CLONE_PROGRESS_EVENT: &str = "repo://clone-progress";
 /// but a hanging interactive prompt or dead network must fail instead of blocking.
 const CLONE_TIMEOUT_SECS: u64 = 300;
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CloneProgress {
     pub clone_id: String,
@@ -237,6 +237,25 @@ pub async fn clone_repo(
     name: Option<&str>,
     branch: Option<&str>,
 ) -> Result<String, AppError> {
+    clone_repo_with_cancel(runner, sink, clone_id, url, dest_parent, name, branch, None).await
+}
+
+/// [`clone_repo`] with cooperative cancellation.
+///
+/// If the clone fails or is cancelled after Git created the destination folder,
+/// that folder is removed. A folder that existed before the clone (even an
+/// empty one the user chose) is never deleted.
+#[allow(clippy::too_many_arguments)]
+pub async fn clone_repo_with_cancel(
+    runner: &GitRunner,
+    sink: &Sink,
+    clone_id: &str,
+    url: &str,
+    dest_parent: &str,
+    name: Option<&str>,
+    branch: Option<&str>,
+    cancel: Option<&CancelToken>,
+) -> Result<String, AppError> {
     let url = url.trim();
     if url.is_empty() {
         return Err(AppError::new(
@@ -292,6 +311,11 @@ pub async fn clone_repo(
         inside_repo: is_inside_git_repo(runner, &parent).await,
     };
     validate_destination(&state)?;
+    let dest_existed = state.exists;
+
+    if cancel.is_some_and(CancelToken::is_cancelled) {
+        return Err(AppError::cancelled());
+    }
 
     let dest_str = dest.to_string_lossy().to_string();
 
@@ -307,22 +331,37 @@ pub async fn clone_repo(
 
     let emitter = sink.clone();
     let clone_id_owned = clone_id.to_string();
-    let out = runner
-        .run_streaming_stderr(None, &arg_refs, CLONE_TIMEOUT_SECS, move |line| {
-            if let Some(message) = progress_message(line) {
-                emitter.emit(
-                    CLONE_PROGRESS_EVENT,
-                    CloneProgress {
-                        clone_id: clone_id_owned.clone(),
-                        line: message,
-                    },
-                );
-            }
-        })
-        .await?;
+    let out = match runner
+        .run_streaming_stderr_cancellable(
+            None,
+            &arg_refs,
+            CLONE_TIMEOUT_SECS,
+            cancel,
+            move |line| {
+                if let Some(message) = progress_message(line) {
+                    emitter.emit(
+                        CLONE_PROGRESS_EVENT,
+                        CloneProgress {
+                            clone_id: clone_id_owned.clone(),
+                            line: message,
+                        },
+                    );
+                }
+            },
+        )
+        .await
+    {
+        Ok(out) => out,
+        Err(error) => {
+            remove_partial_destination_if_created(&dest, dest_existed);
+            return Err(error);
+        }
+    };
 
     if !out.success() {
-        return Err(classify_clone_error(&out.stderr, url));
+        let error = classify_clone_error(&out.stderr, url);
+        remove_partial_destination_if_created(&dest, dest_existed);
+        return Err(error);
     }
 
     // git may have created the folder; resolve what actually landed on disk.
@@ -344,6 +383,16 @@ pub async fn clone_repo(
     } else {
         top
     })
+}
+
+/// Delete a clone's destination only when the clone itself created it.
+///
+/// A folder the user picked before starting the clone may be empty, but it is
+/// still theirs: on failure or cancellation we leave it untouched.
+fn remove_partial_destination_if_created(dest: &Path, existed_before: bool) {
+    if !existed_before {
+        let _ = std::fs::remove_dir_all(dest);
+    }
 }
 
 #[cfg(test)]
@@ -491,6 +540,211 @@ mod tests {
         assert_eq!(
             validate_destination(&nested).unwrap_err().code,
             "Validation"
+        );
+    }
+
+    #[test]
+    fn removes_only_a_destination_the_clone_created() {
+        let base =
+            std::env::temp_dir().join(format!("vantage_clone_cleanup_{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&base).expect("create temp dir");
+
+        let created = base.join("created");
+        std::fs::create_dir_all(&created).expect("create destination");
+        remove_partial_destination_if_created(&created, false);
+        assert!(!created.exists(), "a clone-created folder is removed");
+
+        let existing = base.join("existing");
+        std::fs::create_dir_all(&existing).expect("create destination");
+        std::fs::write(existing.join("keep.txt"), "keep").expect("write user file");
+        remove_partial_destination_if_created(&existing, true);
+        assert!(
+            existing.join("keep.txt").exists(),
+            "a pre-existing user folder is never deleted"
+        );
+
+        let _ = std::fs::remove_dir_all(base);
+    }
+
+    #[tokio::test]
+    async fn clone_streams_progress_and_returns_the_cloned_repository() {
+        let base =
+            std::env::temp_dir().join(format!("vantage_clone_success_{}", uuid::Uuid::new_v4()));
+        let source = base.join("source");
+        std::fs::create_dir_all(&source).expect("create source repo");
+        run_git(&source, &["init", "-q", "-b", "main"]);
+        run_git(
+            &source,
+            &[
+                "-c",
+                "user.name=Test",
+                "-c",
+                "user.email=test@example.com",
+                "commit",
+                "-q",
+                "--allow-empty",
+                "-m",
+                "init",
+            ],
+        );
+
+        let runner = GitRunner::new();
+        let events = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let captured = events.clone();
+        let sink = Sink::new(move |event, payload| {
+            captured
+                .lock()
+                .expect("progress lock")
+                .push((event.to_string(), payload));
+        });
+
+        let path = clone_repo(
+            &runner,
+            &sink,
+            "clone-1",
+            &source.to_string_lossy(),
+            &base.to_string_lossy(),
+            Some("cloned"),
+            None,
+        )
+        .await
+        .expect("local clone succeeds");
+
+        assert!(Path::new(&path).join(".git").is_dir());
+        let events = events.lock().expect("progress lock");
+        assert!(
+            !events.is_empty(),
+            "git clone --progress reports at least 'Cloning into'"
+        );
+        assert!(events
+            .iter()
+            .all(|(event, _)| event == CLONE_PROGRESS_EVENT));
+        assert_eq!(events[0].1["cloneId"].as_str(), Some("clone-1"));
+        assert!(events[0].1["line"]
+            .as_str()
+            .is_some_and(|line| line.contains("Cloning into")));
+
+        let _ = std::fs::remove_dir_all(base);
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn cancellation_removes_a_clone_folder_the_app_created() {
+        let base =
+            std::env::temp_dir().join(format!("vantage_clone_cancel_{}", uuid::Uuid::new_v4()));
+        let parent = base.join("parent");
+        std::fs::create_dir_all(&parent).expect("create parent");
+        let program = crate::git::runner::fake_git_program(&base, FAKE_SLOW_CLONE);
+        let runner = GitRunner::with_program(program);
+        let cancel = CancelToken::new();
+        let cancel_from_sink = cancel.clone();
+        let events = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let captured = events.clone();
+        let sink = Sink::new(move |event, payload| {
+            captured
+                .lock()
+                .expect("progress lock")
+                .push((event.to_string(), payload.to_string()));
+            if event == CLONE_PROGRESS_EVENT {
+                cancel_from_sink.cancel();
+            }
+        });
+
+        let result = tokio::time::timeout(
+            std::time::Duration::from_secs(5),
+            clone_repo_with_cancel(
+                &runner,
+                &sink,
+                "clone-cancel",
+                "https://example.invalid/repo",
+                &parent.to_string_lossy(),
+                Some("cloned"),
+                None,
+                Some(&cancel),
+            ),
+        )
+        .await
+        .expect("cancelling must not wait for the slow fake clone");
+
+        let error = result.expect_err("a cancelled clone is an error");
+        assert!(error.is_cancelled());
+        assert!(
+            !parent.join("cloned").exists(),
+            "the partially cloned folder is removed"
+        );
+
+        let events = events.lock().expect("progress lock");
+        assert!(events.iter().any(|(event, payload)| {
+            event == CLONE_PROGRESS_EVENT && payload.contains("Receiving objects: 10%")
+        }));
+
+        let _ = std::fs::remove_dir_all(base);
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn cancellation_keeps_a_destination_the_user_chose() {
+        let base =
+            std::env::temp_dir().join(format!("vantage_clone_existing_{}", uuid::Uuid::new_v4()));
+        let parent = base.join("parent");
+        let destination = parent.join("cloned");
+        std::fs::create_dir_all(&destination).expect("create pre-existing destination");
+        let program = crate::git::runner::fake_git_program(&base, FAKE_SLOW_CLONE);
+        let runner = GitRunner::with_program(program);
+        let cancel = CancelToken::new();
+        let cancel_from_sink = cancel.clone();
+        let sink = Sink::new(move |event, _payload| {
+            if event == CLONE_PROGRESS_EVENT {
+                cancel_from_sink.cancel();
+            }
+        });
+
+        let result = tokio::time::timeout(
+            std::time::Duration::from_secs(5),
+            clone_repo_with_cancel(
+                &runner,
+                &sink,
+                "clone-cancel",
+                "https://example.invalid/repo",
+                &parent.to_string_lossy(),
+                Some("cloned"),
+                None,
+                Some(&cancel),
+            ),
+        )
+        .await
+        .expect("cancelling must not wait for the slow fake clone");
+
+        assert!(result.expect_err("cancelled").is_cancelled());
+        assert!(
+            destination.is_dir(),
+            "an empty destination the user chose must survive cancellation"
+        );
+
+        let _ = std::fs::remove_dir_all(base);
+    }
+
+    #[cfg(unix)]
+    const FAKE_SLOW_CLONE: &str = "case \"$*\" in\n\
+        *rev-parse*) exit 1 ;;\n\
+        esac\n\
+        for arg in \"$@\"; do dest=\"$arg\"; done\n\
+        mkdir -p \"$dest\"\n\
+        printf 'partial\\n' > \"$dest/partial\"\n\
+        printf 'Receiving objects:  10%% (1/10)\\n' >&2\n\
+        exec sleep 30";
+
+    fn run_git(dir: &Path, args: &[&str]) {
+        let output = std::process::Command::new("git")
+            .args(args)
+            .current_dir(dir)
+            .output()
+            .expect("run git");
+        assert!(
+            output.status.success(),
+            "git {:?} failed: {}",
+            args,
+            String::from_utf8_lossy(&output.stderr)
         );
     }
 
