@@ -1,13 +1,14 @@
 # Safety test matrix — P0 and P1
 
 Verification companion to [`REVIEW_TODO_2026-11-16.md`](REVIEW_TODO_2026-11-16.md).
-It records, for every P0 and P1 ticket, the branch that implements it, the branch tip that was
-inspected, the regression tests that cover its invariant, and whether those tests are present in
-that branch, current `main`, or still missing.
+It records, for every P0 and P1 ticket, the branch and commit that implement it, the regression
+tests that cover its invariant, and whether those tests are present in that branch, current
+`main`, or still missing.
 
 Snapshot date: **2026-11-16**. Base: `main` at **`ab2b483`**.
-Short SHAs below are branch tips at that snapshot; rebasing a branch changes its SHA but not the
-test names.
+Short SHAs below identify the inspected implementation commit, normally the branch tip. P1-10
+points at its test/docs commit because a following docs-only commit records that hash. Rebasing a
+branch changes its SHA but not the test names.
 
 ## Legend
 
@@ -36,11 +37,11 @@ test names.
 | **P1-07** Accessibility: contrast, sizes, labels and hit targets | `fix/p1-07-accessibility` @ `a4b00f9` | `metadata_text_meets_wcag_aa_in_both_themes`, `status_and_accent_text_meet_wcag_aa_in_both_themes`, `diff_text_meets_wcag_aa_in_both_themes`, `focus_ring_meets_non_text_contrast`, `dim_text_stays_decorative` (`crates/vantage/src/theme.rs`); `focus_ring_is_a_two_pixel_spread_shadow` (`crates/vantage/src/ui/focus.rs`); `small_visuals_grow_to_the_minimum_hit_target`, `larger_visuals_keep_their_own_size`, `primary_actions_get_a_larger_target` (`crates/vantage/src/ui/tokens.rs`); `checkbox_hit_target_is_at_least_32_square` (`crates/vantage/src/app.rs`); `enter_submits_and_escape_cancels_without_typing` (`crates/vantage/src/ui/input.rs`) | Branch only | **Gap:** accessible roles/names, screen-reader announcements and keyboard-only primary flows have no automated assertion (GPUI support is limited). Contrast, type-token and hit-target checks are covered. |
 | **P1-08** README and product copy aligned | `fix/p1-08-readme-accuracy` @ `da1c454` | None — docs and copy only (`README.md`, `crates/vantage/src/app.rs`, `crates/vantage/src/views/add_repo_modal.rs`) | **Gap** | **Gap:** no automated check that user-facing claims match the shipped UI. Requires manual review on a release build; the branch itself is the evidence, not a test. |
 | **P1-09** Root commits run hooks and signing | `fix/p1-09-root-commit-hooks` @ `c90070b` | `test_root_commit_uses_staged_content_and_keeps_unstaged_lines`, `test_root_commit_runs_hooks_and_commits_only_selected_paths`, `test_root_commit_failing_hook_aborts_without_commit`, `test_root_commit_uses_configured_commit_signing`, `test_commit_with_existing_history_runs_hooks_and_preserves_selection` (`crates/vantage-core/src/git/ops.rs`) | Branch only | None for the stated acceptance on Unix. Signing is exercised with a disposable fake GPG program; Windows signing is not covered. |
-| **P1-10** Regression coverage for the safety invariants | `fix/p1-10-safety-tests` @ `HEAD` (this branch) | `literal_pathspec_staging_and_discard_only_touch_the_named_path`, `selective_root_commit_excludes_an_unselected_staged_file`, `reset_dirty_tree_refusal_leaves_head_and_worktree_untouched`, `branch_delete_refuses_unmerged_work_and_succeeds_once_merged`, `corrupt_state_load_warns_and_preserves_a_backup_file` (`crates/vantage-core/tests/safety.rs`) | This branch. The tests use only `vantage-core` public APIs and pass against `main`’s library code. | **Gap:** this ticket adds cross-cutting core coverage, not the branch-only UI harnesses listed above. The P1-08 docs claim and the P1-01 navigation click path remain manual. |
+| **P1-10** Regression coverage for the safety invariants | `fix/p1-10-safety-tests` @ `935218d` | `literal_pathspec_staging_and_discard_only_touch_the_named_path`, `selective_root_commit_excludes_an_unselected_staged_file`, `reset_dirty_tree_refusal_leaves_head_and_worktree_untouched`, `branch_delete_refuses_unmerged_work_and_succeeds_once_merged`, `corrupt_state_load_warns_and_preserves_a_backup_file` (`crates/vantage-core/tests/safety.rs`) | This branch. The tests use only `vantage-core` public APIs and pass against `main`’s library code. | **Gap:** this ticket adds cross-cutting core coverage, not the branch-only UI harnesses listed above. The P1-08 docs claim and the P1-01 navigation click path remain manual. |
 
-> **P1-10 commit hash:** a commit cannot contain its own hash. The P1-10 branch and commit are
-> identified by `git log -1 --format='%h %s'` on `fix/p1-10-safety-tests`; the tests are the
-> five names above in `crates/vantage-core/tests/safety.rs`.
+> **P1-10 commit hash:** `935218d` is the implementation commit that added the five integration
+> tests and this matrix. A following docs-only commit records that hash here; a commit cannot
+> embed its own hash. Both commits are on `fix/p1-10-safety-tests`.
 
 ## Cross-cutting integration tests added by P1-10
 
