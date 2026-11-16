@@ -425,6 +425,8 @@ impl VantageApp {
     fn render_data_settings(&mut self, cx: &mut Context<Self>) -> Vec<gpui::AnyElement> {
         let theme = self.theme;
         let path = self.state_path().display().to_string();
+        let warning = self.state_warning.clone();
+        let backups = self.state_backups.clone();
         let mut reset = div().flex().flex_col().gap(px(6.0)).w_full();
         if self.settings_reset_confirm {
             reset = reset
@@ -466,7 +468,86 @@ impl VantageApp {
             );
         }
 
-        vec![
+        let mut backup_rows = div().flex().flex_col().gap(px(4.0)).w_full();
+        if backups.is_empty() {
+            backup_rows = backup_rows.child(
+                div()
+                    .xs()
+                    .fg(theme.label_muted)
+                    .child("No state backups in the data folder."),
+            );
+        } else {
+            for (index, backup) in backups.iter().enumerate() {
+                let backup_path = backup.path.clone();
+                let file_name = backup
+                    .path
+                    .file_name()
+                    .map(|name| name.to_string_lossy().to_string())
+                    .unwrap_or_else(|| backup.path.display().to_string());
+                backup_rows = backup_rows.child(
+                    div()
+                        .flex()
+                        .items_center()
+                        .gap(px(8.0))
+                        .w_full()
+                        .min_w(px(0.0))
+                        .child(
+                            div()
+                                .flex()
+                                .flex_col()
+                                .gap(px(1.0))
+                                .flex_1()
+                                .min_w(px(0.0))
+                                .child(
+                                    div()
+                                        .xs()
+                                        .medium()
+                                        .truncate()
+                                        .font_family(FONT_MONO)
+                                        .fg(theme.text_body)
+                                        .child(file_name),
+                                )
+                                .child(
+                                    div().x11().fg(theme.label_muted).child(backup.kind.label()),
+                                ),
+                        )
+                        .child(
+                            secondary_button(&theme, "Reveal", Some("external-link"))
+                                .id(gpui::SharedString::from(format!("settings-backup-{index}")))
+                                .on_click(cx.listener(move |this, _e, _w, cx| {
+                                    this.reveal_state_backup(backup_path.clone(), cx)
+                                })),
+                        ),
+                );
+            }
+        }
+
+        let mut sections: Vec<gpui::AnyElement> = Vec::new();
+        if let Some(warning) = warning {
+            sections.push(
+                div()
+                    .debug_selector(|| "settings-state-warning".to_string())
+                    .flex()
+                    .flex_col()
+                    .gap(px(4.0))
+                    .p(px(10.0))
+                    .rounded(px(8.0))
+                    .border_1()
+                    .border_color(theme.error_border)
+                    .bg(theme.error_bg)
+                    .child(
+                        div()
+                            .sm()
+                            .semibold()
+                            .fg(theme.error_text)
+                            .child("Saved state needed recovery"),
+                    )
+                    .child(div().xs().fg(theme.text_body).child(warning))
+                    .into_any_element(),
+            );
+        }
+
+        sections.push(
             div()
                 .flex()
                 .flex_col()
@@ -499,14 +580,33 @@ impl VantageApp {
                                 .child(path),
                         )
                         .child(
-                            secondary_button(&theme, "Reveal", Some("external-link"))
-                                .id("settings-reveal")
+                            secondary_button(&theme, "Open folder", Some("folder-git-2"))
+                                .id("settings-open-data-folder")
                                 .on_click(
-                                    cx.listener(|this, _e, _w, cx| this.reveal_state_path(cx)),
+                                    cx.listener(|this, _e, _w, cx| this.open_state_data_folder(cx)),
                                 ),
                         ),
                 )
                 .into_any_element(),
+        );
+        sections.push(
+            div()
+                .flex()
+                .flex_col()
+                .gap(px(6.0))
+                .py(px(10.0))
+                .border_b_1()
+                .border_color(theme.divider)
+                .child(div().sm().medium().fg(theme.text_app).child("Backups"))
+                .child(div().xs().fg(theme.label_muted).child(
+                    "Copies found next to the state file. To restore one, quit Vantage and \
+                             copy it over state.json; Vantage never replaces the live state \
+                             automatically.",
+                ))
+                .child(backup_rows)
+                .into_any_element(),
+        );
+        sections.push(
             div()
                 .flex()
                 .flex_col()
@@ -523,7 +623,8 @@ impl VantageApp {
                 )
                 .child(reset)
                 .into_any_element(),
-        ]
+        );
+        sections
     }
 
     fn render_about_settings(&mut self, cx: &mut Context<Self>) -> Vec<gpui::AnyElement> {

@@ -65,7 +65,9 @@ fn apply_env_state(entity: &gpui::Entity<VantageApp>, cx: &mut App) {
                 "dark" => app.theme = theme::Theme::dark(),
                 "light" => app.theme = theme::Theme::light(),
                 "modal" => app.open_add_modal(cx),
-                "persist" => app.persist(cx),
+                "persist" => {
+                    app.persist(cx);
+                }
                 "fetch" => {
                     if let Some(repo) = app.repos.first().cloned() {
                         app.fetch_repo(&repo, cx);
@@ -196,7 +198,8 @@ fn main() {
         })
         .detach();
 
-        let settings = UiSettings::load();
+        let (persisted, startup_warning) = vantage_core::repos::load_state();
+        let settings = UiSettings::from_state(&persisted);
         let bounds = initial_window_bounds(&settings, cx);
         let root: std::cell::RefCell<Option<gpui::Entity<VantageApp>>> =
             std::cell::RefCell::new(None);
@@ -223,7 +226,11 @@ fn main() {
                     ..Default::default()
                 },
                 |_window, cx| {
-                    let entity = cx.new(VantageApp::new);
+                    let entity = match startup_warning {
+                        Some(warning) => cx
+                            .new(move |cx| VantageApp::new_with_startup_warning(cx, Some(warning))),
+                        None => cx.new(VantageApp::new),
+                    };
                     *root.borrow_mut() = Some(entity.clone());
                     cx.new(|_| root::RootView::new(entity))
                 },

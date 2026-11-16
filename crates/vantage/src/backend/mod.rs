@@ -14,6 +14,7 @@ pub mod repo_map;
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
+use std::sync::Mutex;
 
 use anyhow::{anyhow, Context, Result};
 use tokio::runtime::Runtime;
@@ -24,7 +25,7 @@ use vantage_core::git::refs::{
 };
 use vantage_core::git::stash::{list_stashes, stash_drop, stash_pop, stash_push};
 use vantage_core::git::status::query_repo_status;
-use vantage_core::persist::PersistedState;
+use vantage_core::persist::{PersistedState, StateBackup, StatePersistence};
 use vantage_core::{repos, GitRunner, RepoEntry};
 
 use crate::model::Repository;
@@ -44,17 +45,50 @@ pub struct Backend {
     /// Private engine runtime: every `block_on` in this module runs on it.
     runtime: Runtime,
     runner: GitRunner,
+    /// Test-only persistence override. Production goes through the
+    /// process-wide handle in [`vantage_core::repos`].
+    persistence: Option<StatePersistence>,
+    /// The startup load warning, kept until the UI can show it. Later loads
+    /// only fill it when it is still empty, so a startup notice is not lost.
+    state_warning: Mutex<Option<String>>,
 }
 
 impl Backend {
     pub fn new() -> Result<Self> {
+        Self::with_persistence(None)
+    }
+
+    fn with_persistence(persistence: Option<StatePersistence>) -> Result<Self> {
         let runtime = Runtime::new().context("start the git worker runtime")?;
         let backend = Self {
             runtime,
             runner: GitRunner::new(),
+            persistence,
+            state_warning: Mutex::new(None),
         };
+
+        let (_, warning) = backend.load_state();
+        if let Some(warning) = warning {
+            if let Ok(mut slot) = backend.state_warning.lock() {
+                *slot = Some(warning);
+            }
+        }
         backend.migrate_legacy_groups();
         Ok(backend)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn with_state_path(path: PathBuf) -> Result<Self> {
+        Self::with_persistence(Some(StatePersistence::with_path(path)))
+    }
+
+    /// Take the warning produced by a state load. The UI uses this once at
+    /// startup; `None` means the state file was read cleanly.
+    pub fn take_state_warning(&self) -> Option<String> {
+        self.state_warning
+            .lock()
+            .ok()
+            .and_then(|mut warning| warning.take())
     }
 
     /// Full snapshot: every persisted repo mapped to the UI model. Repositories
@@ -194,9 +228,26 @@ impl Backend {
 
     /// Absolute path of the workspace state file.
     pub fn state_path(&self) -> std::path::PathBuf {
-        vantage_core::persist::StatePersistence::new()
-            .map(|persistence| persistence.path().to_path_buf())
+        match &self.persistence {
+            Some(persistence) => persistence.path().to_path_buf(),
+            None => repos::state_path().unwrap_or_default(),
+        }
+    }
+
+    /// Directory that holds the state file and its backups.
+    pub fn state_data_dir(&self) -> PathBuf {
+        self.state_path()
+            .parent()
+            .map(Path::to_path_buf)
             .unwrap_or_default()
+    }
+
+    /// Recoverable state files beside the live `state.json`, newest first.
+    pub fn state_backups(&self) -> Vec<StateBackup> {
+        match &self.persistence {
+            Some(persistence) => persistence.backups().unwrap_or_default(),
+            None => repos::state_backups(),
+        }
     }
 
     /// Check out `branch` in one repo. The caller re-reads the row with
@@ -619,11 +670,30 @@ impl Backend {
     // ---------------- internals ----------------
 
     fn state(&self) -> PersistedState {
-        repos::load_state().0
+        let (state, warning) = self.load_state();
+        if let Some(warning) = warning {
+            if let Ok(mut slot) = self.state_warning.lock() {
+                if slot.is_none() {
+                    *slot = Some(warning);
+                }
+            }
+        }
+        state
+    }
+
+    /// Read the live state from the test override or the process-wide handle.
+    fn load_state(&self) -> (PersistedState, Option<String>) {
+        match &self.persistence {
+            Some(persistence) => persistence.load(),
+            None => repos::load_state(),
+        }
     }
 
     fn save(&self, state: &PersistedState) -> Result<()> {
-        repos::save_state(state).context("save the workspace state")
+        match &self.persistence {
+            Some(persistence) => persistence.save(state).context("save the workspace state"),
+            None => repos::save_state(state).context("save the workspace state"),
+        }
     }
 
     /// Move grouping settings written under the pre-rename key to
@@ -1012,5 +1082,59 @@ mod tests {
             UiSettings::from_state(&state).theme,
             crate::settings::ThemeChoice::Light
         );
+    }
+
+    fn temp_state_dir(name: &str) -> PathBuf {
+        let stamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|duration| duration.as_nanos())
+            .unwrap_or(0);
+        let dir = std::env::temp_dir().join(format!(
+            "vantage_backend_state_{name}_{}_{stamp}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    #[test]
+    fn startup_keeps_the_corrupt_state_warning_for_the_ui() {
+        let dir = temp_state_dir("corrupt");
+        let path = dir.join("state.json");
+        std::fs::write(&path, "{ not json").unwrap();
+
+        let backend = Backend::with_state_path(path).unwrap();
+        let warning = backend
+            .take_state_warning()
+            .expect("backend must preserve the load warning");
+        assert!(
+            warning.contains("could not read its saved state"),
+            "{warning}"
+        );
+        assert!(
+            backend.take_state_warning().is_none(),
+            "the startup warning is delivered once"
+        );
+        assert_eq!(backend.state_backups().len(), 1);
+
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn set_groups_reports_a_failed_state_write() {
+        let dir = temp_state_dir("failed_save");
+        let blocker = dir.join("not-a-directory");
+        std::fs::write(&blocker, "blocked").unwrap();
+        let backend = Backend::with_state_path(blocker.join("state.json")).unwrap();
+
+        let error = backend
+            .set_groups(&["Work".to_string()], &BTreeMap::new())
+            .expect_err("an unwritable state path must fail");
+        assert!(
+            error.to_string().contains("save the workspace state"),
+            "{error:#}"
+        );
+
+        std::fs::remove_dir_all(&dir).ok();
     }
 }
