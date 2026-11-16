@@ -1235,14 +1235,36 @@ impl VantageApp {
                 }
                 diff
             }
-            None if view.loading => div()
-                .py(px(24.0))
-                .w_full()
-                .flex()
-                .justify_center()
-                .xs()
-                .fg(theme.label_muted)
-                .child("Loading the commit…"),
+            None if view.loading => {
+                let label = if view.comparing {
+                    "Loading the comparison…"
+                } else {
+                    "Loading the commit…"
+                };
+                div()
+                    .py(px(24.0))
+                    .w_full()
+                    .flex()
+                    .justify_center()
+                    .xs()
+                    .fg(theme.label_muted)
+                    .child(label)
+            }
+            None if view.error.is_some() => {
+                let label = if view.comparing {
+                    "Could not load this comparison"
+                } else {
+                    "Could not load this commit"
+                };
+                let error = view.error.as_deref().unwrap_or_default();
+                div()
+                    .px(px(12.0))
+                    .py(px(24.0))
+                    .w_full()
+                    .xs()
+                    .fg(theme.status_red)
+                    .child(format!("{label}: {error}"))
+            }
             None => div()
                 .py(px(24.0))
                 .w_full()
