@@ -10,7 +10,7 @@ permissions:
 
 jobs:
   release-macos:
-    name: Build, notarize and publish
+    name: Build, sign and publish
     # Pinned image on Apple silicon: the runner is arm64 and cross-compiles the
     # Intel slice, so the DMG is universal.
     runs-on: macos-15
@@ -30,8 +30,67 @@ jobs:
         with:
           persist-credentials: false
 
+      # A publishable release must be Developer ID signed and notarized. A
+      # missing credential fails the tag build here, before anything is built
+      # or uploaded, instead of silently shipping an ad-hoc bundle. The
+      # ALLOW_ADHOC_RELEASE repository variable is a deliberate escape hatch
+      # for previews and is surfaced in the release notes and step summary.
+      - name: Enforce the signing and notarization policy
+        id: signing-policy
+        env:
+          ALLOW_ADHOC_RELEASE: ${{ vars.ALLOW_ADHOC_RELEASE }}
+        run: |
+          missing=()
+          for name in APPLE_SIGNING_IDENTITY APPLE_CERTIFICATE \
+            APPLE_CERTIFICATE_PASSWORD APPLE_ID APPLE_TEAM_ID \
+            APPLE_APP_PASSWORD; do
+            if [ -z "${!name:-}" ]; then
+              missing+=("$name")
+            fi
+          done
+
+          {
+            echo "### Release signing policy"
+            echo
+            echo "A \`v*\` tag must be signed with a Developer ID and notarized."
+            echo "Missing credentials fail this job unless the repository"
+            echo "variable \`ALLOW_ADHOC_RELEASE\` is set to \`true\`."
+            echo
+          } >>"$GITHUB_STEP_SUMMARY"
+
+          if [ "${#missing[@]}" -eq 0 ]; then
+            echo "mode=signed" >>"$GITHUB_OUTPUT"
+            echo "**Result:** signed and notarized." >>"$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+
+          if [ "$ALLOW_ADHOC_RELEASE" = "true" ]; then
+            echo "mode=adhoc" >>"$GITHUB_OUTPUT"
+            {
+              echo "**Result:** preview (\`ALLOW_ADHOC_RELEASE=true\`)."
+              echo
+              echo "Missing: \`${missing[*]}\`. The build does not meet the"
+              echo "release signing policy; it is published as a prerelease"
+              echo "without a cask, and the in-repo cask stays on the last"
+              echo "notarized release."
+            } >>"$GITHUB_STEP_SUMMARY"
+            echo "::warning::Publishing a preview missing signing/notarization credentials: ${missing[*]}"
+            exit 0
+          fi
+
+          {
+            echo "**Result:** blocked."
+            echo
+            echo "Missing: \`${missing[*]}\`."
+          } >>"$GITHUB_STEP_SUMMARY"
+          echo "::error::Missing signing/notarization credentials: ${missing[*]}"
+          echo "Refusing to publish an unnotarized release. Configure the Apple"
+          echo "secrets, or set the repository variable ALLOW_ADHOC_RELEASE=true"
+          echo "to deliberately publish a preview build."
+          exit 1
+
       - name: Install Rust with both Apple targets
-        uses: dtolnay/rust-toolchain@39008827e6b4319a349e9a42dfc90579dd25f1ca # stable  # yamllint disable-line rule:line-length
+        uses: dtolnay/rust-toolchain@39008827e6b4319a349e9a42dfc90579dd25f1ca  # yamllint disable-line rule:line-length
         with:
           toolchain: stable
           targets: aarch64-apple-darwin, x86_64-apple-darwin
@@ -48,8 +107,8 @@ jobs:
             exit 1
           fi
 
-      # Only needed when the signing secrets exist; without them the bundle is
-      # ad-hoc signed by the packaging script and distribution is local-only.
+      # Imported whenever the certificate exists; the policy step guarantees it
+      # for compliant releases and the ad-hoc opt-in path skips it.
       - name: Import the Developer ID certificate
         if: env.APPLE_CERTIFICATE != ''
         run: |
@@ -76,6 +135,8 @@ jobs:
         run: ./scripts/bundle-macos.sh "$GITHUB_REF_NAME"
 
       - name: Verify the artifacts
+        env:
+          RELEASE_MODE: ${{ steps.signing-policy.outputs.mode }}
         run: |
           plutil -lint dist/Vantage.app/Contents/Info.plist
           codesign --verify --deep --strict --verbose=2 dist/Vantage.app
@@ -84,25 +145,44 @@ jobs:
           test -d /Volumes/Vantage/Vantage.app
           hdiutil detach /Volumes/Vantage
           (cd dist && shasum -a 256 -c SHA256SUMS)
-          if [ -n "$APPLE_SIGNING_IDENTITY" ]; then
+          if [ "$RELEASE_MODE" = "signed" ]; then
             spctl --assess --type execute --verbose=2 dist/Vantage.app
+          else
+            echo "::warning::Preview build: skipping spctl; Gatekeeper may reject this build"
           fi
 
       - name: Publish the release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_MODE: ${{ steps.signing-policy.outputs.mode }}
         run: |
+          if [ "$RELEASE_MODE" = "adhoc" ]; then
+            cat >release-notes.md <<'EOF'
+          > [!WARNING]
+          > This preview release did not complete the full Developer ID
+          > signing and notarization pipeline. macOS may refuse to open it,
+          > so it is published only to exercise the tag pipeline and must
+          > not be redistributed as a normal install. It ships without a
+          > Homebrew cask; use the latest stable release instead.
+          EOF
+            title="Vantage $GITHUB_REF_NAME (preview, not notarized)"
+            args=(--notes-file release-notes.md --prerelease --latest=false)
+            assets=(dist/Vantage_*_universal.dmg dist/Vantage_*_universal.app.zip dist/SHA256SUMS)
+          else
+            title="Vantage $GITHUB_REF_NAME"
+            args=(--generate-notes)
+            assets=(dist/Vantage_*_universal.dmg dist/Vantage_*_universal.app.zip dist/SHA256SUMS dist/vantage.rb)
+          fi
           gh release create "$GITHUB_REF_NAME" \
-            --title "Vantage $GITHUB_REF_NAME" \
-            --generate-notes \
-            dist/Vantage_*_universal.dmg \
-            dist/Vantage_*_universal.app.zip \
-            dist/SHA256SUMS \
-            dist/vantage.rb
+            --title "$title" \
+            "${args[@]}" \
+            "${assets[@]}"
 
       # Keeps the in-repo cask pinned to the build that was just published.
-      # A no-op when main already moved past this tag.
+      # A no-op when main already moved past this tag. Never runs for an ad-hoc
+      # preview: the stable cask stays on the last notarized release.
       - name: Sync the cask back to main
+        if: steps.signing-policy.outputs.mode == 'signed'
         continue-on-error: true
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
