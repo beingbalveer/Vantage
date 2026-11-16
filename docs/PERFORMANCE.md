@@ -2,7 +2,8 @@
 
 This document records Vantage's reproducible performance harness, the baseline
 measured on the reference machine, and the regression budgets enforced by
-`scripts/benchmark.sh --check`.
+`scripts/benchmark.sh --check` and the scheduled
+[performance workflow](../.github/workflows/performance.yml).
 
 The harness covers the Git engine and build cost. It deliberately does not
 launch the GPUI app: it creates disposable repositories and calls the same
@@ -188,19 +189,43 @@ still failing a clear step change. They are not fixed multipliers. When P1-03
 lands, re-measure and tighten the overview and detail budgets rather than
 carrying the old ceilings forward.
 
-Absolute timings differ on CI runners. A scheduled job should set the variables
-for its own hardware, for example:
+## CI and scheduled runs
+
+[`.github/workflows/performance.yml`](../.github/workflows/performance.yml)
+enforces these budgets without running on every pull request:
+
+- **Schedule:** Mondays at 06:17 UTC.
+- **Manual:** `workflow_dispatch`. Set the `with_cargo` input to include the
+  cold/warm `cargo check` and target-size budgets; leave it off for the faster
+  scan/detail/memory run.
+- **Default weekly run:** scan, detail and large-working-tree memory budgets.
+  Build budgets are opt-in because a from-scratch `cargo check` in a disposable
+  target adds several minutes to a macOS runner.
+- **Runner:** `macos-15`, the same runner as the package job in `ci.yml`.
+- **Artifact:** the raw TSV is uploaded as `performance-metrics-<run_id>` and
+  retained for 90 days.
+
+The job-level `env` overrides the local defaults for the slower runner. To
+reproduce a CI run locally with those ceilings:
 
 ```bash
-PERF_MAX_OVERVIEW_50_MS=90000 \
-PERF_MAX_DETAIL_MS=3000 \
-PERF_MAX_DETAIL_LARGE_MS=5000 \
+PERF_MAX_COLD_CHECK_S=900 \
+PERF_MAX_WARM_CHECK_S=180 \
+PERF_MAX_TARGET_MIB=4096 \
+PERF_MAX_OVERVIEW_5_MS=6000 \
+PERF_MAX_OVERVIEW_20_MS=25000 \
+PERF_MAX_OVERVIEW_50_MS=60000 \
+PERF_MAX_DETAIL_MS=2000 \
+PERF_MAX_DETAIL_LARGE_MS=3000 \
+PERF_MAX_RSS_MIB=256 \
   scripts/benchmark.sh --check --with-cargo --out performance.tsv
 ```
 
 Use an otherwise idle machine: a concurrent build or test run can double Git
 process latency. Keep the TSV from every run so a regression can be compared
-with the previous baseline instead of only the pass/fail bit.
+with the previous baseline instead of only the pass/fail bit. After a few
+scheduled runs, tighten the workflow overrides to the runner's observed spread
+and record the new baseline here.
 
 ## Updating the baseline
 
