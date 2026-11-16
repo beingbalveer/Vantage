@@ -14,9 +14,12 @@ edition = "2021"
 license = "MIT"
 repository = "https://github.com/beingbalveer/vantage"
 
-# Long-running desktop UI: keep our code quick to build but optimise deps.
+# Long-running desktop UI: keep our code quick to build, retain line tables for
+# useful backtraces, and leave third-party debug info out of the dev profile.
 [profile.dev]
+debug = "line-tables-only"
 opt-level = 1
 
 [profile.dev.package."*"]
-opt-level = 2
+debug = false
+opt-level = 1

@@ -9,7 +9,19 @@ description = "Vantage's git engine: runner, status, log, refs, diffs, watching 
 [dependencies]
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-tokio = { version = "1", features = ["full"] }
+# Only the runtime, process, filesystem, sync, time and I/O features this
+# engine uses. Avoid `full`, which also compiles networking, signals and other
+# unused sub-dependencies.
+tokio = { version = "1", features = [
+    "rt",
+    "rt-multi-thread",
+    "macros",
+    "process",
+    "fs",
+    "sync",
+    "time",
+    "io-util",
+] }
 notify = "6"
 similar = { version = "2", features = ["inline"] }
 chrono = { version = "0.4", features = ["serde"] }
