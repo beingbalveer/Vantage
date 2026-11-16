@@ -1642,6 +1642,18 @@ impl VantageApp {
         }
     }
 
+    /// Pane geometry for the current window, including the compact-mode
+    /// thresholds the list and inspector headers use.
+    pub fn dashboard_layout(&self, window: &Window) -> crate::layout::DashboardLayout {
+        crate::layout::dashboard_layout(
+            f32::from(window.viewport_size().width),
+            self.sidebar_width(),
+            self.sidebar_collapsed,
+            self.settings.right_panel_open,
+            self.panel_fraction(),
+        )
+    }
+
     /// Open one commit: the header shows immediately, files stream in from git.
     pub fn open_commit_view(
         &mut self,

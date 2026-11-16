@@ -9,6 +9,7 @@ mod avatar_cache;
 mod backend;
 mod chrome;
 mod icons;
+mod layout;
 mod menu;
 mod model;
 mod path;
@@ -217,7 +218,10 @@ fn main() {
                         #[cfg(not(target_os = "macos"))]
                         traffic_light_position: None,
                     }),
-                    window_min_size: Some(size(px(1040.0), px(640.0))),
+                    window_min_size: Some(size(
+                        px(layout::MIN_WINDOW_WIDTH),
+                        px(layout::MIN_WINDOW_HEIGHT),
+                    )),
                     window_background: WindowBackgroundAppearance::Opaque,
                     app_id: Some("Vantage".to_string()),
                     ..Default::default()

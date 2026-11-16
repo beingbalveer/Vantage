@@ -12,7 +12,7 @@ const MAX_SCAN_ERRORS: usize = 5;
 impl VantageApp {
     pub fn render_viewport(
         &mut self,
-        _window: &mut Window,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
         let banner = self.render_scan_error_banner();
@@ -22,7 +22,7 @@ impl VantageApp {
             match self.active_section {
                 NavSection::Changes => self.render_pending_changes(cx).into_any_element(),
                 NavSection::Overview | NavSection::Attention => {
-                    self.render_repo_table(cx).into_any_element()
+                    self.render_repo_table(window, cx).into_any_element()
                 }
             }
         };
