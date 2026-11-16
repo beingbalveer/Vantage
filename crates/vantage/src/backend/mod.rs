@@ -14,6 +14,8 @@ pub mod repo_map;
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::Mutex;
 
 use anyhow::{anyhow, Context, Result};
 use tokio::runtime::Runtime;
@@ -23,11 +25,11 @@ use vantage_core::git::refs::{
     merge_into_current, rename_branch, sync_fetch, sync_pull, sync_push, PullStrategy,
 };
 use vantage_core::git::stash::{list_stashes, stash_drop, stash_pop, stash_push};
-use vantage_core::git::status::query_repo_status;
+use vantage_core::git::status::query_repo_status_snapshot;
 use vantage_core::persist::PersistedState;
 use vantage_core::{repos, GitRunner, RepoEntry};
 
-use crate::model::Repository;
+use crate::model::{FileChangeStatus, PreviewLine, Repository};
 use crate::settings::UiSettings;
 
 /// Key in `PersistedState.extra` holding Vantage's own grouping settings.
@@ -74,7 +76,14 @@ impl Backend {
 
     /// Map the persisted repos whose absolute path satisfies `include`, in
     /// sidebar order: pinned repositories first, then the persisted `order`.
+    ///
+    /// Every repository is independent, so a small worker pool maps several at
+    /// once; each worker runs one git process at a time, staying well inside
+    /// `GitRunner`'s semaphore. Results are reassembled in the persisted order
+    /// and a failure still only drops its own row.
     fn snapshot_matching(&self, include: impl Fn(&Path) -> bool) -> (Vec<Repository>, Vec<String>) {
+        const MAX_MAP_WORKERS: usize = 4;
+
         let state = self.state();
         let (_, assignments) = groups_from(&state);
         let mut entries: Vec<&RepoEntry> = state
@@ -84,16 +93,9 @@ impl Backend {
             .collect();
         entries.sort_by_key(|repo| (if repo.pinned { 0 } else { 1 }, repo.order));
 
-        let mut repositories = Vec::with_capacity(entries.len());
-        let mut errors = Vec::new();
-        for entry in entries {
-            let group = group_of(&assignments, &entry.id);
-            match self.map_entry(entry, group) {
-                Ok(repository) => repositories.push(repository),
-                Err(error) => errors.push(error),
-            }
-        }
-        (repositories, errors)
+        map_ordered_bounded(&entries, MAX_MAP_WORKERS, |entry| {
+            self.map_entry(entry, group_of(&assignments, &entry.id))
+        })
     }
 
     /// Add a folder as a repo; returns the mapped row.
@@ -431,6 +433,30 @@ impl Backend {
         ))
     }
 
+    /// Patch lines for one working-tree file, read only when the UI expands it.
+    ///
+    /// Scans stop at counts and never read a repository's full diff; this
+    /// reads the selected path (and its rename source) under a byte cap.
+    pub fn file_preview(
+        &self,
+        repo_id: &str,
+        path: &str,
+        staged: bool,
+        status: FileChangeStatus,
+        orig_path: Option<&str>,
+    ) -> Result<(Vec<PreviewLine>, bool)> {
+        let repo_path = self.known_path(repo_id)?;
+        details::file_preview(
+            &self.runtime,
+            &self.runner,
+            &repo_path,
+            path,
+            staged,
+            status,
+            orig_path,
+        )
+    }
+
     /// Rewrite the tip commit: its message, plus any paths given (they are
     /// staged first, so the same ticked-file rule as a normal commit applies).
     pub fn amend(&self, repo_id: &str, paths: &[String], summary: &str) -> Result<String> {
@@ -657,24 +683,76 @@ impl Backend {
     /// tracked branch Vantage's panes may be pinned to.
     fn map_entry(&self, entry: &RepoEntry, group: String) -> Result<Repository, String> {
         let path = PathBuf::from(&entry.path);
-        let status = self.runtime.block_on(query_repo_status(
+        let snapshot = self.runtime.block_on(query_repo_status_snapshot(
             &self.runner,
             &entry.id,
             &path,
             None,
             None,
         ));
-        if let Some(error) = status.error.as_deref() {
+        if let Some(error) = snapshot.status.error.as_deref() {
             return Err(format!("{}: {error}", entry.name));
         }
         Ok(repo_map::map_repo(
             &self.runtime,
             &self.runner,
             entry,
-            &status,
+            &snapshot.status,
+            &snapshot.records,
             group,
         ))
     }
+}
+
+/// Map `items` with at most `max_workers` threads, keeping the input order.
+///
+/// Values and errors are collected separately, so one failed item cannot drop
+/// or reorder the successful ones. The pool reads a shared index instead of
+/// splitting the input into fixed chunks: a slow item delays only the worker
+/// that picked it, not the rest of its chunk.
+fn map_ordered_bounded<T, U, E, F>(items: &[T], max_workers: usize, map: F) -> (Vec<U>, Vec<E>)
+where
+    T: Sync,
+    U: Send,
+    E: Send,
+    F: Fn(&T) -> Result<U, E> + Sync,
+{
+    if items.is_empty() {
+        return (Vec::new(), Vec::new());
+    }
+
+    let workers = max_workers.max(1).min(items.len());
+    let next = AtomicUsize::new(0);
+    let slots: Vec<Mutex<Option<Result<U, E>>>> = items.iter().map(|_| Mutex::new(None)).collect();
+
+    std::thread::scope(|scope| {
+        for _ in 0..workers {
+            scope.spawn(|| loop {
+                let index = next.fetch_add(1, Ordering::Relaxed);
+                let Some(item) = items.get(index) else {
+                    break;
+                };
+                let result = map(item);
+                *slots[index]
+                    .lock()
+                    .unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(result);
+            });
+        }
+    });
+
+    let mut values = Vec::with_capacity(items.len());
+    let mut errors = Vec::new();
+    for slot in slots {
+        match slot
+            .into_inner()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+        {
+            Some(Ok(value)) => values.push(value),
+            Some(Err(error)) => errors.push(error),
+            None => unreachable!("every worker index is within the item slice"),
+        }
+    }
+    (values, errors)
 }
 
 fn group_of(assignments: &BTreeMap<String, String>, repo_id: &str) -> String {
@@ -988,6 +1066,94 @@ mod tests {
         assert_eq!(groups, ["Ungrouped".to_string(), "SE".to_string()]);
         assert_eq!(assignments.get("repo-se"), Some(&"SE".to_string()));
         assert_eq!(UiSettings::from_state(&state).auto_fetch_minutes, 15);
+    }
+
+    #[test]
+    fn bounded_mapping_keeps_order_and_isolates_errors() {
+        let items: Vec<usize> = (0..12).collect();
+        let (values, errors) = map_ordered_bounded(&items, 4, |item| {
+            // Later items finish first, so a chunked map would misorder them.
+            std::thread::sleep(std::time::Duration::from_millis(
+                ((6 - item % 7) * 2) as u64,
+            ));
+            if item % 5 == 0 {
+                Err(format!("bad {item}"))
+            } else {
+                Ok(item * 2)
+            }
+        });
+
+        assert_eq!(values, vec![2, 4, 6, 8, 12, 14, 16, 18, 22]);
+        assert_eq!(errors, vec!["bad 0", "bad 5", "bad 10"]);
+    }
+
+    #[test]
+    fn bounded_mapping_never_exceeds_its_worker_count() {
+        use std::sync::atomic::AtomicUsize;
+        use std::sync::atomic::Ordering::SeqCst;
+
+        let items: Vec<usize> = (0..16).collect();
+        let active = AtomicUsize::new(0);
+        let peak = AtomicUsize::new(0);
+        let (values, errors): (Vec<usize>, Vec<()>) = map_ordered_bounded(&items, 3, |item| {
+            let running = active.fetch_add(1, SeqCst) + 1;
+            peak.fetch_max(running, SeqCst);
+            std::thread::sleep(std::time::Duration::from_millis(5));
+            active.fetch_sub(1, SeqCst);
+            Ok(*item)
+        });
+
+        assert_eq!(values, items);
+        assert!(errors.is_empty());
+        assert!(
+            peak.load(SeqCst) <= 3,
+            "mapping ran {} workers, not the requested 3",
+            peak.load(SeqCst)
+        );
+    }
+
+    #[test]
+    fn bounded_mapping_shares_one_git_runtime() {
+        let runtime = Runtime::new().unwrap();
+        let items: Vec<u64> = (0..8).collect();
+        let (values, errors): (Vec<u64>, Vec<String>) = map_ordered_bounded(&items, 4, |item| {
+            runtime.block_on(async move {
+                tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+                Ok(item * 2)
+            })
+        });
+
+        assert_eq!(values, (0..8).map(|item| item * 2).collect::<Vec<_>>());
+        assert!(errors.is_empty());
+    }
+
+    #[test]
+    fn bounded_mapping_spawns_git_processes_on_the_shared_runtime() {
+        let runtime = Runtime::new().unwrap();
+        let runner = GitRunner::new();
+        let temp = std::env::temp_dir();
+        let items: Vec<u64> = (0..8).collect();
+        let (values, errors): (Vec<u64>, Vec<String>) = map_ordered_bounded(&items, 4, |item| {
+            runtime.block_on(async {
+                let out = runner
+                    .run_read(&temp, &["--version"])
+                    .await
+                    .map_err(|error| error.message)?;
+                Ok(if out.success() { *item } else { u64::MAX })
+            })
+        });
+
+        assert_eq!(values, items);
+        assert!(errors.is_empty());
+    }
+
+    #[test]
+    fn bounded_mapping_handles_an_empty_input() {
+        let items: Vec<usize> = Vec::new();
+        let (values, errors): (Vec<usize>, Vec<String>) =
+            map_ordered_bounded(&items, 4, |item| Ok(*item));
+        assert!(values.is_empty());
+        assert!(errors.is_empty());
     }
 
     #[test]

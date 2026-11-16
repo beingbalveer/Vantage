@@ -12,7 +12,9 @@ use gpui::{
 };
 
 use crate::backend::Backend;
-use crate::model::{NavSection, RepoSyncState, Repository};
+use crate::model::{
+    ChangedFile, FileChangeStatus, NavSection, PreviewLine, RepoSyncState, Repository,
+};
 use crate::settings::{
     DefaultView, Diagnostics, SettingsSection, SortOrder, ThemeChoice, UiSettings,
 };
@@ -109,6 +111,76 @@ pub struct LastCommit {
     /// catches up after the rescan, so this is what lets the Undo strip appear
     /// immediately instead of a beat later.
     pub previous_tip: Option<String>,
+}
+
+/// A patch preview loaded when the user expands one changed file.
+#[derive(Clone, Debug)]
+pub struct FilePreview {
+    pub staged: bool,
+    pub status: FileChangeStatus,
+    pub additions: u32,
+    pub deletions: u32,
+    pub lines: Vec<PreviewLine>,
+    pub truncated: bool,
+    pub error: Option<String>,
+}
+
+impl FilePreview {
+    /// Whether this preview still describes `file`. A rescan that changes the
+    /// counts or staged state invalidates it, so the row can never show an old
+    /// patch beside new numbers.
+    fn matches(&self, file: &ChangedFile) -> bool {
+        self.staged == file.staged
+            && self.status == file.status
+            && self.additions == file.additions
+            && self.deletions == file.deletions
+    }
+}
+
+/// Scan requests that arrived while another scan was running.
+///
+/// Only one entry is kept: dirty roots are unioned and a full-workspace request
+/// supersedes them, so a build that keeps touching files cannot grow a queue
+/// of full scans.
+#[derive(Clone, Debug, Default)]
+struct PendingScans {
+    full: bool,
+    roots: std::collections::BTreeSet<PathBuf>,
+    /// True only when every queued request asked for a silent scan.
+    silent: bool,
+    queued: bool,
+}
+
+impl PendingScans {
+    fn push(&mut self, roots: Option<Vec<PathBuf>>, silent: bool) {
+        if !self.queued {
+            self.silent = true;
+            self.queued = true;
+        }
+        self.silent &= silent;
+        match roots {
+            None => {
+                self.full = true;
+                self.roots.clear();
+            }
+            Some(roots) if !self.full => self.roots.extend(roots),
+            Some(_) => {}
+        }
+    }
+
+    fn take(&mut self) -> Option<(Option<Vec<PathBuf>>, bool)> {
+        if !self.queued {
+            return None;
+        }
+        let roots = if self.full {
+            None
+        } else {
+            Some(self.roots.iter().cloned().collect())
+        };
+        let silent = self.silent;
+        *self = Self::default();
+        Some((roots, silent))
+    }
 }
 
 /// Which text field a keystroke belongs to.
@@ -244,6 +316,12 @@ pub struct VantageApp {
     pub scan_errors: Vec<String>,
     watcher: Option<crate::watcher::RepoWatcher>,
     scan_seq: u64,
+    /// A scan is running; new requests are coalesced into [`Self::pending_scans`].
+    scan_in_flight: bool,
+    pending_scans: PendingScans,
+    /// Patch previews loaded on demand, keyed by `(repository id, file path)`.
+    file_previews: std::collections::HashMap<(String, String), FilePreview>,
+    file_previews_pending: std::collections::HashSet<(String, String)>,
     modal_path_focus: FocusHandle,
     modal_custom_group_focus: FocusHandle,
 }
@@ -350,6 +428,10 @@ impl VantageApp {
             scan_errors: Vec::new(),
             watcher: None,
             scan_seq: 0,
+            scan_in_flight: false,
+            pending_scans: PendingScans::default(),
+            file_previews: std::collections::HashMap::new(),
+            file_previews_pending: std::collections::HashSet::new(),
             modal_path_focus: cx.focus_handle(),
             modal_custom_group_focus: cx.focus_handle(),
         }
@@ -370,6 +452,12 @@ impl VantageApp {
     /// Refresh whenever the app becomes active. This is deliberately silent:
     /// the current rows remain visible until the fresh snapshot arrives.
     pub fn refresh_on_focus(&mut self, cx: &mut Context<Self>) {
+        // The running scan already reads the workspace; queueing a second full
+        // scan behind it would only repeat that work.
+        if self.scan_in_flight {
+            self.last_focus_refresh = Some(Instant::now());
+            return;
+        }
         let now = Instant::now();
         if self
             .last_focus_refresh
@@ -387,13 +475,32 @@ impl VantageApp {
         self.begin_scan(Some(roots), false, cx);
     }
 
+    /// Queue a scan, or remember it while another one is already running.
+    ///
+    /// Watchers can report dirty roots many times a second during a build.
+    /// Coalescing them keeps at most one follow-up scan pending, and a
+    /// full-workspace request supersedes the collected roots instead of being
+    /// queued behind them.
     fn begin_scan(&mut self, roots: Option<Vec<PathBuf>>, silent: bool, cx: &mut Context<Self>) {
+        if self.scan_in_flight {
+            self.pending_scans.push(roots, silent);
+            if !silent {
+                self.is_scanning = true;
+                cx.notify();
+            }
+            return;
+        }
+        self.launch_scan(roots, silent, cx);
+    }
+
+    fn launch_scan(&mut self, roots: Option<Vec<PathBuf>>, silent: bool, cx: &mut Context<Self>) {
         let Some(backend) = self.backend.clone() else {
             self.scan_errors = vec!["vantage-core engine unavailable".to_string()];
             cx.notify();
             return;
         };
 
+        self.scan_in_flight = true;
         self.scan_seq = self.scan_seq.wrapping_add(1);
         let seq = self.scan_seq;
         if !silent {
@@ -414,11 +521,15 @@ impl VantageApp {
                 .await;
 
             this.update(cx, |app, cx| {
+                // A newer scan owns the state; leave it in flight for that one.
                 if app.scan_seq != seq {
                     return;
                 }
+                app.scan_in_flight = false;
                 app.is_scanning = false;
                 app.scan_errors = errors;
+                let updated_ids: Vec<String> =
+                    repositories.iter().map(|repo| repo.id.clone()).collect();
 
                 if dirty {
                     for repository in repositories {
@@ -427,38 +538,39 @@ impl VantageApp {
                             None => app.repos.push(repository),
                         }
                     }
-                    for repo in &app.repos {
-                        if !app.groups.contains(&repo.workspace) {
-                            app.groups.push(repo.workspace.clone());
-                        }
-                    }
-                    app.prune_selection();
-                    cx.notify();
-                    return;
+                } else {
+                    app.repos = repositories;
+
+                    // Keep the configured order, then append groups only found
+                    // on disk.
+                    app.bind_watcher(cx);
+                    app.maybe_fetch_on_launch(cx);
                 }
 
-                app.repos = repositories;
-
-                // Keep the configured order, then append groups only found
-                // on disk.
                 for repo in &app.repos {
                     if !app.groups.contains(&repo.workspace) {
                         app.groups.push(repo.workspace.clone());
                     }
                 }
 
-                if app.active_group != "All" && !app.groups.contains(&app.active_group) {
-                    app.active_group = "All".to_string();
-                }
-                if let Some(id) = app.selected_repo_id.clone() {
-                    if !app.repos.iter().any(|repo| repo.id == id) {
-                        app.selected_repo_id = None;
+                if !dirty {
+                    if app.active_group != "All" && !app.groups.contains(&app.active_group) {
+                        app.active_group = "All".to_string();
+                    }
+                    if let Some(id) = app.selected_repo_id.clone() {
+                        if !app.repos.iter().any(|repo| repo.id == id) {
+                            app.selected_repo_id = None;
+                        }
                     }
                 }
 
                 app.prune_selection();
-                app.bind_watcher(cx);
-                app.maybe_fetch_on_launch(cx);
+                app.invalidate_file_previews_for(&updated_ids);
+                app.refresh_expanded_preview(cx);
+
+                if let Some((roots, silent)) = app.pending_scans.take() {
+                    app.launch_scan(roots, silent, cx);
+                }
                 cx.notify();
             })
             .ok();
@@ -663,6 +775,130 @@ impl VantageApp {
         self.selected_repo_id
             .as_ref()
             .and_then(|id| self.repos.iter().find(|r| &r.id == id))
+    }
+
+    /// The loaded preview for `file`, when it still matches the row's numbers.
+    pub fn file_preview(&self, repo_id: &str, file: &ChangedFile) -> Option<&FilePreview> {
+        self.file_previews
+            .get(&(repo_id.to_string(), file.path.clone()))
+            .filter(|preview| preview.matches(file))
+    }
+
+    /// Whether a preview request for this row is still running.
+    pub fn file_preview_pending(&self, repo_id: &str, path: &str) -> bool {
+        self.file_previews_pending
+            .contains(&(repo_id.to_string(), path.to_string()))
+    }
+
+    /// Read one file's patch because its row was just expanded.
+    ///
+    /// The scan deliberately carries no patches; this is the only place a
+    /// changed-file diff is read. Requests are keyed by repository and path so
+    /// a second click while the first read runs does not start a duplicate.
+    pub(crate) fn request_file_preview(
+        &mut self,
+        repo_id: String,
+        file: &ChangedFile,
+        cx: &mut Context<Self>,
+    ) {
+        if crate::views::inspector::is_image_path(&file.path) {
+            return;
+        }
+
+        let key = (repo_id.clone(), file.path.clone());
+        if self.file_previews_pending.contains(&key)
+            || self
+                .file_previews
+                .get(&key)
+                .is_some_and(|preview| preview.error.is_none() && preview.matches(file))
+        {
+            return;
+        }
+
+        let Some(backend) = self.backend.clone() else {
+            return;
+        };
+        let path = file.path.clone();
+        let staged = file.staged;
+        let status = file.status;
+        let additions = file.additions;
+        let deletions = file.deletions;
+        let orig_path = file.orig_path.clone();
+
+        self.file_previews_pending.insert(key.clone());
+        cx.spawn(async move |this, cx| {
+            let result = cx
+                .background_executor()
+                .spawn(async move {
+                    backend.file_preview(&repo_id, &path, staged, status, orig_path.as_deref())
+                })
+                .await;
+
+            this.update(cx, |app, cx| {
+                app.file_previews_pending.remove(&key);
+                let (lines, truncated, error) = match result {
+                    Ok((lines, truncated)) => (lines, truncated, None),
+                    Err(error) => (Vec::new(), false, Some(error.to_string())),
+                };
+                let failed = error.is_some();
+                app.file_previews.insert(
+                    key,
+                    FilePreview {
+                        staged,
+                        status,
+                        additions,
+                        deletions,
+                        lines,
+                        truncated,
+                        error,
+                    },
+                );
+                // A scan may have replaced the row while this read ran; reload
+                // only when the preview no longer describes the expanded file.
+                // A failed read waits for the next scan or a fresh expand, so
+                // one bad patch cannot spin retries.
+                if !failed {
+                    app.refresh_expanded_preview(cx);
+                }
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
+    }
+
+    /// Drop previews for rows the scan just re-read. The expanded row reloads
+    /// through [`Self::refresh_expanded_preview`]; every other row will load
+    /// again if the user opens it.
+    fn invalidate_file_previews_for(&mut self, repo_ids: &[String]) {
+        if repo_ids.is_empty() {
+            return;
+        }
+        let updated: HashSet<&str> = repo_ids.iter().map(String::as_str).collect();
+        self.file_previews
+            .retain(|(repo_id, _), _| !updated.contains(repo_id.as_str()));
+        // Requests already running are kept: removing their key would start a
+        // duplicate read, and their completion re-checks the new row anyway.
+    }
+
+    /// Reload the expanded row's preview after a scan replaced its file list.
+    fn refresh_expanded_preview(&mut self, cx: &mut Context<Self>) {
+        let Some(path) = self.expanded_file.clone() else {
+            return;
+        };
+        let Some(repo) = self.selected_repo() else {
+            return;
+        };
+        let Some(file) = repo
+            .uncommitted_files
+            .iter()
+            .find(|file| file.path == path)
+            .cloned()
+        else {
+            return;
+        };
+        let repo_id = repo.id.clone();
+        self.request_file_preview(repo_id, &file, cx);
     }
 
     // ---- actions ---------------------------------------------------------
@@ -2392,6 +2628,9 @@ impl VantageApp {
         };
         let id = list[next].id.clone();
         drop(list);
+        if self.selected_repo_id.as_deref() != Some(id.as_str()) {
+            self.expanded_file = None;
+        }
         self.selected_repo_id = Some(id);
         cx.notify();
     }
@@ -4228,6 +4467,7 @@ mod tests {
             additions: 1,
             deletions: 0,
             staged,
+            orig_path: None,
             diff_preview: Vec::new(),
             preview_truncated: false,
         }
@@ -4253,6 +4493,74 @@ mod tests {
             branches: Vec::new(),
             recent_commits: Vec::new(),
         }
+    }
+
+    fn root(name: &str) -> PathBuf {
+        PathBuf::from(format!("/tmp/{name}"))
+    }
+
+    #[test]
+    fn dirty_scan_requests_are_coalesced_into_one_follow_up() {
+        let mut pending = PendingScans::default();
+        pending.push(Some(vec![root("one"), root("two")]), false);
+        pending.push(Some(vec![root("two"), root("three")]), false);
+
+        let (roots, silent) = pending.take().expect("one follow-up scan");
+        let mut roots = roots.expect("dirty roots stay dirty");
+        roots.sort();
+        assert_eq!(roots, vec![root("one"), root("three"), root("two")]);
+        assert!(!silent);
+        assert!(
+            pending.take().is_none(),
+            "taking the follow-up must empty the queue"
+        );
+    }
+
+    #[test]
+    fn a_full_scan_supersedes_queued_dirty_roots() {
+        let mut pending = PendingScans::default();
+        pending.push(Some(vec![root("one")]), true);
+        pending.push(None, true);
+
+        let (roots, silent) = pending.take().expect("the full scan is queued");
+        assert!(roots.is_none(), "one full scan replaces the dirty subset");
+        assert!(silent);
+    }
+
+    #[test]
+    fn a_visible_request_makes_the_coalesced_scan_visible() {
+        let mut pending = PendingScans::default();
+        pending.push(Some(vec![root("one")]), true);
+        pending.push(Some(vec![root("two")]), false);
+
+        let (_, silent) = pending.take().expect("the dirty scan is queued");
+        assert!(
+            !silent,
+            "a scan is shown when any request behind it asked for the spinner"
+        );
+    }
+
+    #[test]
+    fn a_preview_only_matches_the_row_it_was_read_for() {
+        let preview = FilePreview {
+            staged: false,
+            status: FileChangeStatus::Modified,
+            additions: 2,
+            deletions: 1,
+            lines: Vec::new(),
+            truncated: false,
+            error: None,
+        };
+        let mut matching = file("src/lib.rs", false);
+        matching.additions = 2;
+        matching.deletions = 1;
+        assert!(preview.matches(&matching));
+
+        matching.additions = 3;
+        assert!(
+            !preview.matches(&matching),
+            "a rescan with new counts must not show the old patch"
+        );
     }
 
     fn repo_with_commits(shas: &[&str]) -> Repository {

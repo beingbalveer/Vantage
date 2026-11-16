@@ -9,6 +9,7 @@ use std::path::Path;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use tokio::runtime::Runtime;
+use vantage_core::git::status::StatusRecord;
 use vantage_core::state::{RepoEntry, RepoStatus};
 use vantage_core::{repos, GitRunner};
 
@@ -28,11 +29,14 @@ const MINUTES_PER_MONTH: i64 = MINUTES_PER_DAY * 30;
 const MINUTES_PER_YEAR: i64 = MINUTES_PER_DAY * 365;
 
 /// `group` is the workspace the user assigned the repo to, or `"Ungrouped"`.
+/// `records` are the paths from the same status query as `status`; patch
+/// previews are loaded on demand rather than during the scan.
 pub fn map_repo(
     rt: &Runtime,
     runner: &GitRunner,
     entry: &RepoEntry,
     status: &RepoStatus,
+    records: &[StatusRecord],
     group: String,
 ) -> Repository {
     let path = Path::new(&entry.path);
@@ -40,7 +44,7 @@ pub fn map_repo(
     let current_branch = current_branch(status, &default_branch);
     let (last_activity_label, last_activity_minutes) = last_activity(status);
 
-    let uncommitted_files = details::changed_files(rt, runner, path);
+    let uncommitted_files = details::changed_files(rt, runner, path, records);
     let branches = details::branches(rt, runner, path, &current_branch, &default_branch);
     // "detached" is only a display label; `git log` must be asked for HEAD.
     let commit_branch = if current_branch == DETACHED {
@@ -244,7 +248,7 @@ fn days_from_civil(year: i64, month: u32, day: u32) -> Option<i64> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use vantage_core::git::status::query_repo_status;
+    use vantage_core::git::status::query_repo_status_snapshot;
     use vantage_core::state::MarkerState;
 
     fn status() -> RepoStatus {
@@ -435,9 +439,22 @@ mod tests {
             notes: Vec::new(),
         };
 
-        let status = rt.block_on(query_repo_status(&runner, &entry.id, &dir, None, None));
-        assert!(status.error.is_none(), "{:?}", status.error);
-        let clean = map_repo(&rt, &runner, &entry, &status, "Ungrouped".to_string());
+        let snapshot = rt.block_on(query_repo_status_snapshot(
+            &runner, &entry.id, &dir, None, None,
+        ));
+        assert!(
+            snapshot.status.error.is_none(),
+            "{:?}",
+            snapshot.status.error
+        );
+        let clean = map_repo(
+            &rt,
+            &runner,
+            &entry,
+            &snapshot.status,
+            &snapshot.records,
+            "Ungrouped".to_string(),
+        );
         assert_eq!(clean.id, "repo-fixture");
         assert_eq!(clean.name, "fixture");
         assert_eq!(clean.workspace, "Ungrouped");
@@ -480,8 +497,17 @@ mod tests {
 
         // An uncommitted edit flips the row to Modified and lists the file.
         std::fs::write(dir.join("lib.ts"), "export const one = 2;\n").unwrap();
-        let status = rt.block_on(query_repo_status(&runner, &entry.id, &dir, None, None));
-        let dirty = map_repo(&rt, &runner, &entry, &status, "AI Tools".to_string());
+        let snapshot = rt.block_on(query_repo_status_snapshot(
+            &runner, &entry.id, &dir, None, None,
+        ));
+        let dirty = map_repo(
+            &rt,
+            &runner,
+            &entry,
+            &snapshot.status,
+            &snapshot.records,
+            "AI Tools".to_string(),
+        );
         assert_eq!(dirty.sync_state, RepoSyncState::Modified);
         assert_eq!(dirty.workspace, "AI Tools");
         assert_eq!(dirty.uncommitted_files.len(), 1);
@@ -497,8 +523,17 @@ mod tests {
         git(&dir, &["remote", "add", "origin", remote.to_str().unwrap()]);
         git(&dir, &["commit", "-q", "-am", "second commit"]);
 
-        let status = rt.block_on(query_repo_status(&runner, &entry.id, &dir, None, None));
-        let with_remote = map_repo(&rt, &runner, &entry, &status, "Ungrouped".to_string());
+        let snapshot = rt.block_on(query_repo_status_snapshot(
+            &runner, &entry.id, &dir, None, None,
+        ));
+        let with_remote = map_repo(
+            &rt,
+            &runner,
+            &entry,
+            &snapshot.status,
+            &snapshot.records,
+            "Ungrouped".to_string(),
+        );
         assert!(with_remote.has_remote);
         assert!(
             !with_remote.has_upstream,
@@ -506,8 +541,17 @@ mod tests {
         );
 
         git(&dir, &["push", "-q", "-u", "origin", "main"]);
-        let status = rt.block_on(query_repo_status(&runner, &entry.id, &dir, None, None));
-        let published = map_repo(&rt, &runner, &entry, &status, "Ungrouped".to_string());
+        let snapshot = rt.block_on(query_repo_status_snapshot(
+            &runner, &entry.id, &dir, None, None,
+        ));
+        let published = map_repo(
+            &rt,
+            &runner,
+            &entry,
+            &snapshot.status,
+            &snapshot.records,
+            "Ungrouped".to_string(),
+        );
         assert!(published.has_remote);
         assert!(published.has_upstream, "push -u sets the upstream");
 

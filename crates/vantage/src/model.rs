@@ -77,6 +77,8 @@ pub struct ChangedFile {
     pub additions: u32,
     pub deletions: u32,
     pub staged: bool,
+    /// Path before a rename/copy, used to load its patch on demand.
+    pub orig_path: Option<String>,
     pub diff_preview: Vec<PreviewLine>,
     /// The preview stopped at the line cap; the view says so.
     pub preview_truncated: bool,

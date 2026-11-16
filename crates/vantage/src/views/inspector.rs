@@ -609,6 +609,8 @@ impl VantageApp {
             let is_expanded = expanded == Some(file.path.as_str());
             let repo_id = repo.id.clone();
             let file_path = file.path.clone();
+            let preview_repo_id = repo.id.clone();
+            let preview_file = file.clone();
 
             let mut row = div()
                 .flex()
@@ -688,13 +690,17 @@ impl VantageApp {
                                         .cursor_pointer()
                                         .hover(|s| s.underline())
                                         .on_click(cx.listener(move |this, _e, _w, cx| {
-                                            this.expanded_file = if this.expanded_file.as_deref()
-                                                == Some(path.as_str())
-                                            {
-                                                None
-                                            } else {
-                                                Some(path.clone())
-                                            };
+                                            let opening = this.expanded_file.as_deref()
+                                                != Some(path.as_str());
+                                            this.expanded_file =
+                                                if opening { Some(path.clone()) } else { None };
+                                            if opening {
+                                                this.request_file_preview(
+                                                    preview_repo_id.clone(),
+                                                    &preview_file,
+                                                    cx,
+                                                );
+                                            }
                                             cx.notify();
                                         }));
                                     if !directory.is_empty() {
@@ -785,9 +791,12 @@ impl VantageApp {
                     .text_size(px(11.0))
                     .line_height(px(16.0));
 
-                if file.diff_preview.is_empty() {
-                    diff = diff.child(div().px(px(12.0)).py(px(2.0)).fg(theme.text_dim).child(
-                        match file.status {
+                let empty_message = |theme: &crate::theme::Theme| {
+                    div()
+                        .px(px(12.0))
+                        .py(px(2.0))
+                        .fg(theme.text_dim)
+                        .child(match file.status {
                             crate::model::FileChangeStatus::Untracked => {
                                 "New file — nothing to diff against yet."
                             }
@@ -795,8 +804,45 @@ impl VantageApp {
                                 "Conflicted file — resolve it in your editor to see a diff."
                             }
                             _ => "No textual changes.",
-                        },
-                    ));
+                        })
+                };
+
+                if let Some(preview) = self.file_preview(&repo.id, file) {
+                    if preview.error.is_some() {
+                        diff = diff.child(
+                            div()
+                                .px(px(12.0))
+                                .py(px(2.0))
+                                .fg(theme.text_dim)
+                                .child("Preview unavailable."),
+                        );
+                    } else if preview.lines.is_empty() {
+                        diff = diff.child(empty_message(&theme));
+                    } else {
+                        for line in &preview.lines {
+                            diff = diff.child(preview_row(&theme, line));
+                        }
+                        if preview.truncated {
+                            diff = diff.child(
+                                div()
+                                    .px(px(10.0))
+                                    .py(px(4.0))
+                                    .xs()
+                                    .fg(theme.label_muted)
+                                    .child("Preview stops here — open the file for the rest."),
+                            );
+                        }
+                    }
+                } else if self.file_preview_pending(&repo.id, &file.path) {
+                    diff = diff.child(
+                        div()
+                            .px(px(12.0))
+                            .py(px(2.0))
+                            .fg(theme.text_dim)
+                            .child("Loading preview…"),
+                    );
+                } else if file.diff_preview.is_empty() {
+                    diff = diff.child(empty_message(&theme));
                 } else {
                     for line in &file.diff_preview {
                         diff = diff.child(preview_row(&theme, line));
@@ -1721,7 +1767,7 @@ impl VantageApp {
 }
 
 /// Extensions git renders as "Binary files differ"; we show the picture itself.
-fn is_image_path(path: &str) -> bool {
+pub(crate) fn is_image_path(path: &str) -> bool {
     matches!(
         path.rsplit_once('.').map(|(_, ext)| ext.to_ascii_lowercase()),
         Some(ext) if matches!(ext.as_str(), "png" | "jpg" | "jpeg" | "gif" | "webp" | "bmp")
