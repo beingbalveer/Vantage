@@ -6,6 +6,12 @@ body:
     attributes:
       value: |
         Thanks for taking the time to fill out this bug report!
+
+        > **Supported platforms**
+        >
+        > Release builds are macOS-only (Apple Silicon and Intel, macOS 13 or
+        > newer). Linux is supported from source builds only. Windows is not
+        > supported.
   - type: input
     id: version
     attributes:
@@ -18,10 +24,10 @@ body:
     id: os
     attributes:
       label: Operating System
+      description: Release builds are macOS-only; Linux is source-build only.
       options:
         - macOS (Apple Silicon)
         - macOS (Intel)
-        - Windows 10/11
         - Linux (Ubuntu / Debian)
         - Linux (Arch / Fedora / Other)
     validations:
