@@ -50,6 +50,8 @@ pub fn map_repo(
     };
     let recent_commits = details::commits(rt, runner, path, commit_branch);
     let has_remote = details::has_remote(path);
+    let local_only_commits =
+        details::local_only_commits(rt, runner, path, status.upstream.as_deref(), has_remote);
 
     Repository {
         id: entry.id.clone(),
@@ -69,6 +71,7 @@ pub fn map_repo(
         uncommitted_files,
         branches,
         recent_commits,
+        local_only_commits,
     }
 }
 
@@ -461,6 +464,10 @@ mod tests {
             "a work tree with no origin must not offer fetch/pull/push"
         );
         assert!(!clean.has_upstream);
+        assert!(
+            clean.local_only_commits.is_empty(),
+            "a repository with no remote has nothing to push"
+        );
         assert!(!clean.local_path.is_empty());
         assert!(
             clean
@@ -504,12 +511,53 @@ mod tests {
             !with_remote.has_upstream,
             "a branch that was never pushed tracks nothing"
         );
+        assert_eq!(
+            with_remote.local_only_commits.len(),
+            2,
+            "with no upstream, commits absent from every remote are local"
+        );
+        assert_eq!(
+            with_remote.local_only_prefix_len(),
+            with_remote.recent_commits.len(),
+            "both visible commits are local"
+        );
 
         git(&dir, &["push", "-q", "-u", "origin", "main"]);
         let status = rt.block_on(query_repo_status(&runner, &entry.id, &dir, None, None));
         let published = map_repo(&rt, &runner, &entry, &status, "Ungrouped".to_string());
         assert!(published.has_remote);
         assert!(published.has_upstream, "push -u sets the upstream");
+        assert!(
+            published.local_only_commits.is_empty(),
+            "everything is on the upstream after a push"
+        );
+        assert_eq!(published.local_only_prefix_len(), 0);
+
+        // A new local commit is the only one in the range, even though older
+        // rows are on the remote.
+        std::fs::write(dir.join("lib.ts"), "export const one = 3;\n").unwrap();
+        git(&dir, &["commit", "-q", "-am", "third commit"]);
+        let status = rt.block_on(query_repo_status(&runner, &entry.id, &dir, None, None));
+        let ahead = map_repo(&rt, &runner, &entry, &status, "Ungrouped".to_string());
+        let tip = ahead.recent_commits.first().expect("the new tip is listed");
+        assert_eq!(
+            ahead.local_only_commits,
+            [tip.full_sha.clone()].into_iter().collect(),
+            "only the commit the upstream does not have is local"
+        );
+        assert!(
+            ahead.commit_is_local_only(tip),
+            "the newest row carries the marker"
+        );
+        assert_eq!(ahead.local_only_prefix_len(), 1);
+        assert!(
+            ahead
+                .recent_commits
+                .iter()
+                .skip(1)
+                .all(|commit| !ahead.commit_is_local_only(commit)),
+            "older, pushed commits stay unmarked"
+        );
 
         std::fs::remove_dir_all(&remote).ok();
         std::fs::remove_dir_all(&dir).ok();

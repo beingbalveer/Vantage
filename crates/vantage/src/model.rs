@@ -1,5 +1,7 @@
 //! Mirrors `src/types/repo.ts` from the Vantage React app, field for field.
 
+use std::collections::HashSet;
+
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum FileChangeStatus {
     Modified,
@@ -93,7 +95,11 @@ pub struct BranchInfo {
 
 #[derive(Clone, Debug)]
 pub struct CommitEntry {
+    /// Short object name shown in the row.
     pub sha: String,
+    /// Full object name, used to match the row against the commits a remote
+    /// actually has. Short SHAs are ambiguous and not safe for that lookup.
+    pub full_sha: String,
     pub message: String,
     pub author: String,
     /// The author's email, used to look up their GitHub photo for the row icon.
@@ -137,18 +143,36 @@ pub struct Repository {
     pub uncommitted_files: Vec<ChangedFile>,
     pub branches: Vec<BranchInfo>,
     pub recent_commits: Vec<CommitEntry>,
+    /// Full SHAs of commits reachable from HEAD that the upstream does not
+    /// have — or, when the branch tracks nothing, that no remote has.
+    ///
+    /// This is the actual range (`@{upstream}..HEAD` / `HEAD --not --remotes`),
+    /// not the newest N rows: on a diverged branch an upstream commit can sit
+    /// between two local ones in the log. A repository with no remote has
+    /// nothing to push to, so the set is empty.
+    pub local_only_commits: HashSet<String>,
 }
 
 impl Repository {
-    /// Whether the commit at `index` in the newest-first list has not reached
-    /// any remote.
+    /// Whether this commit has not reached the upstream (or, on a branch that
+    /// tracks nothing, any remote). A repository with no remote has nothing to
+    /// push to, so it gets no badges.
+    pub fn commit_is_local_only(&self, commit: &CommitEntry) -> bool {
+        self.has_remote && self.local_only_commits.contains(&commit.full_sha)
+    }
+
+    /// Number of local-only commits at the top of the newest-first list.
     ///
-    /// `ahead_count` is git's own count of commits the upstream — or, on a
-    /// branch that tracks nothing, any remote — does not have, so the newest N
-    /// rows are exactly the local ones. A repository with no remote has nothing
-    /// to push to, so it gets no badges.
-    pub fn commit_is_local_only(&self, index: usize) -> bool {
-        self.has_remote && (index as i32) < self.ahead_count
+    /// The divider belongs after this run. It is deliberately not the size of
+    /// [`Self::local_only_commits`]: history can interleave a pushed commit
+    /// between two local ones, and positioning by the total count would label
+    /// that pushed commit as local. The per-row badge remains the source of
+    /// truth for every commit.
+    pub fn local_only_prefix_len(&self) -> usize {
+        self.recent_commits
+            .iter()
+            .take_while(|commit| self.commit_is_local_only(commit))
+            .count()
     }
 
     /// `RepoSyncState` drives the Working Tree cell (see StatusText.tsx).
@@ -175,7 +199,18 @@ pub fn file_status_code(status: FileChangeStatus) -> &'static str {
 mod tests {
     use super::*;
 
-    fn repo(ahead: i32, has_remote: bool) -> Repository {
+    fn commit(sha: &str) -> CommitEntry {
+        CommitEntry {
+            sha: sha.chars().take(7).collect(),
+            full_sha: sha.to_string(),
+            message: format!("subject of {sha}"),
+            author: "QA".to_string(),
+            author_email: "qa@example.com".to_string(),
+            relative_time: "just now".to_string(),
+        }
+    }
+
+    fn repo(has_remote: bool, has_upstream: bool) -> Repository {
         Repository {
             id: "repo-1".to_string(),
             name: "fixture".to_string(),
@@ -186,38 +221,124 @@ mod tests {
             current_branch: "main".to_string(),
             author: None,
             sync_state: RepoSyncState::Ahead,
-            ahead_count: ahead,
+            ahead_count: 0,
             behind_count: 0,
-            has_upstream: true,
+            has_upstream,
             last_activity_label: "just now".to_string(),
             last_activity_minutes: 0,
             uncommitted_files: Vec::new(),
             branches: Vec::new(),
             recent_commits: Vec::new(),
+            local_only_commits: HashSet::new(),
         }
     }
 
     #[test]
-    fn the_newest_unpushed_commits_are_marked_local() {
-        let repo = repo(2, true);
-        assert!(repo.commit_is_local_only(0), "the tip is never pushed");
-        assert!(repo.commit_is_local_only(1));
+    fn ahead_only_commits_are_marked_by_sha() {
+        let mut repo = repo(true, true);
+        repo.recent_commits = vec![
+            commit("cccccccccccccccccccccccccccccccccccccccc"),
+            commit("bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"),
+            commit("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"),
+        ];
+        repo.local_only_commits = repo.recent_commits[..2]
+            .iter()
+            .map(|commit| commit.full_sha.clone())
+            .collect();
+
+        assert!(repo.commit_is_local_only(&repo.recent_commits[0]));
+        assert!(repo.commit_is_local_only(&repo.recent_commits[1]));
         assert!(
-            !repo.commit_is_local_only(2),
-            "everything older is on the remote"
+            !repo.commit_is_local_only(&repo.recent_commits[2]),
+            "everything older is on the upstream"
+        );
+        assert_eq!(
+            repo.local_only_prefix_len(),
+            2,
+            "the divider follows the leading run"
+        );
+    }
+
+    #[test]
+    fn diverged_history_marks_only_the_commits_absent_from_upstream() {
+        // Local:   aaaaaaa - bbbbbbb - ddddddd (HEAD, merge)
+        // Upstream: aaaaaaa - ccccccc
+        // `ddddddd` and `bbbbbbb` are local; `ccccccc` is already upstream but
+        // sorts between them in the newest-first log.
+        let mut repo = repo(true, true);
+        repo.recent_commits = vec![
+            commit("dddddddddddddddddddddddddddddddddddddddd"),
+            commit("cccccccccccccccccccccccccccccccccccccccc"),
+            commit("bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"),
+            commit("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"),
+        ];
+        repo.local_only_commits = [
+            "dddddddddddddddddddddddddddddddddddddddd",
+            "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        ]
+        .iter()
+        .map(|sha| sha.to_string())
+        .collect();
+
+        assert!(repo.commit_is_local_only(&repo.recent_commits[0]));
+        assert!(
+            !repo.commit_is_local_only(&repo.recent_commits[1]),
+            "an upstream commit between two local ones must not be marked"
+        );
+        assert!(repo.commit_is_local_only(&repo.recent_commits[2]));
+        assert!(!repo.commit_is_local_only(&repo.recent_commits[3]));
+        assert_eq!(
+            repo.local_only_prefix_len(),
+            1,
+            "the divider stops at the first pushed commit; badges mark the rest"
         );
     }
 
     #[test]
     fn a_fully_pushed_branch_has_no_local_commits() {
-        let repo = repo(0, true);
-        assert!(!repo.commit_is_local_only(0));
+        let mut repo = repo(true, true);
+        repo.recent_commits = vec![commit("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")];
+        assert!(!repo.commit_is_local_only(&repo.recent_commits[0]));
+        assert_eq!(repo.local_only_prefix_len(), 0);
+    }
+
+    #[test]
+    fn a_branch_without_an_upstream_uses_the_all_remotes_set() {
+        let mut repo = repo(true, false);
+        repo.recent_commits = vec![
+            commit("bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"),
+            commit("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"),
+        ];
+        // `HEAD --not --remotes`: neither commit is on any remote yet, so both
+        // are local even though the branch tracks nothing.
+        repo.local_only_commits = repo
+            .recent_commits
+            .iter()
+            .map(|commit| commit.full_sha.clone())
+            .collect();
+
+        assert!(repo.commit_is_local_only(&repo.recent_commits[0]));
+        assert!(repo.commit_is_local_only(&repo.recent_commits[1]));
+        assert_eq!(repo.local_only_prefix_len(), 2);
     }
 
     #[test]
     fn a_repository_without_a_remote_has_nothing_to_push() {
-        let repo = repo(3, false);
-        assert!(!repo.commit_is_local_only(0));
-        assert!(!repo.commit_is_local_only(2));
+        let mut repo = repo(false, false);
+        repo.recent_commits = vec![
+            commit("bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"),
+            commit("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"),
+        ];
+        // Even a stale/hand-built set must not produce badges without a push
+        // target.
+        repo.local_only_commits = repo
+            .recent_commits
+            .iter()
+            .map(|commit| commit.full_sha.clone())
+            .collect();
+
+        assert!(!repo.commit_is_local_only(&repo.recent_commits[0]));
+        assert!(!repo.commit_is_local_only(&repo.recent_commits[1]));
+        assert_eq!(repo.local_only_prefix_len(), 0);
     }
 }
