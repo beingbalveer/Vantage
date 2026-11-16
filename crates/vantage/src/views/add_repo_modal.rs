@@ -3,9 +3,9 @@
 
 use gpui::{deferred, div, prelude::*, px, relative, Context, IntoElement, Styled, Window};
 
-use crate::app::{FieldId, VantageApp};
-use crate::theme::{FONT_SANS, LH_SM, TEXT_SM};
-use crate::ui::{icon, IconSize};
+use crate::app::{FieldId, ScanPreview, VantageApp};
+use crate::theme::{Theme, FONT_SANS, LH_SM, TEXT_SM};
+use crate::ui::{checkbox, icon, spinner, IconSize};
 use crate::ui::{secondary_button, FieldVariant, Txt};
 
 impl VantageApp {
@@ -17,6 +17,12 @@ impl VantageApp {
         let theme = self.theme;
         let busy = self.modal_is_adding;
         let detected_name = self.modal_detected_repo_name();
+        let scan_mode = self.modal_scan.is_some() || self.modal_is_scanning;
+        let title = if scan_mode {
+            "Add Repositories from Folder"
+        } else {
+            "Add Local Repository"
+        };
 
         let backdrop = div()
             .debug_selector(|| "add-repo-backdrop".to_string())
@@ -58,7 +64,7 @@ impl VantageApp {
                             .display_base()
                             .semibold()
                             .fg(theme.text_app)
-                            .child("Add Local Repository"),
+                            .child(title),
                     )
                     .child(
                         crate::ui::icon_button(&theme, "x")
@@ -84,57 +90,85 @@ impl VantageApp {
             );
         }
 
-        // Path row: the text field plus a compact native folder picker.
-        let path_field = self.text_field(
-            FieldId::ModalPath,
-            "/Users/you/Documents/GitHub/project",
-            FieldVariant::Form,
-            window,
-            cx,
-        );
-        let browse = secondary_button(&theme, "Browse", Some("folder-git-2"))
-            .id("modal-browse")
-            .py(px(10.0))
-            .when(busy, |button| button.opacity(0.5))
-            .when(!busy, |button| {
-                button.on_click(cx.listener(|this, _e, _w, cx| this.browse_for_repo(cx)))
-            });
+        // Path row: the text field plus a compact native folder picker. A scan
+        // replaces it with the checkbox preview below.
+        if self.modal_is_scanning {
+            form = form.child(self.render_scanning());
+        } else if let Some(scan) = self.modal_scan.clone() {
+            form = form.child(self.render_scan_preview(&scan, cx));
+        } else {
+            let path_field = self.text_field(
+                FieldId::ModalPath,
+                "/Users/you/Documents/GitHub/project",
+                FieldVariant::Form,
+                window,
+                cx,
+            );
+            let browse = secondary_button(&theme, "Browse", Some("folder-git-2"))
+                .id("modal-browse")
+                .py(px(10.0))
+                .when(busy, |button| button.opacity(0.5))
+                .when(!busy, |button| {
+                    button.on_click(cx.listener(|this, _e, _w, cx| this.browse_for_repo(cx)))
+                });
 
-        let hint = match detected_name {
-            Some(name) => div()
-                .flex()
-                .items_center()
-                .gap(px(6.0))
-                .child(icon("check", IconSize::Xs, theme.status_green))
-                .child(
-                    div()
-                        .x11()
-                        .fg(theme.text_body)
-                        .child(format!("Ready to add {name}")),
-                ),
-            None => div()
-                .x11()
-                .fg(theme.text_dim)
-                .child("Vantage reads the name, branch, and stack from this folder."),
-        };
+            let hint = match detected_name {
+                Some(name) => div()
+                    .flex()
+                    .items_center()
+                    .gap(px(6.0))
+                    .child(icon("check", IconSize::Xs, theme.status_green))
+                    .child(
+                        div()
+                            .x11()
+                            .fg(theme.text_body)
+                            .child(format!("Ready to add {name}")),
+                    ),
+                None => div()
+                    .x11()
+                    .fg(theme.text_dim)
+                    .child("Vantage reads the name and branch from this folder."),
+            };
 
-        form = form.child(
-            div()
-                .flex()
-                .flex_col()
-                .w_full()
-                .child(field_label(&theme, "Repository Path"))
-                .child(
-                    div()
-                        .flex()
-                        .items_center()
-                        .gap(px(8.0))
-                        .w_full()
-                        .child(div().flex_1().min_w(px(0.0)).child(path_field))
-                        .child(browse),
-                )
-                .child(div().mt(px(6.0)).child(hint)),
-        );
+            form = form.child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .w_full()
+                    .child(field_label(&theme, "Repository Path"))
+                    .child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .gap(px(8.0))
+                            .w_full()
+                            .child(div().flex_1().min_w(px(0.0)).child(path_field))
+                            .child(browse),
+                    )
+                    .child(div().mt(px(6.0)).child(hint))
+                    .child(
+                        div()
+                            .mt(px(8.0))
+                            .flex()
+                            .items_center()
+                            .gap(px(6.0))
+                            .child(icon("folder-git-2", IconSize::Xs, theme.accent))
+                            .child(
+                                div()
+                                    .id("modal-scan-folder")
+                                    .cursor_pointer()
+                                    .xs()
+                                    .medium()
+                                    .fg(theme.accent)
+                                    .hover(|style| style.underline())
+                                    .on_click(
+                                        cx.listener(|this, _e, _w, cx| this.pick_scan_folder(cx)),
+                                    )
+                                    .child("Scan Folder for Repositories…"),
+                            ),
+                    ),
+            );
+        }
 
         form = form.child(
             div()
@@ -162,8 +196,34 @@ impl VantageApp {
             );
         }
 
-        let can_submit = !busy && !self.modal_path.value.trim().is_empty();
-        let submit_label = if busy { "Adding…" } else { "Add Repository" };
+        let scan_count = self
+            .modal_scan
+            .as_ref()
+            .map(ScanPreview::selected_count)
+            .unwrap_or(0);
+        let can_submit = !busy
+            && !self.modal_is_scanning
+            && if scan_mode {
+                scan_count > 0
+            } else {
+                !self.modal_path.value.trim().is_empty()
+            };
+        let submit_label = if busy {
+            "Adding…".to_string()
+        } else if self.modal_is_scanning {
+            "Scanning…".to_string()
+        } else if scan_mode {
+            format!(
+                "Add {scan_count} {}",
+                if scan_count == 1 {
+                    "Repository"
+                } else {
+                    "Repositories"
+                }
+            )
+        } else {
+            "Add Repository".to_string()
+        };
         let mut submit = div()
             .id("modal-submit")
             .px(px(16.0))
@@ -178,18 +238,37 @@ impl VantageApp {
             submit = submit
                 .cursor_pointer()
                 .hover(move |s| s.bg(theme.primary_bg_hover))
-                .on_click(cx.listener(|this, _e, _w, cx| this.submit_add_modal(cx)));
+                .on_click(cx.listener(|this, _e, _w, cx| {
+                    if this.modal_scan.is_some() {
+                        this.submit_scan_add(cx);
+                    } else {
+                        this.submit_add_modal(cx);
+                    }
+                }));
         } else {
             submit = submit.opacity(0.5);
         }
 
+        let mut footer = div()
+            .flex()
+            .items_center()
+            .gap(px(10.0))
+            .pt(px(8.0))
+            .w_full();
+        if scan_mode {
+            let choose = secondary_button(&theme, "Choose Folder…", Some("folder-git-2"))
+                .id("modal-scan-choose")
+                .py(px(8.0))
+                .when(busy || self.modal_is_scanning, |button| button.opacity(0.5))
+                .when(!busy && !self.modal_is_scanning, |button| {
+                    button.on_click(cx.listener(|this, _e, _w, cx| this.pick_scan_folder(cx)))
+                });
+            footer = footer.child(choose);
+        }
+
         form = form.child(
-            div()
-                .flex()
-                .items_center()
-                .justify_end()
-                .gap(px(10.0))
-                .pt(px(8.0))
+            footer
+                .child(div().flex_1())
                 .child(
                     div()
                         .id("modal-cancel")
@@ -223,6 +302,166 @@ impl VantageApp {
             .p(px(16.0))
             .child(backdrop)
             .child(card)
+    }
+
+    fn render_scanning(&self) -> impl IntoElement {
+        let theme = self.theme;
+        div()
+            .flex()
+            .items_center()
+            .gap(px(8.0))
+            .py(px(4.0))
+            .child(spinner(
+                "modal-folder-scan",
+                "refresh-cw",
+                IconSize::Sm,
+                theme.accent,
+            ))
+            .child(div().xs().fg(theme.text_body).child("Scanning folder…"))
+    }
+
+    fn render_scan_preview(&self, scan: &ScanPreview, cx: &mut Context<Self>) -> impl IntoElement {
+        let theme = self.theme;
+        let mut section = div().flex().flex_col().gap(px(10.0)).w_full().child(
+            div()
+                .flex()
+                .flex_col()
+                .w_full()
+                .child(field_label(&theme, "Folder"))
+                .child(
+                    div()
+                        .flex()
+                        .items_center()
+                        .gap(px(6.0))
+                        .child(icon("folder-git-2", IconSize::Xs, theme.icon_idle))
+                        .child(
+                            div()
+                                .x11()
+                                .fg(theme.text_body)
+                                .truncate()
+                                .child(scan.folder.clone()),
+                        ),
+                ),
+        );
+
+        if scan.scanned == 0 {
+            section = section.child(scan_note(
+                &theme,
+                "No Git repositories found in this folder. Vantage looks one level down, skipping hidden folders, node_modules and target.",
+            ));
+        } else if scan.candidates.is_empty() {
+            section = section.child(scan_note(
+                &theme,
+                format!(
+                    "All {} repositories in this folder are already in your workspace.",
+                    scan.scanned
+                ),
+            ));
+        } else {
+            let hidden = scan.scanned.saturating_sub(scan.candidates.len());
+            if hidden > 0 {
+                section = section.child(
+                    div()
+                        .x11()
+                        .fg(theme.text_dim)
+                        .child(format!("{hidden} already in your workspace")),
+                );
+            }
+
+            let all_selected = scan.all_selected();
+            section = section.child(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap(px(8.0))
+                    .w_full()
+                    .child(
+                        checkbox(&theme, all_selected)
+                            .id("modal-scan-select-all")
+                            .on_click(cx.listener(|this, _e, _w, cx| {
+                                let select = this
+                                    .modal_scan
+                                    .as_ref()
+                                    .is_some_and(|scan| !scan.all_selected());
+                                if let Some(scan) = this.modal_scan.as_mut() {
+                                    scan.set_all(select);
+                                }
+                                cx.notify();
+                            })),
+                    )
+                    .child(div().xs().fg(theme.text_body).child("Select all"))
+                    .child(div().flex_1())
+                    .child(div().x11().fg(theme.text_dim).child(format!(
+                        "{} of {} selected",
+                        scan.selected_count(),
+                        scan.candidates.len()
+                    ))),
+            );
+
+            let mut list = div()
+                .id("modal-scan-list")
+                .flex()
+                .flex_col()
+                .w_full()
+                .max_h(px(232.0))
+                .overflow_y_scroll()
+                .border_1()
+                .border_color(theme.divider)
+                .rounded(px(8.0));
+
+            for (index, repo) in scan.candidates.iter().enumerate() {
+                let path = repo.path.clone();
+                list = list.child(
+                    div()
+                        .id(gpui::SharedString::from(format!(
+                            "modal-scan-option-{index}"
+                        )))
+                        .debug_selector(move || format!("modal-scan-option-{index}"))
+                        .flex()
+                        .items_center()
+                        .gap(px(10.0))
+                        .px(px(10.0))
+                        .py(px(7.0))
+                        .when(index > 0, |row| {
+                            row.border_t_1().border_color(theme.divider)
+                        })
+                        .cursor_pointer()
+                        .hover(move |style| style.bg(theme.row_hover_bg))
+                        .on_click(cx.listener(move |this, _e, _w, cx| {
+                            if let Some(scan) = this.modal_scan.as_mut() {
+                                scan.toggle(&path);
+                            }
+                            cx.notify();
+                        }))
+                        .child(checkbox(&theme, repo.selected))
+                        .child(
+                            div()
+                                .flex()
+                                .flex_col()
+                                .flex_1()
+                                .min_w(px(0.0))
+                                .child(
+                                    div()
+                                        .xs()
+                                        .medium()
+                                        .fg(theme.text_app)
+                                        .truncate()
+                                        .child(repo.name.clone()),
+                                )
+                                .child(
+                                    div()
+                                        .x11()
+                                        .fg(theme.text_dim)
+                                        .truncate()
+                                        .child(repo.path.clone()),
+                                ),
+                        ),
+                );
+            }
+            section = section.child(list);
+        }
+
+        section
     }
 
     fn render_modal_group_select(&self, cx: &mut Context<Self>) -> impl IntoElement {
@@ -339,6 +578,21 @@ impl VantageApp {
     }
 }
 
+fn scan_note(theme: &Theme, text: impl Into<String>) -> impl IntoElement {
+    div()
+        .flex()
+        .items_start()
+        .gap(px(8.0))
+        .px(px(10.0))
+        .py(px(9.0))
+        .rounded(px(8.0))
+        .border_1()
+        .border_color(theme.divider)
+        .bg(theme.field_bg)
+        .child(icon("alert-circle", IconSize::Xs, theme.text_dim))
+        .child(div().x11().fg(theme.text_dim).child(text.into()))
+}
+
 fn field_label(theme: &crate::theme::Theme, text: &'static str) -> impl IntoElement {
     div()
         .mb(px(6.0))
@@ -351,8 +605,9 @@ fn field_label(theme: &crate::theme::Theme, text: &'static str) -> impl IntoElem
 #[cfg(test)]
 mod tests {
     use gpui::{point, px, AppContext, Modifiers, TestAppContext};
+    use std::path::{Path, PathBuf};
 
-    use crate::app::VantageApp;
+    use crate::app::{ScanPreview, VantageApp};
     use crate::root::RootView;
 
     #[gpui::test]
@@ -385,6 +640,50 @@ mod tests {
         assert!(
             !cx.update(|_window, cx| app.read(cx).is_add_modal_open),
             "a click outside the dialog should dismiss it"
+        );
+    }
+
+    #[gpui::test]
+    fn scan_preview_row_toggles_its_repository(cx: &mut TestAppContext) {
+        let app = cx.new(VantageApp::new);
+        let (_root, cx) = cx.add_window_view(|_window, _cx| RootView::new(app.clone()));
+
+        cx.update(|window, cx| {
+            app.update(cx, |app, cx| {
+                app.open_add_modal(cx);
+                app.modal_scan = Some(ScanPreview::new(
+                    Path::new("/tmp/workspace"),
+                    2,
+                    vec![
+                        PathBuf::from("/tmp/workspace/one"),
+                        PathBuf::from("/tmp/workspace/two"),
+                    ],
+                ));
+                cx.notify();
+            });
+            window.draw(cx).clear();
+        });
+        cx.run_until_parked();
+        cx.update(|window, cx| {
+            window.draw(cx).clear();
+        });
+
+        let row = cx
+            .debug_bounds("modal-scan-option-0")
+            .expect("first scanned repository");
+        cx.simulate_click(row.center(), Modifiers::none());
+
+        assert!(
+            cx.update(|_window, cx| {
+                !app.read(cx).modal_scan.as_ref().unwrap().candidates[0].selected
+            }),
+            "clicking a scanned row unticks it"
+        );
+        assert!(
+            cx.update(|_window, cx| {
+                app.read(cx).modal_scan.as_ref().unwrap().candidates[1].selected
+            }),
+            "the other row keeps its tick"
         );
     }
 }

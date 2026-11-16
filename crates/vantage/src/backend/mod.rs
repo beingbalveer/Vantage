@@ -46,6 +46,13 @@ pub struct Backend {
     runner: GitRunner,
 }
 
+/// What a batch add produced: the rows that joined the workspace and the paths
+/// git refused, each with its own message.
+pub struct AddReposResult {
+    pub repositories: Vec<Repository>,
+    pub failures: Vec<(String, String)>,
+}
+
 impl Backend {
     pub fn new() -> Result<Self> {
         let runtime = Runtime::new().context("start the git worker runtime")?;
@@ -113,6 +120,53 @@ impl Backend {
             .map_err(anyhow::Error::msg)?;
         self.save(&state)?;
         Ok(repository)
+    }
+
+    /// Add several paths in one pass, keeping the paths that work.
+    ///
+    /// A bad path is reported with its own message instead of rejecting the
+    /// batch, and every successful entry is saved together. An entry whose git
+    /// state cannot be read is removed again before saving, matching
+    /// [`Backend::add_repo`]: nothing is persisted that the dashboard could not
+    /// show.
+    pub fn add_repos(&self, paths: &[String]) -> Result<AddReposResult> {
+        let mut state = self.state();
+        let requested: Vec<PathBuf> = paths.iter().map(PathBuf::from).collect();
+        let (entries, failures) =
+            self.runtime
+                .block_on(repos::add_all(&self.runner, &mut state, &requested));
+
+        let mut failed: Vec<(String, String)> = failures
+            .into_iter()
+            .map(|(path, error)| (path.to_string_lossy().to_string(), error.message))
+            .collect();
+
+        let (_, assignments) = groups_from(&state);
+        let mut repositories = Vec::with_capacity(entries.len());
+        for entry in entries {
+            match self.map_entry(&entry, group_of(&assignments, &entry.id)) {
+                Ok(repository) => repositories.push(repository),
+                Err(error) => {
+                    repos::remove(&mut state, &entry.id);
+                    failed.push((entry.path, error));
+                }
+            }
+        }
+
+        if !repositories.is_empty() {
+            self.save(&state)?;
+        }
+        Ok(AddReposResult {
+            repositories,
+            failures: failed,
+        })
+    }
+
+    /// Repositories directly under `folder` that are not already in the
+    /// workspace. The raw scan count lets the dialog tell an empty folder from
+    /// one whose repositories were all added before.
+    pub fn scan_repositories(&self, folder: &Path) -> repos::FolderScan {
+        repos::scan_new_repositories(folder, &self.state())
     }
 
     /// `git fetch --prune` for one repo. The caller re-scans the workspace once

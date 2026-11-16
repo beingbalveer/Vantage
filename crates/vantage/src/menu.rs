@@ -15,6 +15,7 @@ actions!(
         About,
         Settings,
         AddRepository,
+        ScanFolder,
         NewRepository,
         CloneRepository,
         RefreshStatus,
@@ -93,6 +94,12 @@ pub fn install(cx: &mut App, app: Entity<VantageApp>) {
         let app = app.clone();
         move |_: &AddRepository, cx: &mut App| {
             app.update(cx, |app, cx| app.open_add_modal(cx));
+        }
+    });
+    cx.on_action({
+        let app = app.clone();
+        move |_: &ScanFolder, cx: &mut App| {
+            app.update(cx, |app, cx| app.open_scan_folder(cx));
         }
     });
     cx.on_action({
@@ -231,6 +238,7 @@ pub fn install(cx: &mut App, app: Entity<VantageApp>) {
             name: "File".into(),
             items: vec![
                 MenuItem::action("Add Repository…", AddRepository),
+                MenuItem::action("Scan Folder for Repositories…", ScanFolder),
                 MenuItem::action("New Repository…", NewRepository),
                 MenuItem::action("Clone Repository…", CloneRepository),
                 MenuItem::separator(),

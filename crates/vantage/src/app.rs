@@ -111,6 +111,86 @@ pub struct LastCommit {
     pub previous_tip: Option<String>,
 }
 
+/// One repository found by the Add Repository dialog's folder scan.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ScannedRepo {
+    pub path: String,
+    pub name: String,
+    pub selected: bool,
+}
+
+/// Preview of a scanned folder: the repositories that can be added, which of
+/// them are ticked, and the raw scan count so the dialog can distinguish an
+/// empty folder from one whose repositories are all already in the workspace.
+#[derive(Clone, Debug)]
+pub struct ScanPreview {
+    pub folder: String,
+    pub scanned: usize,
+    pub candidates: Vec<ScannedRepo>,
+}
+
+impl ScanPreview {
+    /// Build a preview from the paths a scan returned; every candidate starts
+    /// ticked, so the common "add everything" case is one click.
+    pub fn new(folder: &std::path::Path, scanned: usize, repositories: Vec<PathBuf>) -> Self {
+        let candidates = repositories
+            .into_iter()
+            .map(|path| {
+                let name = path
+                    .file_name()
+                    .map(|name| name.to_string_lossy().into_owned())
+                    .unwrap_or_else(|| "repository".to_string());
+                ScannedRepo {
+                    path: path.to_string_lossy().into_owned(),
+                    name,
+                    selected: true,
+                }
+            })
+            .collect();
+        Self {
+            folder: folder.to_string_lossy().into_owned(),
+            scanned,
+            candidates,
+        }
+    }
+
+    pub fn selected_count(&self) -> usize {
+        self.candidates.iter().filter(|repo| repo.selected).count()
+    }
+
+    pub fn all_selected(&self) -> bool {
+        !self.candidates.is_empty() && self.candidates.iter().all(|repo| repo.selected)
+    }
+
+    pub fn selected_paths(&self) -> Vec<String> {
+        self.candidates
+            .iter()
+            .filter(|repo| repo.selected)
+            .map(|repo| repo.path.clone())
+            .collect()
+    }
+
+    pub fn toggle(&mut self, path: &str) {
+        if let Some(repo) = self.candidates.iter_mut().find(|repo| repo.path == path) {
+            repo.selected = !repo.selected;
+        }
+    }
+
+    pub fn set_all(&mut self, selected: bool) {
+        for repo in &mut self.candidates {
+            repo.selected = selected;
+        }
+    }
+
+    /// Keep only the paths that still need adding. Used after a partial batch
+    /// add so a retry cannot submit a repository that is already in the
+    /// workspace.
+    pub fn retain_paths(&mut self, paths: &HashSet<String>) {
+        self.candidates.retain(|repo| paths.contains(&repo.path));
+        self.scanned = self.candidates.len();
+    }
+}
+
 /// Which text field a keystroke belongs to.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum FieldId {
@@ -179,6 +259,12 @@ pub struct VantageApp {
     pub modal_error: Option<String>,
     pub modal_group_menu_open: bool,
     pub modal_is_adding: bool,
+    /// Folder-scan preview; `Some` switches the modal from one path to a
+    /// checkbox list of repositories.
+    pub modal_scan: Option<ScanPreview>,
+    pub modal_is_scanning: bool,
+    /// Discards a scan/picker result that arrives after the modal moved on.
+    modal_scan_seq: u64,
 
     // Settings modal
     pub settings_branch_field: FieldState,
@@ -309,6 +395,9 @@ impl VantageApp {
             modal_error: None,
             modal_group_menu_open: false,
             modal_is_adding: false,
+            modal_scan: None,
+            modal_is_scanning: false,
+            modal_scan_seq: 0,
 
             settings_branch_field: FieldState::new(),
             settings_branch_focus: cx.focus_handle(),
@@ -692,6 +781,7 @@ impl VantageApp {
         self.modal_error = None;
         self.modal_group_menu_open = false;
         self.modal_is_adding = false;
+        self.reset_modal_scan();
         cx.notify();
     }
 
@@ -701,7 +791,15 @@ impl VantageApp {
         }
         self.is_add_modal_open = false;
         self.modal_group_menu_open = false;
+        self.reset_modal_scan();
         cx.notify();
+    }
+
+    /// Drop a folder preview and invalidate any scan or picker still running.
+    fn reset_modal_scan(&mut self) {
+        self.modal_scan = None;
+        self.modal_is_scanning = false;
+        self.modal_scan_seq = self.modal_scan_seq.wrapping_add(1);
     }
 
     pub fn select_repo(&mut self, id: String, cx: &mut Context<Self>) {
@@ -3153,16 +3251,13 @@ impl VantageApp {
             return;
         }
 
-        let resolved_group = if self.modal_group_choice == "__new__" {
-            let custom = self.modal_custom_group.value.trim();
-            if custom.is_empty() {
-                self.modal_error = Some("Enter a name for the new group.".to_string());
+        let resolved_group = match self.resolve_modal_group() {
+            Ok(group) => group,
+            Err(message) => {
+                self.modal_error = Some(message);
                 cx.notify();
                 return;
             }
-            custom.to_string()
-        } else {
-            self.modal_group_choice.clone()
         };
 
         let Some(backend) = self.backend.clone() else {
@@ -3186,18 +3281,7 @@ impl VantageApp {
                 app.modal_is_adding = false;
                 match result {
                     Ok(mut repository) => {
-                        let existing_group = app
-                            .groups
-                            .iter()
-                            .find(|group| group.to_lowercase() == resolved_group.to_lowercase())
-                            .cloned();
-                        let resolved_group = match existing_group {
-                            Some(existing) => existing,
-                            None => {
-                                app.groups.push(resolved_group.clone());
-                                resolved_group.clone()
-                            }
-                        };
+                        let resolved_group = app.ensure_group(&resolved_group);
                         repository.workspace = resolved_group.clone();
                         app.repos.retain(|repo| repo.id != repository.id);
                         app.repos.insert(0, repository.clone());
@@ -3227,6 +3311,285 @@ impl VantageApp {
             .ok();
         })
         .detach();
+    }
+
+    /// The group named by the modal, creating it only once the add succeeds.
+    fn resolve_modal_group(&self) -> Result<String, String> {
+        if self.modal_group_choice == "__new__" {
+            let custom = self.modal_custom_group.value.trim();
+            if custom.is_empty() {
+                return Err("Enter a name for the new group.".to_string());
+            }
+            Ok(custom.to_string())
+        } else {
+            Ok(self.modal_group_choice.clone())
+        }
+    }
+
+    /// Match a group name case-insensitively, adding it to the sidebar list the
+    /// first time it is used. Returns the name as it is stored.
+    fn ensure_group(&mut self, name: &str) -> String {
+        if let Some(existing) = self
+            .groups
+            .iter()
+            .find(|group| group.to_lowercase() == name.to_lowercase())
+            .cloned()
+        {
+            existing
+        } else {
+            self.groups.push(name.to_string());
+            name.to_string()
+        }
+    }
+
+    /// Open the Add Repository dialog and immediately ask for a folder to scan.
+    /// Used by the File menu entry; the dialog's own button calls
+    /// [`VantageApp::pick_scan_folder`] directly.
+    pub fn open_scan_folder(&mut self, cx: &mut Context<Self>) {
+        if !self.is_add_modal_open {
+            self.open_add_modal(cx);
+        }
+        self.pick_scan_folder(cx);
+    }
+
+    /// Native folder picker for the folder scan (the modal's "Scan Folder…"
+    /// button). The scan itself runs off the UI thread; the result lands in
+    /// `modal_scan` as a checkbox preview.
+    pub fn pick_scan_folder(&mut self, cx: &mut Context<Self>) {
+        if self.modal_is_adding || self.modal_is_scanning {
+            return;
+        }
+        if self.backend.is_none() {
+            self.modal_error = Some("The Git engine is unavailable.".to_string());
+            cx.notify();
+            return;
+        }
+
+        self.modal_scan = None;
+        self.modal_error = None;
+        self.modal_group_menu_open = false;
+        self.modal_is_scanning = true;
+        self.modal_scan_seq = self.modal_scan_seq.wrapping_add(1);
+        let seq = self.modal_scan_seq;
+        cx.notify();
+
+        let receiver = cx.prompt_for_paths(PathPromptOptions {
+            files: false,
+            directories: true,
+            multiple: false,
+            prompt: Some("Scan a folder for Git repositories".into()),
+        });
+
+        cx.spawn(async move |this, cx| {
+            let picked = match receiver.await {
+                Ok(Ok(paths)) => paths.and_then(|paths| paths.into_iter().next()),
+                Ok(Err(error)) => {
+                    this.update(cx, |app, cx| {
+                        if app.modal_scan_seq == seq {
+                            app.modal_is_scanning = false;
+                            app.modal_error =
+                                Some(format!("Could not open the folder picker: {error}"));
+                            cx.notify();
+                        }
+                    })
+                    .ok();
+                    return;
+                }
+                Err(error) => {
+                    this.update(cx, |app, cx| {
+                        if app.modal_scan_seq == seq {
+                            app.modal_is_scanning = false;
+                            app.modal_error =
+                                Some(format!("Folder picker closed unexpectedly: {error}"));
+                            cx.notify();
+                        }
+                    })
+                    .ok();
+                    return;
+                }
+            };
+
+            let Some(path) = picked else {
+                this.update(cx, |app, cx| {
+                    if app.modal_scan_seq == seq {
+                        app.modal_is_scanning = false;
+                        cx.notify();
+                    }
+                })
+                .ok();
+                return;
+            };
+
+            let folder = path.to_string_lossy().to_string();
+            let backend = this.update(cx, |app, _| app.backend.clone()).ok().flatten();
+            let Some(backend) = backend else {
+                this.update(cx, |app, cx| {
+                    if app.modal_scan_seq == seq {
+                        app.modal_is_scanning = false;
+                        app.modal_error = Some("The Git engine is unavailable.".to_string());
+                        cx.notify();
+                    }
+                })
+                .ok();
+                return;
+            };
+
+            let folder_for_field = folder.clone();
+            this.update(cx, |app, cx| {
+                if app.modal_scan_seq == seq {
+                    app.modal_path.set(folder_for_field);
+                    cx.notify();
+                }
+            })
+            .ok();
+
+            let scan = cx
+                .background_executor()
+                .spawn(async move {
+                    if !path.is_dir() {
+                        return Err(format!("'{}' is no longer a folder.", path.display()));
+                    }
+                    Ok(backend.scan_repositories(&path))
+                })
+                .await;
+
+            this.update(cx, |app, cx| {
+                if app.modal_scan_seq != seq || !app.is_add_modal_open {
+                    return;
+                }
+                app.modal_is_scanning = false;
+                match scan {
+                    Ok(scan) => {
+                        app.modal_scan = Some(ScanPreview::new(
+                            std::path::Path::new(&folder),
+                            scan.scanned,
+                            scan.repositories,
+                        ));
+                        app.modal_error = None;
+                    }
+                    Err(error) => {
+                        app.modal_error = Some(error);
+                    }
+                }
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
+    }
+
+    /// Add every ticked repository from the scan preview in one batch.
+    pub fn submit_scan_add(&mut self, cx: &mut Context<Self>) {
+        if self.modal_is_adding || self.modal_is_scanning {
+            return;
+        }
+        let Some(scan) = self.modal_scan.clone() else {
+            return;
+        };
+        let paths = scan.selected_paths();
+        if paths.is_empty() {
+            self.modal_error = Some("Select at least one repository to add.".to_string());
+            cx.notify();
+            return;
+        }
+
+        let resolved_group = match self.resolve_modal_group() {
+            Ok(group) => group,
+            Err(message) => {
+                self.modal_error = Some(message);
+                cx.notify();
+                return;
+            }
+        };
+        let Some(backend) = self.backend.clone() else {
+            self.modal_error = Some("The Git engine is unavailable.".to_string());
+            cx.notify();
+            return;
+        };
+
+        self.modal_is_adding = true;
+        self.modal_error = None;
+        cx.notify();
+
+        cx.spawn(async move |this, cx| {
+            let result = cx
+                .background_executor()
+                .spawn(async move { backend.add_repos(&paths) })
+                .await;
+
+            this.update(cx, |app, cx| {
+                app.modal_is_adding = false;
+                match result {
+                    Ok(outcome) => app.finish_scan_add(
+                        outcome.repositories,
+                        outcome.failures,
+                        &resolved_group,
+                        cx,
+                    ),
+                    Err(error) => {
+                        app.modal_error = Some(error.to_string());
+                        cx.notify();
+                    }
+                }
+            })
+            .ok();
+        })
+        .detach();
+    }
+
+    /// Apply a finished batch add: successes join the workspace like a single
+    /// add, failures keep the dialog open with only their rows left to retry.
+    fn finish_scan_add(
+        &mut self,
+        repositories: Vec<Repository>,
+        failures: Vec<(String, String)>,
+        group: &str,
+        cx: &mut Context<Self>,
+    ) {
+        let added = repositories.len();
+        let mut resolved_group = group.to_string();
+
+        if added > 0 {
+            resolved_group = self.ensure_group(group);
+            let first = repositories.first().map(|repository| repository.id.clone());
+            for mut repository in repositories.into_iter().rev() {
+                repository.workspace = resolved_group.clone();
+                self.repos.retain(|repo| repo.id != repository.id);
+                self.repos.insert(0, repository);
+            }
+            self.selected_repo_id = first;
+            self.settings.right_panel_open = true;
+            self.persist(cx);
+            self.save_settings(cx);
+            self.start_scan(cx);
+        }
+
+        if failures.is_empty() {
+            self.reset_modal_scan();
+            self.modal_path.clear();
+            self.modal_custom_group.clear();
+            self.modal_error = None;
+            self.is_add_modal_open = false;
+            self.modal_group_menu_open = false;
+            let message = if added == 1 {
+                format!("Added 1 repository to {resolved_group}")
+            } else {
+                format!("Added {added} repositories to {resolved_group}")
+            };
+            self.show_toast(message, cx);
+            cx.notify();
+            return;
+        }
+
+        // Keep only the rows git could not add, all ticked, so a retry does
+        // not resubmit repositories that already made it into the workspace.
+        let failed_paths: HashSet<String> = failures.iter().map(|(path, _)| path.clone()).collect();
+        if let Some(scan) = self.modal_scan.as_mut() {
+            scan.retain_paths(&failed_paths);
+            scan.set_all(true);
+        }
+        self.modal_error = Some(scan_failure_message(added, &failures));
+        cx.notify();
     }
 
     /// Native folder picker for the repository path (the modal's "Browse" button).
@@ -4203,6 +4566,34 @@ fn undo_offer(record: Option<&LastCommit>, repo: &Repository) -> Option<UndoOffe
     })
 }
 
+/// One line naming the repositories a batch add could not add, capped so the
+/// modal stays readable when a whole folder is broken.
+fn scan_failure_message(added: usize, failures: &[(String, String)]) -> String {
+    let total = added + failures.len();
+    let mut message = if added == 0 {
+        format!("None of the {total} selected repositories could be added. ")
+    } else {
+        format!("Added {added} of {total} repositories. ")
+    };
+
+    let shown: Vec<String> = failures
+        .iter()
+        .take(3)
+        .map(|(path, error)| {
+            let name = std::path::Path::new(path)
+                .file_name()
+                .map(|name| name.to_string_lossy().into_owned())
+                .unwrap_or_else(|| path.clone());
+            format!("{name}: {error}")
+        })
+        .collect();
+    message.push_str(&shown.join("; "));
+    if failures.len() > shown.len() {
+        message.push_str(&format!("; and {} more", failures.len() - shown.len()));
+    }
+    message
+}
+
 /// `~` expansion for repo paths that come back from the UI model.
 pub fn expand_home(path: &str) -> std::path::PathBuf {
     if let Some(home) = dirs::home_dir() {
@@ -4397,5 +4788,95 @@ mod tests {
         let repo = repo_with(vec![file("untracked.rs", false)]);
         assert!(ticked_paths(None, &repo).is_empty());
         assert!(ticked_paths(Some(&overrides(&[("untracked.rs", false)])), &repo).is_empty());
+    }
+
+    fn scan_preview(paths: &[&str], scanned: usize) -> ScanPreview {
+        ScanPreview::new(
+            std::path::Path::new("/tmp/workspace"),
+            scanned,
+            paths.iter().map(PathBuf::from).collect(),
+        )
+    }
+
+    #[test]
+    fn scan_preview_starts_with_every_candidate_ticked() {
+        let scan = scan_preview(&["/tmp/workspace/one", "/tmp/workspace/two"], 2);
+        assert!(scan.all_selected());
+        assert_eq!(scan.selected_count(), 2);
+        assert_eq!(
+            scan.selected_paths(),
+            vec![
+                "/tmp/workspace/one".to_string(),
+                "/tmp/workspace/two".to_string()
+            ]
+        );
+        assert_eq!(scan.candidates[0].name, "one");
+        assert_eq!(scan.folder, "/tmp/workspace");
+    }
+
+    #[test]
+    fn scan_preview_selection_tracks_rows_and_select_all() {
+        let mut scan = scan_preview(&["/tmp/workspace/one", "/tmp/workspace/two"], 2);
+
+        scan.toggle("/tmp/workspace/one");
+        assert!(!scan.all_selected());
+        assert_eq!(scan.selected_count(), 1);
+        assert_eq!(
+            scan.selected_paths(),
+            vec!["/tmp/workspace/two".to_string()]
+        );
+
+        scan.set_all(false);
+        assert!(scan.selected_paths().is_empty());
+        scan.set_all(true);
+        assert!(scan.all_selected());
+
+        // An unknown path is ignored rather than creating a phantom row.
+        scan.toggle("/tmp/workspace/missing");
+        assert_eq!(scan.candidates.len(), 2);
+    }
+
+    #[test]
+    fn scan_preview_keeps_only_the_failed_rows_for_a_retry() {
+        let mut scan = scan_preview(
+            &[
+                "/tmp/workspace/one",
+                "/tmp/workspace/two",
+                "/tmp/workspace/three",
+            ],
+            3,
+        );
+        let failed: HashSet<String> = ["/tmp/workspace/two".to_string()].into_iter().collect();
+        scan.retain_paths(&failed);
+
+        assert_eq!(scan.candidates.len(), 1);
+        assert_eq!(scan.candidates[0].path, "/tmp/workspace/two");
+        assert_eq!(scan.scanned, 1);
+    }
+
+    #[test]
+    fn batch_failure_message_names_the_first_failures_and_caps_the_rest() {
+        let failures = vec![
+            (
+                "/tmp/workspace/a".to_string(),
+                "not a repository".to_string(),
+            ),
+            (
+                "/tmp/workspace/b".to_string(),
+                "permission denied".to_string(),
+            ),
+            ("/tmp/workspace/c".to_string(), "path missing".to_string()),
+            ("/tmp/workspace/d".to_string(), "already added".to_string()),
+        ];
+
+        let all_failed = scan_failure_message(0, &failures);
+        assert!(all_failed.starts_with("None of the 4 selected repositories"));
+        assert!(all_failed.contains("a: not a repository"));
+        assert!(all_failed.contains("c: path missing"));
+        assert!(all_failed.ends_with("and 1 more"));
+
+        let partial = scan_failure_message(2, &failures[..1]);
+        assert!(partial.starts_with("Added 2 of 3 repositories."));
+        assert!(partial.contains("a: not a repository"));
     }
 }
