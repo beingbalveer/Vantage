@@ -43,14 +43,16 @@ impl Render for IdentityTooltip {
                     .xs()
                     .medium()
                     .fg(self.theme.text_app)
-                    .whitespace_nowrap()
+                    .max_w(px(360.0))
+                    .truncate()
                     .child(self.name.clone()),
             )
             .child(
                 div()
                     .mono_xs()
                     .fg(self.theme.label_muted)
-                    .whitespace_nowrap()
+                    .max_w(px(360.0))
+                    .truncate()
                     .child(self.email.clone()),
             )
     }
@@ -83,7 +85,8 @@ impl Render for TextTooltip {
             .shadow_lg()
             .mono_xs()
             .fg(self.theme.text_soft)
-            .whitespace_nowrap()
+            .max_w(px(360.0))
+            .truncate()
             .child(self.text.clone())
     }
 }

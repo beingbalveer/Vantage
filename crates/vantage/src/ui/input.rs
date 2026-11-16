@@ -1,6 +1,8 @@
 //! Single-line text input: state, key handling and chrome.
 
-use gpui::{div, prelude::*, px, ClipboardItem, Div, KeyDownEvent, Styled};
+use gpui::{
+    div, point, prelude::*, px, ClipboardItem, Div, ElementId, KeyDownEvent, ScrollHandle, Styled,
+};
 
 use crate::theme::{Theme, FONT_SANS, LH_SM, LH_XS, TEXT_SM, TEXT_XS};
 
@@ -38,6 +40,10 @@ pub struct FieldState {
     /// Where the current selection started, in characters. `None` means there
     /// is no selection; equal to `caret` is also treated as none.
     pub anchor: Option<usize>,
+    /// Horizontal scroll of the text inside the field. The handle is shared by
+    /// every clone, so moving the caret or typing in a long value can reveal it
+    /// before the next frame is painted.
+    scroll: ScrollHandle,
 }
 
 impl FieldState {
@@ -49,12 +55,50 @@ impl FieldState {
         self.value = value.into();
         self.caret = self.value.chars().count();
         self.anchor = None;
+        self.reset_scroll();
     }
 
     pub fn clear(&mut self) {
         self.value.clear();
         self.caret = 0;
         self.anchor = None;
+        self.reset_scroll();
+    }
+
+    /// The shared horizontal scroll state of the rendered field.
+    pub fn scroll_handle(&self) -> &ScrollHandle {
+        &self.scroll
+    }
+
+    /// Horizontal scroll offset, in pixels. Negative values have moved the
+    /// text left to reveal its end. Used by UI tests.
+    #[cfg(test)]
+    pub fn scroll_offset_x(&self) -> gpui::Pixels {
+        self.scroll.offset().x
+    }
+
+    fn reset_scroll(&self) {
+        self.scroll.set_offset(point(px(0.0), px(0.0)));
+    }
+
+    /// Which direct child of the rendering field holds the caret.
+    ///
+    /// The field always renders `head`, `caret`, `tail` for a plain value and
+    /// `head`, `selected`, `caret`, `tail` (or the caret first) for a
+    /// selection. Scrolling to that child keeps the caret inside the field.
+    fn caret_child_index(&self) -> usize {
+        if self.value.is_empty() {
+            return 0;
+        }
+        match self.selection() {
+            Some((start, _)) if self.caret == start => 0,
+            Some(_) => 2,
+            None => 1,
+        }
+    }
+
+    fn reveal_caret(&self) {
+        self.scroll.scroll_to_item(self.caret_child_index());
     }
 
     /// Ordered, non-empty selection as `(start, end)` in characters.
@@ -321,13 +365,15 @@ pub fn apply_field_key(
 }
 
 /// Renders one text field's chrome + content. The caller supplies the id,
-/// focus wiring and key handler.
+/// focus wiring and key handler. `text_id` names the clipped, horizontally
+/// scrollable row inside the chrome so long values can be revealed.
 pub fn field(
     theme: &Theme,
     state: &FieldState,
     placeholder: &'static str,
     focused: bool,
     variant: FieldVariant,
+    text_id: ElementId,
 ) -> Div {
     let (pad_x, pad_y, line_height, font_size) = match variant {
         FieldVariant::Form => (px(12.0), px(8.0), LH_SM, TEXT_SM),
@@ -371,10 +417,36 @@ pub fn field(
         root = root.h(px(ROW_CONTROL_HEIGHT));
     }
 
+    // The text row is its own clipping scroller: `overflow_x_scroll` keeps
+    // long values inside the chrome, and scrolling to the caret's child
+    // reveals it while editing. `ScrollHandle` is shared through `FieldState`,
+    // so the offset survives re-renders.
+    let mut text_row = div()
+        .id(text_id)
+        .flex()
+        .items_center()
+        .flex_1()
+        .min_w(px(0.0))
+        .overflow_x_scroll()
+        .track_scroll(state.scroll_handle());
+
     let empty = state.value.is_empty();
+    if focused {
+        state.reveal_caret();
+    } else {
+        state.reset_scroll();
+    }
+
     if empty && !focused {
-        root = root.fg(theme.placeholder).child(placeholder);
-        return finish(root, theme, variant);
+        text_row = text_row.child(
+            div()
+                .flex_1()
+                .min_w(px(0.0))
+                .truncate()
+                .fg(theme.placeholder)
+                .child(placeholder),
+        );
+        return finish(root.child(text_row), theme, variant);
     }
 
     let caret_bar = || {
@@ -386,45 +458,53 @@ pub fn field(
     };
 
     if empty {
-        root = root.child(caret_bar());
-        return finish(root, theme, variant);
+        text_row = text_row.child(caret_bar());
+        return finish(root.child(text_row), theme, variant);
     }
+
+    // A blurred field is not being edited: show the value as one clipped
+    // node, with the ellipsis at the end instead of a caret.
+    if !focused {
+        text_row = text_row.child(
+            div()
+                .flex_1()
+                .min_w(px(0.0))
+                .truncate()
+                .child(state.value.clone()),
+        );
+        return finish(root.child(text_row), theme, variant);
+    }
+
+    // Spans never shrink: the row itself scrolls. Keeping each piece a direct
+    // child of the scroller lets `scroll_to_item` bring the caret into view.
+    let span = |text: String| div().flex_shrink_0().whitespace_nowrap().child(text);
 
     // A selection is painted as three spans with the middle tinted, and the
     // caret stays visible at whichever end of it the user is typing from.
     if let (Some((start, _)), Some((head, selected, tail))) =
         (state.selection(), state.split_selection())
     {
-        if focused && state.caret == start {
-            root = root.child(caret_bar());
+        if state.caret == start {
+            text_row = text_row.child(caret_bar());
         }
-        root = root.child(div().whitespace_nowrap().child(head)).child(
-            div()
-                .whitespace_nowrap()
+        text_row = text_row.child(span(head)).child(
+            span(selected)
                 .rounded(px(2.0))
-                .bg(crate::theme::alpha(theme.accent, 0.25))
-                .child(selected),
+                .bg(crate::theme::alpha(theme.accent, 0.25)),
         );
-        if focused && state.caret != start {
-            root = root.child(caret_bar());
+        if state.caret != start {
+            text_row = text_row.child(caret_bar());
         }
-        return finish(
-            root.child(div().whitespace_nowrap().child(tail)),
-            theme,
-            variant,
-        );
+        text_row = text_row.child(span(tail));
+        return finish(root.child(text_row), theme, variant);
     }
 
     let (before, after) = state.split();
-    root = root.child(div().whitespace_nowrap().child(before));
-    if focused {
-        root = root.child(caret_bar());
-    }
-    finish(
-        root.child(div().whitespace_nowrap().child(after)),
-        theme,
-        variant,
-    )
+    text_row = text_row
+        .child(span(before))
+        .child(caret_bar())
+        .child(span(after));
+    finish(root.child(text_row), theme, variant)
 }
 
 fn finish(mut root: Div, theme: &Theme, variant: FieldVariant) -> Div {
@@ -518,5 +598,60 @@ mod tests {
             "backwards selection is ordered"
         );
         assert_eq!(state.selected_text(), "cd");
+    }
+
+    #[test]
+    fn caret_scroll_target_follows_the_caret_through_a_selection() {
+        let mut state = field("abcd");
+        state.end();
+        assert_eq!(state.caret_child_index(), 1);
+
+        state.home();
+        state.extend_right();
+        state.extend_right();
+        assert_eq!(state.selection(), Some((0, 2)));
+        assert_eq!(state.caret_child_index(), 2, "caret at the selection end");
+
+        state.end();
+        state.extend_left();
+        state.extend_left();
+        assert_eq!(state.selection(), Some((2, 4)));
+        assert_eq!(state.caret_child_index(), 0, "caret at the selection start");
+
+        state.right();
+        assert_eq!(state.selection(), None);
+        assert_eq!(state.caret_child_index(), 1);
+    }
+
+    #[test]
+    fn caret_scroll_target_handles_multibyte_and_empty_values() {
+        let mut state = field("日本語");
+        state.home();
+        state.extend_right();
+        state.extend_right();
+        assert_eq!(state.selection(), Some((0, 2)));
+        assert_eq!(state.caret_child_index(), 2);
+
+        state.end();
+        state.extend_left();
+        assert_eq!(state.selection(), Some((2, 3)));
+        assert_eq!(state.caret_child_index(), 0);
+
+        state.clear();
+        assert_eq!(state.caret_child_index(), 0);
+    }
+
+    #[test]
+    fn setting_or_clearing_a_value_resets_the_field_scroll() {
+        let mut state = field("a very long value");
+        state.scroll_handle().set_offset(point(px(-240.0), px(0.0)));
+        assert_eq!(state.scroll_offset_x(), px(-240.0));
+
+        state.set("replaced");
+        assert_eq!(state.scroll_offset_x(), px(0.0));
+
+        state.scroll_handle().set_offset(point(px(-80.0), px(0.0)));
+        state.clear();
+        assert_eq!(state.scroll_offset_x(), px(0.0));
     }
 }

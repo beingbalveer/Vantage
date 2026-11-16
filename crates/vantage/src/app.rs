@@ -3457,8 +3457,9 @@ impl VantageApp {
         let focused = focus.is_focused(window);
         let state = self.field_state(id).clone();
         let theme = self.theme;
+        let text_id = gpui::ElementId::named_usize("field-text", id as u8 as usize);
 
-        let row = crate::ui::field(&theme, &state, placeholder, focused, variant)
+        let row = crate::ui::field(&theme, &state, placeholder, focused, variant, text_id)
             .id(gpui::ElementId::named_usize("field", id as u8 as usize))
             .track_focus(&focus)
             .cursor_text()

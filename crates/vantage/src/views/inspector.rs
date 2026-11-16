@@ -156,6 +156,7 @@ impl VantageApp {
         let path = repo.local_path.clone();
 
         div()
+            .debug_selector(|| "inspector-header".to_string())
             .flex()
             .items_center()
             .justify_between()
@@ -170,6 +171,7 @@ impl VantageApp {
                     .flex_col()
                     .flex_1()
                     .min_w(px(0.0))
+                    .overflow_hidden()
                     .child(
                         div().flex().items_center().gap(px(10.0)).child(
                             div()
@@ -188,6 +190,9 @@ impl VantageApp {
                             .flex()
                             .items_center()
                             .gap(px(8.0))
+                            .w_full()
+                            .min_w(px(0.0))
+                            .overflow_hidden()
                             .xs()
                             .fg(theme.label_muted)
                             .child(
@@ -195,24 +200,31 @@ impl VantageApp {
                                     .flex()
                                     .items_center()
                                     .gap(px(5.0))
+                                    .flex_shrink()
+                                    .min_w(px(0.0))
                                     .child(icon("git-branch", IconSize::Xxs, theme.text_dim))
                                     .child(
                                         div()
+                                            .min_w(px(0.0))
+                                            .max_w(px(160.0))
+                                            .truncate()
                                             .text_size(px(10.0))
                                             .line_height(px(14.0))
                                             .font_family(crate::theme::FONT_MONO)
                                             .fg(theme.label_muted)
-                                            .whitespace_nowrap()
                                             .child(repo.current_branch.clone()),
                                     ),
                             )
-                            .child(div().child("·"))
+                            .child(div().flex_shrink_0().child("·"))
                             .child(
                                 div()
                                     .id("copy-path")
+                                    .debug_selector(|| "inspector-path".to_string())
                                     .flex()
                                     .items_center()
                                     .gap(px(4.0))
+                                    .flex_1()
+                                    .min_w(px(0.0))
                                     .cursor_pointer()
                                     .text_size(px(10.0))
                                     .line_height(px(14.0))
@@ -222,7 +234,13 @@ impl VantageApp {
                                     .on_click(cx.listener(move |this, _e, _w, cx| {
                                         this.copy_local_path(path.clone(), cx);
                                     }))
-                                    .child(div().truncate().child(repo.local_path.clone()))
+                                    .child(
+                                        div()
+                                            .flex_1()
+                                            .min_w(px(0.0))
+                                            .truncate()
+                                            .child(repo.local_path.clone()),
+                                    )
                                     .child(icon(
                                         if copied { "check" } else { "copy" },
                                         IconSize::Xs,
@@ -237,6 +255,7 @@ impl VantageApp {
             )
             .child(
                 div()
+                    .debug_selector(|| "inspector-actions".to_string())
                     .flex()
                     .items_center()
                     .gap(px(2.0))
@@ -1804,7 +1823,12 @@ fn preview_row(theme: &Theme, line: &crate::model::PreviewLine) -> Div {
 
 #[cfg(test)]
 mod tests {
+    use gpui::{px, size, AppContext, TestAppContext};
+
     use super::split_path;
+    use crate::app::VantageApp;
+    use crate::model::{RepoSyncState, Repository};
+    use crate::root::RootView;
 
     #[test]
     fn split_path_keeps_the_file_name() {
@@ -1816,5 +1840,66 @@ mod tests {
             split_path("README.md"),
             (String::new(), "README.md".to_string())
         );
+    }
+
+    #[gpui::test]
+    fn long_path_stays_clear_of_the_header_actions(cx: &mut TestAppContext) {
+        let app = cx.new(VantageApp::new);
+        let (_root, cx) = cx.add_window_view(|_window, _cx| RootView::new(app.clone()));
+
+        let long_path = format!(
+            "/private/var/folders/{}/{}",
+            "x".repeat(120),
+            "vantage-repository"
+        );
+        app.update(cx, |app, _cx| {
+            app.settings.right_panel_open = true;
+            app.repos.push(Repository {
+                id: "repo-1".to_string(),
+                name: "vantage".to_string(),
+                workspace: "Ungrouped".to_string(),
+                local_path: long_path,
+                has_remote: true,
+                stash_count: 0,
+                current_branch: format!("feature/{}", "long-branch-".repeat(10)),
+                author: None,
+                sync_state: RepoSyncState::Ahead,
+                ahead_count: 2,
+                behind_count: 1,
+                has_upstream: true,
+                last_activity_label: "just now".to_string(),
+                last_activity_minutes: 0,
+                uncommitted_files: Vec::new(),
+                branches: Vec::new(),
+                recent_commits: Vec::new(),
+            });
+            app.selected_repo_id = Some("repo-1".to_string());
+        });
+
+        for (width, height) in [(1040.0, 640.0), (1470.0, 900.0)] {
+            cx.simulate_resize(size(px(width), px(height)));
+            cx.run_until_parked();
+            cx.update(|window, cx| {
+                window.draw(cx).clear();
+            });
+
+            let header = cx
+                .debug_bounds("inspector-header")
+                .expect("inspector header bounds");
+            let path = cx
+                .debug_bounds("inspector-path")
+                .expect("inspector path bounds");
+            let actions = cx
+                .debug_bounds("inspector-actions")
+                .expect("inspector action bounds");
+            assert!(
+                path.left() >= header.left() && path.right() <= actions.left(),
+                "path {path:?} must stay between the header edge and actions {actions:?}"
+            );
+            assert!(
+                actions.right() <= header.right(),
+                "actions {actions:?} must stay inside the header {header:?}"
+            );
+        }
     }
 }
