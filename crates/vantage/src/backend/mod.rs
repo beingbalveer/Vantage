@@ -529,6 +529,22 @@ impl Backend {
         })
     }
 
+    /// The full SHA of the repository's checked-out HEAD, or `None` when the
+    /// branch is unborn. Used to refuse a queued commit when HEAD moved.
+    pub fn head_sha(&self, repo_id: &str) -> Result<Option<String>> {
+        let repo_path = self.known_path(repo_id)?;
+        self.runtime.block_on(async {
+            let output = self
+                .runner
+                .run_read(&repo_path, &["rev-parse", "--verify", "HEAD"])
+                .await?;
+            if !output.success() {
+                return Ok(None);
+            }
+            Ok(Some(output.stdout_string().trim().to_string()))
+        })
+    }
+
     /// Commit `paths` with `summary` as the message, using the repository's own
     /// git identity.
     ///

@@ -98,6 +98,155 @@ impl<T> RepoOpReport<T> {
     }
 }
 
+/// The commit composer for one repository: the message, the optional body and
+/// the amend mode with the tip it is allowed to rewrite.
+#[derive(Clone, Default)]
+pub struct ComposerState {
+    pub message: FieldState,
+    pub body: FieldState,
+    /// The next commit rewrites the tip instead of creating a new one.
+    pub amending: bool,
+    /// The tip captured when amend mode started; cleared with the mode.
+    pub base_tip: Option<String>,
+}
+
+impl ComposerState {
+    fn clear(&mut self) {
+        self.message.clear();
+        self.body.clear();
+        self.cancel_amend();
+    }
+
+    /// Amend mode belongs to the repository it started in and never moves.
+    fn cancel_amend(&mut self) {
+        self.amending = false;
+        self.base_tip = None;
+    }
+
+    /// The repository and tip the next commit may write.
+    fn commit_target(&self, repo: &Repository) -> CommitTarget {
+        let row_tip = repo.recent_commits.first().map(|commit| commit.sha.clone());
+        CommitTarget {
+            repo_id: repo.id.clone(),
+            expected_head: if self.amending {
+                self.base_tip.clone().or(row_tip)
+            } else {
+                row_tip
+            },
+        }
+    }
+}
+
+/// The active composer plus one unfinished draft per repository the user
+/// typed into. The composer belongs to the selected repository, so a message
+/// written for one repository can never be submitted for another.
+#[derive(Default)]
+pub struct ComposerStore {
+    active_repo: Option<String>,
+    active: ComposerState,
+    drafts: std::collections::HashMap<String, ComposerState>,
+}
+
+impl ComposerStore {
+    pub fn active(&self) -> &ComposerState {
+        &self.active
+    }
+
+    pub fn active_mut(&mut self) -> &mut ComposerState {
+        &mut self.active
+    }
+
+    /// Make `repo_id`'s composer active, saving the previous one as a draft.
+    /// Amend mode is deliberately dropped instead of travelling with the
+    /// selection.
+    pub fn switch_to(&mut self, repo_id: &str) {
+        if self.active_repo.as_deref() == Some(repo_id) {
+            return;
+        }
+        self.leave();
+        let mut composer = self.drafts.remove(repo_id).unwrap_or_default();
+        composer.cancel_amend();
+        self.active = composer;
+        self.active_repo = Some(repo_id.to_string());
+    }
+
+    /// Put the active composer back into its draft slot and clear the pane.
+    pub fn leave(&mut self) {
+        let Some(repo_id) = self.active_repo.take() else {
+            self.active = ComposerState::default();
+            return;
+        };
+        let mut composer = std::mem::take(&mut self.active);
+        composer.cancel_amend();
+        if composer.message.value.is_empty() && composer.body.value.is_empty() {
+            self.drafts.remove(&repo_id);
+        } else {
+            self.drafts.insert(repo_id, composer);
+        }
+    }
+
+    /// Spend only one repository's draft after its commit or amend succeeds.
+    pub fn clear_for(&mut self, repo_id: &str) {
+        self.drafts.remove(repo_id);
+        if self.active_repo.as_deref() == Some(repo_id) {
+            self.active.clear();
+        }
+    }
+
+    /// Forget a repository that was removed from the workspace.
+    pub fn forget(&mut self, repo_id: &str) {
+        self.drafts.remove(repo_id);
+        if self.active_repo.as_deref() == Some(repo_id) {
+            self.active_repo = None;
+            self.active = ComposerState::default();
+        }
+    }
+}
+
+/// The repository and tip a commit or amend was started against. The job
+/// compares both with the world when it runs, so a queued write cannot land on
+/// a repository or HEAD the user did not choose.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CommitTarget {
+    pub repo_id: String,
+    pub expected_head: Option<String>,
+}
+
+impl CommitTarget {
+    /// `Some(message)` when the job must not write: it was queued for another
+    /// repository, or HEAD moved before the operation ran.
+    fn refusal(&self, repo_id: &str, current_head: Option<&str>) -> Option<String> {
+        if self.repo_id != repo_id {
+            return Some(
+                "The commit was started for a different repository. Refresh and try again."
+                    .to_string(),
+            );
+        }
+        if !same_tip(self.expected_head.as_deref(), current_head) {
+            return Some(
+                "The repository moved to a different commit while the commit was starting. \
+                 Refresh and try again."
+                    .to_string(),
+            );
+        }
+        None
+    }
+}
+
+/// Compare the tip captured from a row with git's current HEAD. Rows carry an
+/// abbreviated SHA, so a prefix match in either direction counts.
+fn same_tip(expected: Option<&str>, current: Option<&str>) -> bool {
+    match (expected, current) {
+        (None, None) => true,
+        (Some(expected), Some(current)) => {
+            !expected.is_empty()
+                && !current.is_empty()
+                && (current.starts_with(expected) || expected.starts_with(current))
+        }
+        _ => false,
+    }
+}
+
 /// The commit this session most recently created, so the detail pane can offer
 /// an Undo for a commit that has not been pushed (as GitHub Desktop does).
 #[derive(Clone, Debug)]
@@ -168,8 +317,9 @@ pub struct VantageApp {
     pub expanded_file: Option<String>,
     pub group_menu_open: bool,
     pub copied_path: bool,
-    /// Message for the next commit in the focused repository.
-    pub commit_field: FieldState,
+    /// Commit message, body and amend mode for the selected repository.
+    /// Inactive repositories keep their unfinished drafts here too.
+    composers: ComposerStore,
     commit_focus: FocusHandle,
 
     // Add-repository modal
@@ -192,10 +342,6 @@ pub struct VantageApp {
     pub busy_repos: std::collections::HashMap<String, RepoOp>,
     /// Right-click menu, at the pointer.
     pub context_menu: Option<ContextMenu>,
-    /// The commit bar is in amend mode: the next commit rewrites the tip.
-    pub amending: bool,
-    /// Optional description paragraph for the next commit.
-    pub commit_body: FieldState,
     commit_body_focus: FocusHandle,
     /// A branch action waiting for its name or confirmation.
     pub branch_prompt: Option<BranchPrompt>,
@@ -300,7 +446,7 @@ impl VantageApp {
             expanded_file: None,
             group_menu_open: false,
             copied_path: false,
-            commit_field: FieldState::new(),
+            composers: ComposerStore::default(),
             commit_focus: cx.focus_handle(),
 
             modal_path: FieldState::new(),
@@ -319,8 +465,6 @@ impl VantageApp {
             busy_repos: std::collections::HashMap::new(),
             last_commit: None,
             context_menu: None,
-            amending: false,
-            commit_body: FieldState::new(),
             commit_body_focus: cx.focus_handle(),
             branch_prompt: None,
             confirm: None,
@@ -452,6 +596,7 @@ impl VantageApp {
                 }
                 if let Some(id) = app.selected_repo_id.clone() {
                     if !app.repos.iter().any(|repo| repo.id == id) {
+                        app.composers.leave();
                         app.selected_repo_id = None;
                     }
                 }
@@ -665,6 +810,11 @@ impl VantageApp {
             .and_then(|id| self.repos.iter().find(|r| &r.id == id))
     }
 
+    /// The composer for the selected repository.
+    pub fn composer(&self) -> &ComposerState {
+        self.composers.active()
+    }
+
     // ---- actions ---------------------------------------------------------
 
     pub fn select_section(&mut self, section: NavSection, cx: &mut Context<Self>) {
@@ -711,6 +861,9 @@ impl VantageApp {
             self.group_menu_open = false;
             self.copied_path = false;
         }
+        // Load this repository's own draft before the pane renders. Amend mode
+        // is dropped for the repository we are leaving.
+        self.composers.switch_to(&id);
         self.selected_repo_id = Some(id);
         self.settings.right_panel_open = true;
         self.save_settings(cx);
@@ -834,6 +987,7 @@ impl VantageApp {
 
     pub fn close_inspector(&mut self, cx: &mut Context<Self>) {
         self.settings.right_panel_open = false;
+        self.composers.leave();
         self.selected_repo_id = None;
         self.group_menu_open = false;
         self.expanded_file = None;
@@ -1458,8 +1612,11 @@ impl VantageApp {
             self.show_toast("Select a repository first", cx);
             return;
         };
-        let message = self.commit_field.value.trim().to_string();
-        let body = self.commit_body.value.trim().to_string();
+        // Read this repository's own composer. The message/body captured here
+        // are what the job submits, even if the selection moves on meanwhile.
+        let composer = self.composer().clone();
+        let message = composer.message.value.trim().to_string();
+        let body = composer.body.value.trim().to_string();
         if message.is_empty() {
             self.show_toast("Write a commit message first", cx);
             return;
@@ -1469,13 +1626,15 @@ impl VantageApp {
             self.show_toast("Stage the files you want to commit", cx);
             return;
         }
+        let target = composer.commit_target(&repo);
 
-        if self.amending {
+        if composer.amending {
             let name = repo.name.clone();
             let record_repo = repo.id.clone();
             let record_summary = message.clone();
             let previous_tip = repo.recent_commits.first().map(|commit| commit.sha.clone());
             let paths_for_op = paths.clone();
+            let target_for_op = target;
             self.run_repo_op(
                 &repo,
                 cx,
@@ -1485,9 +1644,9 @@ impl VantageApp {
                     format!("Could not amend the last commit in {name}"),
                 )
                 .on_success(move |app, short: String| {
-                    app.amending = false;
-                    app.commit_field.clear();
-                    app.commit_body.clear();
+                    // Spend only the draft this operation belongs to; another
+                    // repository's composer stays untouched.
+                    app.composers.clear_for(&record_repo);
                     app.selection.remove(&record_repo);
                     app.last_commit = Some(LastCommit {
                         repo_id: record_repo,
@@ -1496,7 +1655,13 @@ impl VantageApp {
                         previous_tip,
                     });
                 }),
-                move |backend, id| backend.amend(id, &paths_for_op, &message),
+                move |backend, id| {
+                    let head = backend.head_sha(id)?;
+                    if let Some(refusal) = target_for_op.refusal(id, head.as_deref()) {
+                        return Err(anyhow::anyhow!(refusal));
+                    }
+                    backend.amend(id, &paths_for_op, &message)
+                },
             );
             return;
         }
@@ -1511,6 +1676,7 @@ impl VantageApp {
         let record_repo = repo.id.clone();
         let record_summary = message.clone();
         let previous_tip = repo.recent_commits.first().map(|commit| commit.sha.clone());
+        let target_for_op = target;
         self.run_repo_op(
             &repo,
             cx,
@@ -1519,8 +1685,7 @@ impl VantageApp {
                 // The message is only spent once git accepted it, so a failed
                 // commit leaves the composer intact for a retry.
                 .on_success(move |app, short: String| {
-                    app.commit_field.clear();
-                    app.commit_body.clear();
+                    app.composers.clear_for(&record_repo);
                     // The commit spent these ticks; the rescan reports the real
                     // index state from here on.
                     app.selection.remove(&record_repo);
@@ -1532,6 +1697,12 @@ impl VantageApp {
                     });
                 }),
             move |backend, repo_id| {
+                // Refuse a job whose repository or HEAD moved after the button
+                // was pressed rather than writing to a different target.
+                let head = backend.head_sha(repo_id)?;
+                if let Some(refusal) = target_for_op.refusal(repo_id, head.as_deref()) {
+                    return Err(anyhow::anyhow!(refusal));
+                }
                 let body = (!body.is_empty()).then_some(body.as_str());
                 backend.commit(repo_id, &paths, &message, body)
             },
@@ -1858,6 +2029,7 @@ impl VantageApp {
                 match backend.forget(&repo_id) {
                     Ok(()) => {
                         self.repos.retain(|repo| repo.id != repo_id);
+                        self.composers.forget(&repo_id);
                         if self.selected_repo_id.as_deref() == Some(repo_id.as_str()) {
                             self.selected_repo_id = None;
                             self.settings.right_panel_open = false;
@@ -2392,6 +2564,7 @@ impl VantageApp {
         };
         let id = list[next].id.clone();
         drop(list);
+        self.composers.switch_to(&id);
         self.selected_repo_id = Some(id);
         cx.notify();
     }
@@ -2995,17 +3168,26 @@ impl VantageApp {
     /// pre-filled with the commit's subject and the usual file ticks apply.
     pub fn begin_amend(&mut self, subject: &str, cx: &mut Context<Self>) {
         self.context_menu = None;
-        self.amending = true;
+        // Remember the tip this amend started from, so a job queued before a
+        // newer commit can be refused instead of rewriting the wrong commit.
+        let base_tip = self
+            .selected_repo()
+            .and_then(|repo| repo.recent_commits.first().map(|commit| commit.sha.clone()));
         // The files being amended live in Changes, so go there: the mode is
         // about what the commit will contain, not just its message.
         self.inspector_tab = InspectorTab::Changes;
-        self.commit_field.set(subject.to_string());
+        let composer = self.composers.active_mut();
+        composer.amending = true;
+        composer.base_tip = base_tip;
+        composer.message.set(subject.to_string());
         cx.notify();
     }
 
     pub fn cancel_amend(&mut self, cx: &mut Context<Self>) {
-        self.amending = false;
-        self.commit_field.clear();
+        let composer = self.composers.active_mut();
+        composer.amending = false;
+        composer.base_tip = None;
+        composer.message.clear();
         cx.notify();
     }
 
@@ -3201,6 +3383,7 @@ impl VantageApp {
                         repository.workspace = resolved_group.clone();
                         app.repos.retain(|repo| repo.id != repository.id);
                         app.repos.insert(0, repository.clone());
+                        app.composers.switch_to(&repository.id);
                         app.selected_repo_id = Some(repository.id.clone());
                         app.settings.right_panel_open = true;
 
@@ -3327,8 +3510,8 @@ impl VantageApp {
             FieldId::ModalPath => &mut self.modal_path,
             FieldId::ModalCustomGroup => &mut self.modal_custom_group,
             FieldId::SettingsBranch => &mut self.settings_branch_field,
-            FieldId::CommitMessage => &mut self.commit_field,
-            FieldId::CommitBody => &mut self.commit_body,
+            FieldId::CommitMessage => &mut self.composers.active_mut().message,
+            FieldId::CommitBody => &mut self.composers.active_mut().body,
             FieldId::BranchName => &mut self.branch_field,
             FieldId::CloneUrl => &mut self.clone_url,
             FieldId::CloneParent => &mut self.clone_parent,
@@ -3343,8 +3526,8 @@ impl VantageApp {
             FieldId::ModalPath => &self.modal_path,
             FieldId::ModalCustomGroup => &self.modal_custom_group,
             FieldId::SettingsBranch => &self.settings_branch_field,
-            FieldId::CommitMessage => &self.commit_field,
-            FieldId::CommitBody => &self.commit_body,
+            FieldId::CommitMessage => &self.composers.active().message,
+            FieldId::CommitBody => &self.composers.active().body,
             FieldId::BranchName => &self.branch_field,
             FieldId::CloneUrl => &self.clone_url,
             FieldId::CloneParent => &self.clone_parent,
@@ -3397,7 +3580,7 @@ impl VantageApp {
             cx.notify();
             return;
         }
-        if id == FieldId::CommitMessage && self.amending {
+        if id == FieldId::CommitMessage && self.composer().amending {
             self.cancel_amend(cx);
             return;
         }
@@ -4397,5 +4580,125 @@ mod tests {
         let repo = repo_with(vec![file("untracked.rs", false)]);
         assert!(ticked_paths(None, &repo).is_empty());
         assert!(ticked_paths(Some(&overrides(&[("untracked.rs", false)])), &repo).is_empty());
+    }
+
+    #[test]
+    fn composer_message_is_isolated_per_repository() {
+        let mut composers = ComposerStore::default();
+        composers.switch_to("alpha");
+        composers.active_mut().message.set("alpha work");
+        composers.active_mut().body.set("details for alpha");
+
+        composers.switch_to("beta");
+        assert!(
+            composers.active().message.value.is_empty(),
+            "beta must not inherit alpha's message"
+        );
+        composers.active_mut().message.set("beta work");
+
+        composers.switch_to("alpha");
+        assert_eq!(composers.active().message.value, "alpha work");
+        assert_eq!(composers.active().body.value, "details for alpha");
+
+        composers.switch_to("beta");
+        assert_eq!(
+            composers.active().message.value,
+            "beta work",
+            "switching back restores the unfinished draft"
+        );
+    }
+
+    #[test]
+    fn amend_mode_never_survives_a_repository_switch() {
+        let mut composers = ComposerStore::default();
+        composers.switch_to("alpha");
+        composers.active_mut().message.set("alpha work");
+        composers.active_mut().amending = true;
+        composers.active_mut().base_tip = Some("abc1234".to_string());
+
+        composers.switch_to("beta");
+        assert!(!composers.active().amending);
+        assert_eq!(composers.active().base_tip, None);
+
+        composers.switch_to("alpha");
+        assert!(
+            !composers.active().amending,
+            "returning to alpha must not resurrect its amend mode"
+        );
+        assert_eq!(composers.active().base_tip, None);
+        assert_eq!(
+            composers.active().message.value,
+            "alpha work",
+            "the plain draft still comes back"
+        );
+    }
+
+    #[test]
+    fn a_normal_commit_targets_the_selected_repository_and_its_tip() {
+        let repo = repo_with_commits(&["abc1234"]);
+        let mut composer = ComposerState::default();
+        composer.message.set("Fix the thing");
+
+        let target = composer.commit_target(&repo);
+        assert_eq!(target.repo_id, "repo-1");
+        assert_eq!(target.expected_head.as_deref(), Some("abc1234"));
+        assert_eq!(
+            target.refusal("repo-1", Some("abc1234deadbeef")),
+            None,
+            "the abbreviated row tip matches the full HEAD"
+        );
+    }
+
+    #[test]
+    fn a_commit_is_refused_when_the_repository_or_head_moved() {
+        let repo = repo_with_commits(&["abc1234"]);
+        let mut composer = ComposerState::default();
+        composer.message.set("Fix the thing");
+        let target = composer.commit_target(&repo);
+
+        assert!(
+            target.refusal("repo-2", Some("abc1234deadbeef")).is_some(),
+            "a job queued for repo-1 must never write to repo-2"
+        );
+        let refusal = target
+            .refusal("repo-1", Some("def5678deadbeef"))
+            .expect("a moved HEAD must refuse the write");
+        assert!(refusal.contains("different commit"), "{refusal}");
+    }
+
+    #[test]
+    fn an_amend_targets_the_tip_captured_when_amend_mode_started() {
+        let repo = repo_with_commits(&["tip9999"]);
+        let composer = ComposerState {
+            amending: true,
+            base_tip: Some("older11".to_string()),
+            ..ComposerState::default()
+        };
+
+        let target = composer.commit_target(&repo);
+        assert_eq!(target.expected_head.as_deref(), Some("older11"));
+        assert!(
+            target.refusal("repo-1", Some("tip9999")).is_some(),
+            "an amend queued before the tip moved must not rewrite the new tip"
+        );
+    }
+
+    #[test]
+    fn a_successful_commit_spends_only_its_repositorys_draft() {
+        let mut composers = ComposerStore::default();
+        composers.switch_to("alpha");
+        composers.active_mut().message.set("alpha work");
+        composers.switch_to("beta");
+        composers.active_mut().message.set("beta work");
+
+        composers.clear_for("beta");
+        assert!(composers.active().message.value.is_empty());
+
+        composers.switch_to("alpha");
+        assert_eq!(
+            composers.active().message.value,
+            "alpha work",
+            "clearing beta's composer must not touch alpha's draft"
+        );
     }
 }

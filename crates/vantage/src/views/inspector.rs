@@ -529,7 +529,7 @@ impl VantageApp {
                                 .child(select_label),
                         ),
                     )
-                    .when(self.amending, |d| {
+                    .when(self.composer().amending, |d| {
                         d.child(
                             div()
                                 .flex()
@@ -833,8 +833,8 @@ impl VantageApp {
         let running = self.repo_op(&repo.id);
         let committing = running == Some(RepoOp::Commit);
         let busy = running.is_some();
-        let message_ready = !self.commit_field.value.trim().is_empty();
-        let amending = self.amending;
+        let message_ready = !self.composer().message.value.trim().is_empty();
+        let amending = self.composer().amending;
         // Amending can be message-only, so files are optional there.
         let can_commit = !busy && message_ready && (amending || staged > 0);
 
