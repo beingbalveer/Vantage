@@ -2546,6 +2546,75 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_reset_to_refuses_a_dirty_tree_without_touching_files() {
+        let runner = GitRunner::new();
+        let repo = TempTestRepo::new(&runner).await;
+
+        let tracked = repo.path.join("tracked.txt");
+        fs::write(&tracked, "v1\n").unwrap();
+        runner
+            .run_write(&repo.path, &["add", "tracked.txt"], 10)
+            .await
+            .unwrap();
+        runner
+            .run_write(&repo.path, &["commit", "-m", "c1"], 10)
+            .await
+            .unwrap();
+        let c1_sha = runner
+            .run_read(&repo.path, &["rev-parse", "HEAD"])
+            .await
+            .unwrap()
+            .stdout_string()
+            .trim()
+            .to_string();
+
+        fs::write(&tracked, "v2\n").unwrap();
+        runner
+            .run_write(&repo.path, &["commit", "-am", "c2"], 10)
+            .await
+            .unwrap();
+        let c2_sha = runner
+            .run_read(&repo.path, &["rev-parse", "HEAD"])
+            .await
+            .unwrap()
+            .stdout_string()
+            .trim()
+            .to_string();
+
+        fs::write(&tracked, "uncommitted edit\n").unwrap();
+        let untracked = repo.path.join("untracked.txt");
+        fs::write(&untracked, "new file\n").unwrap();
+
+        let error = reset_to(&runner, &repo.path, &c1_sha, false)
+            .await
+            .expect_err("a dirty tree must be refused");
+        assert_eq!(error.code, "Dirty");
+
+        let head = runner
+            .run_read(&repo.path, &["rev-parse", "HEAD"])
+            .await
+            .unwrap()
+            .stdout_string()
+            .trim()
+            .to_string();
+        assert_eq!(head, c2_sha, "HEAD must not move");
+        assert_eq!(
+            fs::read_to_string(&tracked).unwrap(),
+            "uncommitted edit\n",
+            "tracked edits must be kept"
+        );
+        assert_eq!(
+            fs::read_to_string(&untracked).unwrap(),
+            "new file\n",
+            "untracked files must be kept"
+        );
+        assert!(
+            list_backups(&runner, &repo.path).await.unwrap().is_empty(),
+            "a refused reset creates no backup ref"
+        );
+    }
+
+    #[tokio::test]
     async fn test_selective_commit_preserves_pre_staged_files() {
         let runner = GitRunner::new();
         let repo = TempTestRepo::new(&runner).await;
