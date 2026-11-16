@@ -734,6 +734,9 @@ pub async fn commit_with_author(
 /// first so the rewrite is always recoverable from Recovery. Author date is
 /// left untouched (git's `--amend` default); we deliberately do not pass
 /// `--reset-author`. An empty `paths` slice performs a message/body-only amend.
+///
+/// `body` follows the same rule as the UI composer: `None` keeps the body the
+/// commit already has, `Some("")` clears it, and `Some(text)` replaces it.
 pub async fn amend_commit(
     runner: &GitRunner,
     repo_path: &Path,
@@ -787,6 +790,20 @@ pub async fn amend_commit_with_author(
     }
     let old_head = head_out.stdout_string().trim().to_string();
     let old_short: String = old_head.chars().take(7).collect();
+
+    // `git commit --amend -m <subject>` replaces the whole message, so an
+    // unspecified body must be read from HEAD before the rewrite. `Some("")`
+    // stays an explicit request to clear it.
+    let original_body = if body.is_none() {
+        let output = runner
+            .run_read(repo_path, &["log", "-1", "--format=%b"])
+            .await?;
+        let text = output.stdout_string();
+        let text = text.trim_end_matches('\n').to_string();
+        (!text.trim().is_empty()).then_some(text)
+    } else {
+        None
+    };
 
     // Backup the pre-amend commit before rewriting it.
     let backup_id = format!(
@@ -866,13 +883,14 @@ pub async fn amend_commit_with_author(
         commit_args.push("--author");
         commit_args.push(spec);
     }
-    let body_str;
-    if let Some(b) = body {
-        if !b.trim().is_empty() {
-            body_str = b.to_string();
-            commit_args.push("-m");
-            commit_args.push(&body_str);
-        }
+    let body_to_write = match body {
+        Some(b) if b.trim().is_empty() => None,
+        Some(b) => Some(b.to_string()),
+        None => original_body,
+    };
+    if let Some(b) = &body_to_write {
+        commit_args.push("-m");
+        commit_args.push(b);
     }
     // Message-only amend leaves the index untouched; otherwise limit the amend
     // to the explicitly selected paths.
@@ -3832,6 +3850,137 @@ mod tests {
             "index must stay clean: {}",
             status
         );
+    }
+
+    #[tokio::test]
+    async fn test_amend_preserves_existing_body_when_body_not_supplied() {
+        let runner = GitRunner::new();
+        let repo = TempTestRepo::new(&runner).await;
+
+        let f = repo.path.join("file.txt");
+        fs::write(&f, "v1\n").unwrap();
+        runner
+            .run_write(&repo.path, &["add", "file.txt"], 10)
+            .await
+            .unwrap();
+        runner
+            .run_write(
+                &repo.path,
+                &[
+                    "commit",
+                    "-m",
+                    "original subject",
+                    "-m",
+                    "Original body line one.\nOriginal body line two.",
+                ],
+                10,
+            )
+            .await
+            .unwrap();
+
+        // A message-only amend with no body argument must not delete the body.
+        let amended = amend_commit(&runner, &repo.path, &[], "edited subject", None)
+            .await
+            .expect("clean-tree amend should succeed");
+        assert_eq!(amended.subject, "edited subject");
+        assert_eq!(
+            amended.body, "Original body line one.\nOriginal body line two.",
+            "an unspecified body must be carried over from the original commit"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_amend_uses_the_edited_body() {
+        let runner = GitRunner::new();
+        let repo = TempTestRepo::new(&runner).await;
+
+        let f = repo.path.join("file.txt");
+        fs::write(&f, "v1\n").unwrap();
+        runner
+            .run_write(&repo.path, &["add", "file.txt"], 10)
+            .await
+            .unwrap();
+        runner
+            .run_write(
+                &repo.path,
+                &["commit", "-m", "subject", "-m", "Original body"],
+                10,
+            )
+            .await
+            .unwrap();
+
+        let amended = amend_commit(
+            &runner,
+            &repo.path,
+            &[],
+            "subject",
+            Some("Edited body\n\nWith a second paragraph."),
+        )
+        .await
+        .expect("edited body amend should succeed");
+        assert_eq!(amended.body, "Edited body\n\nWith a second paragraph.");
+    }
+
+    #[tokio::test]
+    async fn test_amend_clears_the_body_when_explicitly_empty() {
+        let runner = GitRunner::new();
+        let repo = TempTestRepo::new(&runner).await;
+
+        let f = repo.path.join("file.txt");
+        fs::write(&f, "v1\n").unwrap();
+        runner
+            .run_write(&repo.path, &["add", "file.txt"], 10)
+            .await
+            .unwrap();
+        runner
+            .run_write(
+                &repo.path,
+                &["commit", "-m", "subject", "-m", "Body to clear"],
+                10,
+            )
+            .await
+            .unwrap();
+
+        // `Some("")` means the user cleared the Description field.
+        let amended = amend_commit(&runner, &repo.path, &[], "subject", Some(""))
+            .await
+            .expect("clearing the body should succeed");
+        assert!(amended.body.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_amend_refuses_without_a_head_commit() {
+        let runner = GitRunner::new();
+        let repo = TempTestRepo::new(&runner).await;
+
+        let error = amend_commit(&runner, &repo.path, &[], "nope", None)
+            .await
+            .expect_err("an unborn HEAD has nothing to amend");
+        assert_eq!(error.code, "Other");
+        assert!(error.message.contains("no commits to amend"));
+    }
+
+    #[tokio::test]
+    async fn test_amend_refuses_an_empty_summary() {
+        let runner = GitRunner::new();
+        let repo = TempTestRepo::new(&runner).await;
+
+        let f = repo.path.join("file.txt");
+        fs::write(&f, "v1\n").unwrap();
+        runner
+            .run_write(&repo.path, &["add", "file.txt"], 10)
+            .await
+            .unwrap();
+        runner
+            .run_write(&repo.path, &["commit", "-m", "subject"], 10)
+            .await
+            .unwrap();
+
+        let error = amend_commit(&runner, &repo.path, &[], "   ", Some("body"))
+            .await
+            .expect_err("an empty subject must be rejected");
+        assert_eq!(error.code, "Other");
+        assert!(error.message.contains("cannot be empty"));
     }
 
     #[test]

@@ -1465,7 +1465,9 @@ impl VantageApp {
             return;
         }
         let paths = self.ticked_paths(&repo);
-        if paths.is_empty() {
+        // An amend may rewrite only the message, so a clean tree is valid
+        // there. A normal commit still needs at least one selected path.
+        if paths.is_empty() && commit_needs_selected_paths(self.amending) {
             self.show_toast("Stage the files you want to commit", cx);
             return;
         }
@@ -1476,6 +1478,7 @@ impl VantageApp {
             let record_summary = message.clone();
             let previous_tip = repo.recent_commits.first().map(|commit| commit.sha.clone());
             let paths_for_op = paths.clone();
+            let body_for_op = body.clone();
             self.run_repo_op(
                 &repo,
                 cx,
@@ -1496,7 +1499,11 @@ impl VantageApp {
                         previous_tip,
                     });
                 }),
-                move |backend, id| backend.amend(id, &paths_for_op, &message),
+                move |backend, id| {
+                    // `Some("")` is deliberate: the Description field is the
+                    // source of truth, so clearing it clears the body.
+                    backend.amend(id, &paths_for_op, &message, Some(body_for_op.as_str()))
+                },
             );
             return;
         }
@@ -1603,6 +1610,7 @@ impl VantageApp {
         repo_id: &str,
         short: &str,
         subject: &str,
+        body: &str,
         is_tip: bool,
         x: f32,
         y: f32,
@@ -1612,6 +1620,7 @@ impl VantageApp {
             repo_id: repo_id.to_string(),
             short: short.to_string(),
             subject: subject.to_string(),
+            body: body.to_string(),
             is_tip,
             x,
             y,
@@ -2991,21 +3000,23 @@ impl VantageApp {
             .into_any_element()
     }
 
-    /// Rewrite the tip commit instead of making a new one: the message field is
-    /// pre-filled with the commit's subject and the usual file ticks apply.
-    pub fn begin_amend(&mut self, subject: &str, cx: &mut Context<Self>) {
+    /// Rewrite the tip commit instead of making a new one: both message fields
+    /// are pre-filled from the commit so an untouched amend keeps its body.
+    pub fn begin_amend(&mut self, subject: &str, body: &str, cx: &mut Context<Self>) {
         self.context_menu = None;
         self.amending = true;
         // The files being amended live in Changes, so go there: the mode is
         // about what the commit will contain, not just its message.
         self.inspector_tab = InspectorTab::Changes;
         self.commit_field.set(subject.to_string());
+        self.commit_body.set(body.to_string());
         cx.notify();
     }
 
     pub fn cancel_amend(&mut self, cx: &mut Context<Self>) {
         self.amending = false;
         self.commit_field.clear();
+        self.commit_body.clear();
         cx.notify();
     }
 
@@ -3927,14 +3938,17 @@ impl Render for VantageApp {
                                 }
                                 (
                                     ContextMenu::Commit {
-                                        repo_id, subject, ..
+                                        repo_id,
+                                        subject,
+                                        body,
+                                        ..
                                     },
                                     "Amend commit",
                                 ) => {
                                     // Only the repo the menu came from can be
                                     // amended, even if the selection moved on.
                                     if this.selected_repo_id.as_deref() == Some(repo_id.as_str()) {
-                                        this.begin_amend(subject, cx);
+                                        this.begin_amend(subject, body, cx);
                                     } else {
                                         this.close_file_menu(cx);
                                     }
@@ -4081,6 +4095,8 @@ pub enum ContextMenu {
         repo_id: String,
         short: String,
         subject: String,
+        /// The original description, carried so amend does not delete it.
+        body: String,
         /// The tip commit is the only one that can be amended.
         is_tip: bool,
         x: f32,
@@ -4162,6 +4178,12 @@ fn ticked_paths(
         })
         .map(|file| file.path.clone())
         .collect()
+}
+
+/// A normal commit needs at least one ticked path; an amend can rewrite only
+/// the message, so it is valid on a clean tree.
+fn commit_needs_selected_paths(amending: bool) -> bool {
+    !amending
 }
 
 /// The commit an Undo would reset, given the row's state and this session's
@@ -4262,6 +4284,7 @@ mod tests {
             .map(|sha| crate::model::CommitEntry {
                 sha: sha.to_string(),
                 message: format!("subject of {sha}"),
+                body: format!("body of {sha}"),
                 author: "QA".to_string(),
                 author_email: "qa@example.com".to_string(),
                 relative_time: "just now".to_string(),
@@ -4397,5 +4420,17 @@ mod tests {
         let repo = repo_with(vec![file("untracked.rs", false)]);
         assert!(ticked_paths(None, &repo).is_empty());
         assert!(ticked_paths(Some(&overrides(&[("untracked.rs", false)])), &repo).is_empty());
+    }
+
+    #[test]
+    fn amend_does_not_require_a_ticked_file_but_a_commit_does() {
+        assert!(
+            !commit_needs_selected_paths(true),
+            "message-only amend must work on a clean tree"
+        );
+        assert!(
+            commit_needs_selected_paths(false),
+            "a normal commit still needs at least one file"
+        );
     }
 }
