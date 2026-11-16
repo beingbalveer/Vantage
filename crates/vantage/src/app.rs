@@ -98,6 +98,135 @@ impl<T> RepoOpReport<T> {
     }
 }
 
+/// How long a plain success toast stays up.
+const TOAST_INFO_DURATION: Duration = Duration::from_millis(2600);
+/// A short, single-line failure still clears itself, just not as quickly.
+const TOAST_ERROR_DURATION: Duration = Duration::from_millis(6000);
+/// A toast never grows wider than this, even on a large window.
+const TOAST_MAX_WIDTH: f32 = 460.0;
+/// Space between the toast and the window edge (also used for the fit test).
+const TOAST_EDGE_MARGIN: f32 = 20.0;
+/// Characters and lines shown in the compact toast before "Details" appears.
+const TOAST_PREVIEW_CHARS: usize = 240;
+const TOAST_PREVIEW_LINES: usize = 3;
+
+/// What a toast is reporting. Errors stay longer, carry a copy action, and can
+/// open a scrollable details dialog when Git's output is long.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ToastKind {
+    Info,
+    Error,
+}
+
+/// A message shown at the bottom-right of the window.
+#[derive(Clone, Debug)]
+pub struct Toast {
+    pub message: String,
+    pub kind: ToastKind,
+}
+
+impl Toast {
+    pub fn new(message: impl Into<String>, kind: ToastKind) -> Self {
+        Self {
+            message: message.into(),
+            kind,
+        }
+    }
+
+    pub fn info(message: impl Into<String>) -> Self {
+        Self::new(message, ToastKind::Info)
+    }
+
+    pub fn error(message: impl Into<String>) -> Self {
+        Self::new(message, ToastKind::Error)
+    }
+
+    /// True when the full message needs more room than the toast should take.
+    pub fn is_detailed(&self) -> bool {
+        toast_needs_details(&self.message)
+    }
+
+    /// The compact form rendered in the toast; the full text stays in `message`.
+    pub fn preview(&self) -> String {
+        toast_preview(&self.message)
+    }
+
+    /// Copy always uses the full message, never the shortened preview.
+    pub fn copy_text(&self) -> &str {
+        &self.message
+    }
+
+    /// `None` means the toast stays until the user dismisses it.
+    ///
+    /// Multi-line and long failures are sticky: Git's stderr is the useful part
+    /// of a failed operation and must not disappear after a couple of seconds.
+    pub fn auto_hide_after(&self) -> Option<Duration> {
+        if self.is_detailed() || self.message.trim_end().contains('\n') {
+            return None;
+        }
+        match self.kind {
+            ToastKind::Info => Some(TOAST_INFO_DURATION),
+            ToastKind::Error => Some(TOAST_ERROR_DURATION),
+        }
+    }
+}
+
+/// A detailed toast shows a bounded preview; its copy action and dialog keep
+/// the complete text.
+fn toast_needs_details(message: &str) -> bool {
+    let message = message.trim_end();
+    message.chars().count() > TOAST_PREVIEW_CHARS || message.lines().count() > TOAST_PREVIEW_LINES
+}
+
+/// Cap a message at [`TOAST_PREVIEW_LINES`] and [`TOAST_PREVIEW_CHARS`],
+/// marking the cut with an ellipsis. The full string is never modified.
+fn toast_preview(message: &str) -> String {
+    let message = message.trim_end();
+    if !toast_needs_details(message) {
+        return message.to_string();
+    }
+
+    let mut preview = message
+        .lines()
+        .take(TOAST_PREVIEW_LINES)
+        .collect::<Vec<_>>()
+        .join("\n");
+
+    // Keep one character of the budget for the ellipsis, so the preview itself
+    // also stays inside `TOAST_PREVIEW_CHARS`.
+    let mut chars = preview.chars();
+    let head: String = chars.by_ref().take(TOAST_PREVIEW_CHARS - 1).collect();
+    if chars.next().is_some() {
+        preview = format!("{head}…");
+    } else {
+        preview.push_str("\n…");
+    }
+    preview
+}
+
+/// Width available to the toast, leaving the same margin on both sides so it
+/// still fits at the 1040 px minimum window size.
+fn toast_max_width(window_width: f32) -> f32 {
+    (window_width - TOAST_EDGE_MARGIN * 2.0).clamp(0.0, TOAST_MAX_WIDTH)
+}
+
+/// A compact text action inside the toast, inheriting its text size and colour.
+fn toast_action(theme: &Theme, label: &'static str) -> gpui::Div {
+    div()
+        .flex()
+        .items_center()
+        .justify_center()
+        .px(px(8.0))
+        .py(px(3.0))
+        .rounded(px(5.0))
+        .cursor_pointer()
+        .whitespace_nowrap()
+        .flex_shrink_0()
+        .fg(theme.toast_text)
+        .hover(move |s| s.bg(crate::theme::alpha(theme.toast_text, 0.12)))
+        .child(label)
+}
+
 /// The commit this session most recently created, so the detail pane can offer
 /// an Undo for a commit that has not been pushed (as GitHub Desktop does).
 #[derive(Clone, Debug)]
@@ -148,8 +277,10 @@ pub struct VantageApp {
     pub selected_repo_id: Option<String>,
     pub is_add_modal_open: bool,
     pub is_refreshing: bool,
-    pub toast: Option<String>,
+    pub toast: Option<Toast>,
     toast_seq: u64,
+    toast_details_open: bool,
+    toast_copied: bool,
     pub collapsed_groups: HashSet<String>,
     /// Left sidebar shrunk to its 56px icon rail.
     pub sidebar_collapsed: bool,
@@ -287,6 +418,8 @@ impl VantageApp {
             is_refreshing: false,
             toast: None,
             toast_seq: 0,
+            toast_details_open: false,
+            toast_copied: false,
             collapsed_groups: HashSet::new(),
             sidebar_collapsed: settings.sidebar_collapsed,
             right_panel_drag_start: None,
@@ -548,24 +681,82 @@ impl VantageApp {
 
     // ---- toasts ----------------------------------------------------------
 
+    /// Show a short-lived informational message. Successes and hints keep the
+    /// original 2.6 s lifetime.
     pub fn show_toast(&mut self, message: impl Into<String>, cx: &mut Context<Self>) {
-        self.toast = Some(message.into());
+        self.set_toast(Toast::info(message), cx);
+    }
+
+    /// Show a failure. Single-line errors stay for 6 s; long or multi-line Git
+    /// output stays until dismissed, with copy and details actions.
+    pub fn show_error_toast(&mut self, message: impl Into<String>, cx: &mut Context<Self>) {
+        self.set_toast(Toast::error(message), cx);
+    }
+
+    fn set_toast(&mut self, toast: Toast, cx: &mut Context<Self>) {
+        let auto_hide = toast.auto_hide_after();
+        self.toast = Some(toast);
+        self.toast_details_open = false;
+        self.toast_copied = false;
         self.toast_seq = self.toast_seq.wrapping_add(1);
         let seq = self.toast_seq;
         cx.notify();
+
+        let Some(duration) = auto_hide else {
+            return;
+        };
         cx.spawn(async move |this, cx| {
-            cx.background_executor()
-                .timer(Duration::from_millis(2600))
-                .await;
+            cx.background_executor().timer(duration).await;
             this.update(cx, |this, cx| {
+                // A newer toast owns the slot now; its timer must not be
+                // cancelled by this older one.
                 if this.toast_seq == seq {
                     this.toast = None;
+                    this.toast_details_open = false;
                     cx.notify();
                 }
             })
             .ok();
         })
         .detach();
+    }
+
+    pub fn dismiss_toast(&mut self, cx: &mut Context<Self>) {
+        self.toast_seq = self.toast_seq.wrapping_add(1);
+        self.toast = None;
+        self.toast_details_open = false;
+        self.toast_copied = false;
+        cx.notify();
+    }
+
+    /// Copy the complete toast text. Long errors show a preview in the toast,
+    /// so this must use the stored message rather than the clipped rendering.
+    pub fn copy_toast(&mut self, cx: &mut Context<Self>) {
+        let Some(message) = self
+            .toast
+            .as_ref()
+            .map(|toast| toast.copy_text().to_string())
+        else {
+            return;
+        };
+        cx.write_to_clipboard(ClipboardItem::new_string(message));
+        self.toast_copied = true;
+        cx.notify();
+    }
+
+    pub fn open_toast_details(&mut self, cx: &mut Context<Self>) {
+        let Some(toast) = self.toast.as_ref() else {
+            return;
+        };
+        if toast.is_detailed() {
+            self.toast_details_open = true;
+            cx.notify();
+        }
+    }
+
+    pub fn close_toast_details(&mut self, cx: &mut Context<Self>) {
+        self.toast_details_open = false;
+        cx.notify();
     }
 
     // ---- derived data ----------------------------------------------------
@@ -981,7 +1172,7 @@ impl VantageApp {
     pub fn commit_settings_branch(&mut self, cx: &mut Context<Self>) {
         let branch = self.settings_branch_field.value.trim().to_string();
         if let Err(error) = vantage_core::state::validate_branch_name(&branch) {
-            self.show_toast(error, cx);
+            self.show_error_toast(error, cx);
             return;
         }
         self.settings.default_branch = branch;
@@ -1005,7 +1196,7 @@ impl VantageApp {
             return;
         };
         if let Err(error) = backend.set_ui_settings(&self.settings) {
-            self.show_toast(format!("Could not save settings: {error}"), cx);
+            self.show_error_toast(format!("Could not save settings: {error}"), cx);
         }
     }
 
@@ -1047,7 +1238,7 @@ impl VantageApp {
         }
         let result = command.arg(&path).spawn();
         if let Err(error) = result {
-            self.show_toast(format!("Could not reveal the data folder: {error}"), cx);
+            self.show_error_toast(format!("Could not reveal the data folder: {error}"), cx);
         }
     }
 
@@ -1062,7 +1253,7 @@ impl VantageApp {
         let result = std::process::Command::new("xdg-open").arg(url).spawn();
 
         if let Err(error) = result {
-            self.show_toast(format!("Could not open link: {error}"), cx);
+            self.show_error_toast(format!("Could not open link: {error}"), cx);
         }
     }
 
@@ -1093,7 +1284,7 @@ impl VantageApp {
                             format!("{name}: {error}")
                         })
                         .collect();
-                    app.show_toast(
+                    app.show_error_toast(
                         format!("Background fetch failed — {}", failures.join("; ")),
                         cx,
                     );
@@ -1284,7 +1475,7 @@ impl VantageApp {
                 // A failed write is the only case that needs a re-read: the tick
                 // is otherwise the user's answer and survives later scans.
                 if let Err(error) = result {
-                    app.show_toast(format!("Could not update {toast_path}: {error}"), cx);
+                    app.show_error_toast(format!("Could not update {toast_path}: {error}"), cx);
                     app.start_scan_dirty(vec![root], cx);
                 }
                 cx.notify();
@@ -1337,7 +1528,7 @@ impl VantageApp {
                 .await;
             this.update(cx, |app, cx| {
                 if let Err(error) = result {
-                    app.show_toast(format!("Could not {verb} {total} files: {error}"), cx);
+                    app.show_error_toast(format!("Could not {verb} {total} files: {error}"), cx);
                     app.start_scan_dirty(vec![root], cx);
                 }
                 cx.notify();
@@ -1376,7 +1567,7 @@ impl VantageApp {
                 match result {
                     Ok(()) => app.show_toast(format!("Checked out {branch}"), cx),
                     Err(error) => {
-                        app.show_toast(format!("Checkout failed for {name}: {error}"), cx)
+                        app.show_error_toast(format!("Checkout failed for {name}: {error}"), cx)
                     }
                 }
                 match root {
@@ -1866,7 +2057,9 @@ impl VantageApp {
                         self.show_toast("Removed from the list", cx);
                         self.start_scan(cx);
                     }
-                    Err(error) => self.show_toast(format!("Could not remove it: {error}"), cx),
+                    Err(error) => {
+                        self.show_error_toast(format!("Could not remove it: {error}"), cx)
+                    }
                 }
             }
             ConfirmAction::DiscardRepository { repo_id, paths } => {
@@ -2027,7 +2220,7 @@ impl VantageApp {
                 match result {
                     Ok(()) => app.show_toast(format!("Ignored {toast_path}"), cx),
                     Err(error) => {
-                        app.show_toast(format!("Could not write .gitignore: {error}"), cx)
+                        app.show_error_toast(format!("Could not write .gitignore: {error}"), cx)
                     }
                 }
                 app.start_scan(cx);
@@ -2224,7 +2417,7 @@ impl VantageApp {
                         app.show_toast("Repository created", cx);
                         app.start_scan(cx);
                     }
-                    Err(error) => app.show_toast(format!("Could not create it: {error}"), cx),
+                    Err(error) => app.show_error_toast(format!("Could not create it: {error}"), cx),
                 }
                 cx.notify();
             })
@@ -2271,7 +2464,7 @@ impl VantageApp {
                         app.show_toast("Cloned and added to the list", cx);
                         app.start_scan(cx);
                     }
-                    Err(error) => app.show_toast(format!("Clone failed: {error}"), cx),
+                    Err(error) => app.show_error_toast(format!("Clone failed: {error}"), cx),
                 }
                 cx.notify();
             })
@@ -2311,7 +2504,9 @@ impl VantageApp {
             this.update(cx, |app, cx| match page {
                 Ok(Some(url)) => app.open_url(&url, cx),
                 Ok(None) => app.show_toast("This repository has no origin", cx),
-                Err(error) => app.show_toast(format!("Could not read the remote: {error}"), cx),
+                Err(error) => {
+                    app.show_error_toast(format!("Could not read the remote: {error}"), cx)
+                }
             })
             .ok();
         })
@@ -2331,7 +2526,9 @@ impl VantageApp {
             .spawn()
         {
             Ok(_) => cx.notify(),
-            Err(error) => self.show_toast(format!("Could not reveal the folder: {error}"), cx),
+            Err(error) => {
+                self.show_error_toast(format!("Could not reveal the folder: {error}"), cx)
+            }
         }
     }
 
@@ -2348,7 +2545,7 @@ impl VantageApp {
             .spawn()
         {
             Ok(_) => cx.notify(),
-            Err(error) => self.show_toast(format!("Could not open Terminal: {error}"), cx),
+            Err(error) => self.show_error_toast(format!("Could not open Terminal: {error}"), cx),
         }
     }
 
@@ -2370,7 +2567,7 @@ impl VantageApp {
         };
         match spawned.or_else(|_| std::process::Command::new("open").arg(&path).spawn()) {
             Ok(_) => cx.notify(),
-            Err(error) => self.show_toast(format!("Could not open the editor: {error}"), cx),
+            Err(error) => self.show_error_toast(format!("Could not open the editor: {error}"), cx),
         }
     }
 
@@ -3098,7 +3295,9 @@ impl VantageApp {
                         }
                         app.show_toast(report.ok_message, cx);
                     }
-                    Err(error) => app.show_toast(format!("{}: {error}", report.fail_message), cx),
+                    Err(error) => {
+                        app.show_error_toast(format!("{}: {error}", report.fail_message), cx)
+                    }
                 }
                 app.start_scan(cx);
                 cx.notify();
@@ -3296,25 +3495,180 @@ impl VantageApp {
             .map(|name| name.to_string_lossy().into_owned())
     }
 
-    pub fn render_toast(&self) -> Option<gpui::AnyElement> {
-        let message = self.toast.clone()?;
+    pub fn render_toast(
+        &self,
+        window: &Window,
+        cx: &mut Context<Self>,
+    ) -> Option<gpui::AnyElement> {
+        let toast = self.toast.as_ref()?;
         let theme = self.theme;
+        let is_error = toast.kind == ToastKind::Error;
+        let detailed = toast.is_detailed();
+        let sticky = toast.auto_hide_after().is_none();
+        let preview = toast.preview();
+        let max_width = toast_max_width(f32::from(window.bounds().size.width));
+
+        let mut card = div()
+            .absolute()
+            .bottom(px(TOAST_EDGE_MARGIN))
+            .right(px(TOAST_EDGE_MARGIN))
+            .max_w(px(max_width))
+            .flex()
+            .flex_col()
+            .gap(px(6.0))
+            .px(px(14.0))
+            .py(px(10.0))
+            .rounded(px(8.0))
+            .border_1()
+            .border_color(if is_error {
+                theme.error_border
+            } else {
+                theme.toast_border
+            })
+            .bg(theme.toast_bg)
+            .fg(theme.toast_text)
+            .shadow_lg()
+            // Wrap long lines instead of letting them run off the window.
+            .whitespace_normal()
+            .xs()
+            .medium()
+            .child(
+                div()
+                    .flex()
+                    .items_start()
+                    .gap(px(8.0))
+                    .when(is_error, |row| {
+                        row.child(crate::ui::icon(
+                            "alert-circle",
+                            crate::ui::IconSize::Xs,
+                            theme.error_border,
+                        ))
+                    })
+                    .child(div().flex_1().min_w(px(0.0)).child(preview)),
+            );
+
+        // Success toasts stay visually quiet; errors and toasts that will not
+        // clear themselves get the actions needed to read or reuse the text.
+        if is_error || sticky {
+            card = card.child(
+                div()
+                    .flex()
+                    .items_center()
+                    .justify_end()
+                    .gap(px(4.0))
+                    .child(
+                        toast_action(&theme, if self.toast_copied { "Copied" } else { "Copy" })
+                            .id("toast-copy")
+                            .on_click(cx.listener(|this, _e, _w, cx| this.copy_toast(cx))),
+                    )
+                    .when(detailed, |row| {
+                        row.child(
+                            toast_action(&theme, "Details")
+                                .id("toast-details")
+                                .on_click(
+                                    cx.listener(|this, _e, _w, cx| this.open_toast_details(cx)),
+                                ),
+                        )
+                    })
+                    .child(
+                        toast_action(&theme, "Dismiss")
+                            .id("toast-dismiss")
+                            .on_click(cx.listener(|this, _e, _w, cx| this.dismiss_toast(cx))),
+                    ),
+            );
+        }
+
+        Some(card.into_any_element())
+    }
+
+    /// The full text of a long toast, in a scrollable dialog. The toast itself
+    /// only shows a bounded preview so a 4 KB Git error cannot cover the app.
+    pub fn render_toast_details(&self, cx: &mut Context<Self>) -> Option<gpui::AnyElement> {
+        if !self.toast_details_open {
+            return None;
+        }
+        let toast = self.toast.as_ref()?;
+        let theme = self.theme;
+        let title = if toast.kind == ToastKind::Error {
+            "Error details"
+        } else {
+            "Message details"
+        };
+        let text = toast.copy_text().to_string();
+
+        let card = div()
+            .w(px(560.0))
+            .max_w(gpui::relative(0.92))
+            .max_h(gpui::relative(0.86))
+            .flex()
+            .flex_col()
+            .gap(px(14.0))
+            .p(px(20.0))
+            .bg(theme.panel)
+            .border_1()
+            .border_color(theme.divider)
+            .rounded(px(12.0))
+            .shadow_lg()
+            // A press inside the dialog is not a press on the backdrop.
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(|_this, _e, _w, cx| cx.stop_propagation()),
+            )
+            .child(div().sm().medium().fg(theme.text_app).child(title))
+            .child(
+                div()
+                    .id("toast-details-text")
+                    .flex_1()
+                    .min_h(px(0.0))
+                    .max_h(px(360.0))
+                    .overflow_y_scroll()
+                    .p(px(10.0))
+                    .rounded(px(6.0))
+                    .bg(theme.field_bg)
+                    .border_1()
+                    .border_color(theme.field_border)
+                    .mono_xs()
+                    .whitespace_normal()
+                    .fg(theme.text_body)
+                    .child(text),
+            )
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .justify_end()
+                    .gap(px(8.0))
+                    .child(
+                        crate::ui::secondary_button(
+                            &theme,
+                            if self.toast_copied { "Copied" } else { "Copy" },
+                            Some("copy"),
+                        )
+                        .id("toast-details-copy")
+                        .on_click(cx.listener(|this, _e, _w, cx| this.copy_toast(cx))),
+                    )
+                    .child(
+                        crate::ui::primary_button(&theme, "Close", None)
+                            .id("toast-details-close")
+                            .on_click(cx.listener(|this, _e, _w, cx| this.close_toast_details(cx))),
+                    ),
+            );
+
         Some(
             div()
                 .absolute()
-                .bottom(px(20.0))
-                .right(px(20.0))
-                .px(px(16.0))
-                .py(px(10.0))
-                .rounded(px(8.0))
-                .border_1()
-                .border_color(theme.toast_border)
-                .bg(theme.toast_bg)
-                .fg(theme.toast_text)
-                .shadow_lg()
-                .xs()
-                .medium()
-                .child(message)
+                .top(px(0.0))
+                .left(px(0.0))
+                .size_full()
+                .flex()
+                .items_center()
+                .justify_center()
+                .bg(theme.overlay)
+                .on_mouse_down(
+                    MouseButton::Left,
+                    cx.listener(|this, _e, _w, cx| this.close_toast_details(cx)),
+                )
+                .child(card)
                 .into_any_element(),
         )
     }
@@ -3986,8 +4340,11 @@ impl Render for VantageApp {
         if self.is_settings_open {
             root = root.child(self.render_settings_modal(window, cx));
         }
-        if let Some(toast) = self.render_toast() {
+        if let Some(toast) = self.render_toast(window, cx) {
             root = root.child(toast);
+        }
+        if let Some(details) = self.render_toast_details(cx) {
+            root = root.child(deferred(details));
         }
         root
     }
@@ -4397,5 +4754,90 @@ mod tests {
         let repo = repo_with(vec![file("untracked.rs", false)]);
         assert!(ticked_paths(None, &repo).is_empty());
         assert!(ticked_paths(Some(&overrides(&[("untracked.rs", false)])), &repo).is_empty());
+    }
+
+    #[test]
+    fn success_toasts_keep_the_short_lifetime() {
+        let toast = Toast::info("Repository status refreshed");
+        assert_eq!(toast.auto_hide_after(), Some(TOAST_INFO_DURATION));
+    }
+
+    #[test]
+    fn short_failures_stay_up_longer_than_successes() {
+        let toast = Toast::error("Clone failed: authentication required");
+        assert_eq!(toast.auto_hide_after(), Some(TOAST_ERROR_DURATION));
+        assert!(TOAST_ERROR_DURATION > TOAST_INFO_DURATION);
+    }
+
+    #[test]
+    fn multi_line_and_long_failures_wait_for_dismissal() {
+        assert_eq!(
+            Toast::error("error: failed to push\nhint: fetch first").auto_hide_after(),
+            None
+        );
+
+        let long = "error: ".to_string() + &"detail ".repeat(600);
+        assert!(Toast::error(&long).is_detailed());
+        assert_eq!(Toast::error(&long).auto_hide_after(), None);
+    }
+
+    #[test]
+    fn a_long_git_error_keeps_full_copy_text_but_shows_a_bounded_preview() {
+        let message = long_git_error();
+        let toast = Toast::error(message.clone());
+
+        assert!(toast.is_detailed());
+        let preview = toast.preview();
+        assert!(preview.chars().count() <= TOAST_PREVIEW_CHARS);
+        assert!(preview.lines().count() <= TOAST_PREVIEW_LINES + 1);
+        assert!(preview.ends_with('…'));
+        assert_eq!(toast.copy_text(), message);
+    }
+
+    #[test]
+    fn a_single_long_line_is_truncated_to_the_preview_budget() {
+        let preview = toast_preview(&"x".repeat(4096));
+        assert_eq!(preview.chars().count(), TOAST_PREVIEW_CHARS);
+        assert!(preview.ends_with('…'));
+        assert!(!preview.contains('\n'));
+    }
+
+    #[test]
+    fn a_multi_line_error_preview_keeps_the_first_lines_and_marks_the_cut() {
+        let preview = toast_preview("error: first\nhint: second\nhint: third\nhint: fourth");
+        assert!(preview.starts_with("error: first\nhint: second\nhint: third"));
+        assert!(preview.ends_with("\n…"));
+        assert_eq!(preview.lines().count(), TOAST_PREVIEW_LINES + 1);
+    }
+
+    #[test]
+    fn a_short_message_is_shown_in_full() {
+        let toast = Toast::info("Saved");
+        assert!(!toast.is_detailed());
+        assert_eq!(toast.preview(), "Saved");
+        assert_eq!(toast.copy_text(), "Saved");
+    }
+
+    #[test]
+    fn toast_width_stays_inside_the_minimum_window() {
+        assert!((420.0..=480.0).contains(&TOAST_MAX_WIDTH));
+
+        let width = toast_max_width(1040.0);
+        assert_eq!(width, TOAST_MAX_WIDTH);
+        assert!(width + 2.0 * TOAST_EDGE_MARGIN <= 1040.0);
+
+        let narrow = toast_max_width(320.0);
+        assert_eq!(narrow, 320.0 - 2.0 * TOAST_EDGE_MARGIN);
+        assert!(narrow + 2.0 * TOAST_EDGE_MARGIN <= 320.0);
+    }
+
+    fn long_git_error() -> String {
+        let mut message = String::from("error: failed to push some refs to 'origin'\n");
+        for index in 0..80 {
+            message.push_str(&format!(
+                "hint: updates were rejected because the remote contains work {index}\n"
+            ));
+        }
+        message
     }
 }
