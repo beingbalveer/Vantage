@@ -23,3 +23,4 @@ objc2-app-kit = { version = "0.3", features = ["NSApplication"] }
 
 [dev-dependencies]
 gpui = { version = "0.2.2", features = ["test-support"] }
+tempfile = "3"
