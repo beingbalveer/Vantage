@@ -69,6 +69,9 @@ impl RepoOp {
 /// value the operation produced (a commit's short SHA, or `()` for the rest).
 type SuccessHook<T> = Box<dyn FnOnce(&mut VantageApp, T)>;
 
+/// The git call a branch prompt runs once the user submits a name.
+type BranchAction = Box<dyn FnOnce(&Backend, &str) -> anyhow::Result<()> + Send>;
+
 /// What a finished repository operation says, and what it cleans up.
 ///
 /// Grouping these keeps [`VantageApp::run_repo_op`] down to the arguments that
@@ -2454,11 +2457,7 @@ impl VantageApp {
         };
         let typed = self.branch_field.value.trim().to_string();
 
-        let (ok, fail, op): (
-            String,
-            String,
-            Box<dyn FnOnce(&Backend, &str) -> anyhow::Result<()> + Send>,
-        ) = match &prompt {
+        let (ok, fail, op): (String, String, BranchAction) = match &prompt {
             BranchPrompt::Create { base } => {
                 if typed.is_empty() {
                     self.show_toast("Type a branch name first", cx);

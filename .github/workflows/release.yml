@@ -13,7 +13,7 @@ jobs:
     name: Build, notarize and publish
     # Pinned image on Apple silicon: the runner is arm64 and cross-compiles the
     # Intel slice, so the DMG is universal.
-    runs-on: macos-14
+    runs-on: macos-15
     permissions:
       contents: write
     env:
@@ -109,7 +109,8 @@ jobs:
         run: |
           mkdir -p Casks
           cp dist/vantage.rb Casks/vantage.rb
-          if git diff --quiet -- Casks/vantage.rb; then
+          git add Casks/vantage.rb
+          if git diff --cached --quiet -- Casks/vantage.rb; then
             echo "cask already current"
             exit 0
           fi
@@ -117,6 +118,5 @@ jobs:
           bot="41898282+github-actions[bot]@users.noreply.github.com"
           git config user.name "github-actions[bot]"
           git config user.email "$bot"
-          git add Casks/vantage.rb
           git commit -m "chore(cask): pin $GITHUB_REF_NAME"
           git push origin "HEAD:main"

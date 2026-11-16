@@ -2,6 +2,12 @@
 resolver = "2"
 members = ["crates/vantage-core", "crates/vantage"]
 
+# gpui's HTTP client pulls in xattr 0.2.3, which references libc::ENOATTR.
+# libc 0.2.190 removed that constant on Linux, so the vendored copy maps it
+# to ENODATA (the same value) there.
+[patch.crates-io]
+xattr = { path = "vendor/xattr" }
+
 [workspace.package]
 version = "0.6.0"
 edition = "2021"

@@ -1,0 +1,34 @@
+# Vendored copy of xattr 0.2.3 (MIT/Apache-2.0).
+#
+# gpui -> gpui_http_client -> zed-async-tar still depends on xattr 0.2.x, which
+# references libc::ENOATTR. libc 0.2.190 removed that constant on Linux and
+# Android; the only change in this copy maps it to ENODATA there (the same
+# value, and what xattr 1.x does). Drop this once gpui uses xattr 1.x.
+
+[package]
+name = "xattr"
+version = "0.2.3"
+edition = "2015"
+authors = ["Steven Allen <steven@stebalien.com>"]
+description = "unix extended filesystem attributes"
+documentation = "https://docs.rs/xattr"
+keywords = [
+    "xattr",
+    "filesystem",
+    "unix",
+]
+license = "MIT/Apache-2.0"
+repository = "https://github.com/Stebalien/xattr"
+
+[dependencies.libc]
+version = "0.2"
+
+[dev-dependencies.tempfile]
+version = "3"
+
+[features]
+default = ["unsupported"]
+unsupported = []
+
+# Keep the vendored crate out of the Vantage workspace.
+[workspace]

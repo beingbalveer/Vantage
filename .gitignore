@@ -1,5 +1,7 @@
 # Rust / Cargo
 /target/
+/vendor/*/target/
+/vendor/*/Cargo.lock
 
 # Release artifacts (scripts/bundle-macos.sh)
 /dist/
