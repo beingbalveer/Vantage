@@ -149,6 +149,7 @@ fn bundle_version() -> Option<String> {
     None
 }
 
+#[cfg(target_os = "macos")]
 fn plist_value(plist: &str, key: &str) -> Option<String> {
     let key_tag = format!("<key>{key}</key>");
     let rest = plist.split_once(&key_tag)?.1;

@@ -10,6 +10,7 @@
 //! embedded by the GPUI asset source, so no extra file is shipped.
 
 /// 1024×1024 brand icon, shared with the GPUI asset source.
+#[cfg(target_os = "macos")]
 const ICON_PNG: &[u8] = include_bytes!("../assets/images/vantage-icon.png");
 
 /// Install the brand icon as the Dock / app-switcher tile.
