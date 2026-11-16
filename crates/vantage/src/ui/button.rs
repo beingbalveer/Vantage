@@ -127,6 +127,29 @@ pub fn accent_button_with(
     button.child(label)
 }
 
+/// Destructive counterpart to [`accent_button`]: the same footprint, filled
+/// with the red used by discard/remove confirmations. Kept separate because a
+/// second `.hover` on an existing button is a debug assertion in GPUI.
+pub fn destructive_button(theme: &Theme, label: impl IntoElement) -> Div {
+    div()
+        .flex()
+        .items_center()
+        .justify_center()
+        .gap(px(6.0))
+        .h(px(ROW_CONTROL_HEIGHT))
+        .px(px(14.0))
+        .rounded(px(RADIUS_MD))
+        .bg(theme.status_red)
+        .cursor_pointer()
+        .whitespace_nowrap()
+        .flex_shrink_0()
+        .xs()
+        .medium()
+        .fg(theme.primary_text)
+        .hover(move |s| s.bg(theme.del_text))
+        .child(label)
+}
+
 /// The disabled face of [`accent_button`]: same footprint, flat and muted, so a
 /// button that cannot run looks unavailable instead of just faded.
 pub fn disabled_button(theme: &Theme, label: impl IntoElement) -> Div {

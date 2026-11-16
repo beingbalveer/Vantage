@@ -6,7 +6,7 @@
 
 use gpui::{actions, App, Entity, KeyBinding, Menu, MenuItem, SystemMenuType, Window};
 
-use crate::app::VantageApp;
+use crate::app::{VantageApp, MODAL_KEY_CONTEXT, REPO_LIST_KEY_CONTEXT};
 use crate::model::NavSection;
 
 actions!(
@@ -40,6 +40,7 @@ actions!(
         SelectPrevRepo,
         SelectNextRepo,
         OpenRepo,
+        DismissModal,
     ]
 );
 
@@ -62,10 +63,15 @@ pub fn install(cx: &mut App, app: Entity<VantageApp>) {
         KeyBinding::new("ctrl-cmd-f", ToggleFullscreen, None),
         KeyBinding::new("cmd-m", Minimize, None),
         KeyBinding::new("cmd-w", CloseWindow, None),
-        // Plain arrows walk the repository list; Enter opens the highlighted one.
-        KeyBinding::new("up", SelectPrevRepo, None),
-        KeyBinding::new("down", SelectNextRepo, None),
-        KeyBinding::new("enter", OpenRepo, None),
+        // Plain arrows walk the repository list; Enter opens the highlighted
+        // one. The context keeps them out of every text field.
+        KeyBinding::new("up", SelectPrevRepo, Some(REPO_LIST_KEY_CONTEXT)),
+        KeyBinding::new("down", SelectNextRepo, Some(REPO_LIST_KEY_CONTEXT)),
+        KeyBinding::new("enter", OpenRepo, Some(REPO_LIST_KEY_CONTEXT)),
+        // Dialogs own Escape while they are open. The card carries the context,
+        // so this matches no matter which control inside has focus. Tab is
+        // handled by the focused control, where a Window is available.
+        KeyBinding::new("escape", DismissModal, Some(MODAL_KEY_CONTEXT)),
         KeyBinding::new("cmd-1", SectionOverview, None),
         KeyBinding::new("cmd-2", SectionAttention, None),
         KeyBinding::new("cmd-3", SectionChanges, None),
@@ -184,6 +190,12 @@ pub fn install(cx: &mut App, app: Entity<VantageApp>) {
         let app = app.clone();
         move |_: &OpenRepo, cx: &mut App| {
             app.update(cx, |app, cx| app.open_selected(cx));
+        }
+    });
+    cx.on_action({
+        let app = app.clone();
+        move |_: &DismissModal, cx: &mut App| {
+            app.update(cx, |app, cx| app.dismiss_modal(cx));
         }
     });
 

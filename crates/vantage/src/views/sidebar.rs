@@ -93,11 +93,7 @@ impl VantageApp {
                         .fg(theme.accent_text)
                         .hover(|s| s.opacity(0.75))
                         .on_click(cx.listener(|this, _e, _w, cx| {
-                            this.is_adding_group = !this.is_adding_group;
-                            if !this.is_adding_group {
-                                this.group_field.clear();
-                            }
-                            cx.notify();
+                            this.toggle_new_group(cx);
                         }))
                         .child(icon("plus", IconSize::Xs, theme.accent_text))
                         .child(div().child("New group")),
