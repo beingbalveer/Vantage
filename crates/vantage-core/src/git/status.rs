@@ -23,6 +23,9 @@ pub struct StatusRecord {
 #[derive(Debug, Default, Clone)]
 pub struct ParsedStatusV2 {
     pub branch: Option<String>,
+    /// Commit at HEAD, including when a branch is checked out. `None` for an
+    /// unborn branch.
+    pub head_sha: Option<String>,
     pub detached_sha: Option<String>,
     pub upstream: Option<String>,
     pub ahead: u32,
@@ -135,6 +138,7 @@ pub fn parse_porcelain_v2(output: &[u8]) -> ParsedStatusV2 {
         } else if let Some(stripped) = line.strip_prefix("# branch.oid ") {
             let oid = stripped.trim();
             if oid != "(initial)" {
+                result.head_sha = Some(oid.to_string());
                 result.detached_sha = Some(oid.to_string());
             }
         } else if let Some(stripped) = line.strip_prefix("# branch.upstream ") {
@@ -250,6 +254,8 @@ fn ordinary_status_record(line: &str) -> Option<StatusRecord> {
 pub struct RepoStatusSnapshot {
     pub status: RepoStatus,
     pub records: Vec<StatusRecord>,
+    /// Commit at HEAD, used to cache per-repository detail loads.
+    pub head_sha: Option<String>,
 }
 
 pub async fn query_repo_status(
@@ -264,12 +270,37 @@ pub async fn query_repo_status(
         .status
 }
 
+/// Status for one checked-out working tree, with only what an overview row
+/// reads: branch, upstream, ahead/behind, changes and last activity.
+///
+/// Unlike [`query_repo_status_snapshot`] this skips the in-progress-operation
+/// probe and `FETCH_HEAD` timestamp, neither of which appears on the row.
+pub async fn query_repo_overview(
+    runner: &GitRunner,
+    repo_id: &str,
+    repo_path: &Path,
+) -> RepoStatusSnapshot {
+    query_repo_status_snapshot_inner(runner, repo_id, repo_path, None, None, false).await
+}
+
 pub async fn query_repo_status_snapshot(
     runner: &GitRunner,
     repo_id: &str,
     repo_path: &Path,
     target_branch: Option<&str>,
     marker_sha: Option<&str>,
+) -> RepoStatusSnapshot {
+    query_repo_status_snapshot_inner(runner, repo_id, repo_path, target_branch, marker_sha, true)
+        .await
+}
+
+async fn query_repo_status_snapshot_inner(
+    runner: &GitRunner,
+    repo_id: &str,
+    repo_path: &Path,
+    target_branch: Option<&str>,
+    marker_sha: Option<&str>,
+    include_operation: bool,
 ) -> RepoStatusSnapshot {
     if !repo_path.exists() {
         return status_snapshot_error(repo_id, target_branch, "Repository path does not exist");
@@ -347,11 +378,19 @@ pub async fn query_repo_status_snapshot(
 
     // Determine last_activity_at
     let last_activity_at = get_last_activity(runner, repo_path, target_branch).await;
-    let last_fetched_at = get_last_fetch_at(runner, repo_path).await;
+    let last_fetched_at = if include_operation {
+        get_last_fetch_at(runner, repo_path).await
+    } else {
+        None
+    };
 
-    let git_dir = crate::git::ops::get_real_git_dir(runner, repo_path)
-        .await
-        .ok();
+    let git_dir = if include_operation {
+        crate::git::ops::get_real_git_dir(runner, repo_path)
+            .await
+            .ok()
+    } else {
+        None
+    };
     let operation = git_dir.as_deref().and_then(detect_operation);
 
     let is_checked_out = match target_branch {
@@ -405,6 +444,7 @@ pub async fn query_repo_status_snapshot(
     } else {
         Vec::new()
     };
+    let head_sha = parsed.head_sha.take();
 
     RepoStatusSnapshot {
         status: RepoStatus {
@@ -438,6 +478,7 @@ pub async fn query_repo_status_snapshot(
             error: None,
         },
         records,
+        head_sha,
     }
 }
 
@@ -468,6 +509,7 @@ fn status_snapshot_error(
             error: Some(error.into()),
         },
         records: Vec::new(),
+        head_sha: None,
     }
 }
 
@@ -526,6 +568,7 @@ mod tests {
         let input = b"# branch.oid 0123456789abcdef\0# branch.head main\0# branch.upstream origin/main\0# branch.ab +2 -1\0";
         let parsed = parse_porcelain_v2(input);
         assert_eq!(parsed.branch, Some("main".to_string()));
+        assert_eq!(parsed.head_sha, Some("0123456789abcdef".to_string()));
         assert_eq!(parsed.detached_sha, None);
         assert_eq!(parsed.upstream, Some("origin/main".to_string()));
         assert_eq!(parsed.ahead, 2);
@@ -538,6 +581,7 @@ mod tests {
         let input = b"# branch.oid 7f3a2c1000000000\0# branch.head (detached)\0# branch.ab +0 -0\0";
         let parsed = parse_porcelain_v2(input);
         assert_eq!(parsed.branch, None);
+        assert_eq!(parsed.head_sha, Some("7f3a2c1000000000".to_string()));
         assert_eq!(parsed.detached_sha, Some("7f3a2c1000000000".to_string()));
         assert_eq!(parsed.upstream, None);
         assert_eq!(parsed.ahead, 0);

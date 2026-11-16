@@ -25,7 +25,7 @@ use vantage_core::git::refs::{
     merge_into_current, rename_branch, sync_fetch, sync_pull, sync_push, PullStrategy,
 };
 use vantage_core::git::stash::{list_stashes, stash_drop, stash_pop, stash_push};
-use vantage_core::git::status::query_repo_status_snapshot;
+use vantage_core::git::status::query_repo_overview;
 use vantage_core::persist::PersistedState;
 use vantage_core::{repos, GitRunner, RepoEntry};
 
@@ -422,6 +422,26 @@ impl Backend {
         Ok(reverted.short)
     }
 
+    /// Inspector data for one repository: branches, history, stashes, identity
+    /// and remote capability. Loaded when a row is selected, never by the
+    /// overview scan.
+    pub fn details(
+        &self,
+        repo_id: &str,
+        current_branch: &str,
+        has_head: bool,
+    ) -> Result<details::RepoDetails> {
+        let repo_path = self.known_path(repo_id)?;
+        details::repo_details(
+            &self.runtime,
+            &self.runner,
+            &repo_path,
+            current_branch,
+            has_head,
+        )
+        .map_err(anyhow::Error::msg)
+    }
+
     /// Files and patch lines for one commit.
     pub fn commit_files(&self, repo_id: &str, sha: &str) -> Result<Vec<crate::model::CommitFile>> {
         let repo_path = self.known_path(repo_id)?;
@@ -683,13 +703,9 @@ impl Backend {
     /// tracked branch Vantage's panes may be pinned to.
     fn map_entry(&self, entry: &RepoEntry, group: String) -> Result<Repository, String> {
         let path = PathBuf::from(&entry.path);
-        let snapshot = self.runtime.block_on(query_repo_status_snapshot(
-            &self.runner,
-            &entry.id,
-            &path,
-            None,
-            None,
-        ));
+        let snapshot = self
+            .runtime
+            .block_on(query_repo_overview(&self.runner, &entry.id, &path));
         if let Some(error) = snapshot.status.error.as_deref() {
             return Err(format!("{}: {error}", entry.name));
         }
@@ -699,6 +715,7 @@ impl Backend {
             entry,
             &snapshot.status,
             &snapshot.records,
+            snapshot.head_sha.as_deref(),
             group,
         ))
     }

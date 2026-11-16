@@ -1,6 +1,7 @@
 use crate::error::AppError;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::io::AsyncReadExt;
@@ -34,6 +35,9 @@ impl GitOutput {
 pub struct GitRunner {
     semaphore: Arc<Semaphore>,
     repo_locks: Arc<Mutex<HashMap<PathBuf, Arc<Mutex<()>>>>>,
+    /// Git processes spawned successfully. Used by the performance tests to
+    /// prove what an overview scan does and does not pay for.
+    commands: Arc<AtomicU64>,
 }
 
 impl Default for GitRunner {
@@ -47,7 +51,13 @@ impl GitRunner {
         Self {
             semaphore: Arc::new(Semaphore::new(8)),
             repo_locks: Arc::new(Mutex::new(HashMap::new())),
+            commands: Arc::new(AtomicU64::new(0)),
         }
+    }
+
+    /// Number of Git processes this runner has successfully spawned.
+    pub fn commands_run(&self) -> u64 {
+        self.commands.load(Ordering::Relaxed)
     }
 
     pub async fn get_repo_lock(&self, repo_path: &Path) -> Arc<Mutex<()>> {
@@ -122,6 +132,7 @@ impl GitRunner {
                 }
             }
         };
+        self.commands.fetch_add(1, Ordering::Relaxed);
 
         let stdout_pipe = child.stdout.take();
         let stderr_pipe = child.stderr.take();
@@ -232,6 +243,7 @@ impl GitRunner {
                 }
             }
         };
+        self.commands.fetch_add(1, Ordering::Relaxed);
 
         let stdout_pipe = child.stdout.take();
         let stderr_pipe = child.stderr.take();
@@ -382,6 +394,7 @@ impl GitRunner {
             }
             Err(error) => return Err(AppError::io(error)),
         };
+        self.commands.fetch_add(1, Ordering::Relaxed);
 
         let mut stdout_pipe = child.stdout.take();
         let mut stderr_pipe = child.stderr.take();

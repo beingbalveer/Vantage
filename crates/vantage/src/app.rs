@@ -11,6 +11,7 @@ use gpui::{
     KeyDownEvent, MouseButton, PathPromptOptions, Window, WindowAppearance,
 };
 
+use crate::backend::details::RepoDetails;
 use crate::backend::Backend;
 use crate::model::{
     ChangedFile, FileChangeStatus, NavSection, PreviewLine, RepoSyncState, Repository,
@@ -149,6 +150,153 @@ struct PendingScans {
     /// True only when every queued request asked for a silent scan.
     silent: bool,
     queued: bool,
+}
+
+/// What the inspector knows about a repository's lazily loaded details.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum DetailsState {
+    Loading,
+    Error,
+    Ready,
+}
+
+/// The status signals that make cached inspector details stale.
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct DetailsKey {
+    head_sha: Option<String>,
+    branch: String,
+}
+
+impl DetailsKey {
+    fn of(repo: &Repository) -> Self {
+        Self {
+            head_sha: repo.head_sha.clone(),
+            branch: repo.current_branch.clone(),
+        }
+    }
+
+    fn matches(&self, repo: &Repository) -> bool {
+        self.head_sha == repo.head_sha && self.branch == repo.current_branch
+    }
+}
+
+#[derive(Clone, Debug)]
+struct CachedRepoDetails {
+    key: DetailsKey,
+    details: RepoDetails,
+}
+
+#[derive(Clone, Debug)]
+struct DetailsError {
+    key: DetailsKey,
+    message: String,
+}
+
+/// Per-repository cache for inspector details.
+///
+/// One request per repository runs at a time. A cache hit is reused until HEAD
+/// or the checked-out branch changes, or an operation explicitly invalidates
+/// it. Each invalidation bumps a per-repository version so a result that was
+/// already in flight cannot fill the cache with pre-operation data.
+#[derive(Default)]
+struct DetailsStore {
+    cache: std::collections::HashMap<String, CachedRepoDetails>,
+    loading: std::collections::HashSet<String>,
+    /// Details known to be stale after an operation, waiting for the overview
+    /// scan that supplies the new HEAD before the next read starts.
+    pending: std::collections::HashSet<String>,
+    errors: std::collections::HashMap<String, DetailsError>,
+    versions: std::collections::HashMap<String, u64>,
+}
+
+impl DetailsStore {
+    fn cached(&self, repo: &Repository) -> Option<&RepoDetails> {
+        self.cache
+            .get(&repo.id)
+            .filter(|entry| entry.key.matches(repo))
+            .map(|entry| &entry.details)
+    }
+
+    fn is_loading(&self, repo_id: &str) -> bool {
+        self.loading.contains(repo_id) || self.pending.contains(repo_id)
+    }
+
+    fn error(&self, repo_id: &str) -> Option<&str> {
+        self.errors.get(repo_id).map(|error| error.message.as_str())
+    }
+
+    fn needs_load(&self, repo: &Repository) -> bool {
+        !self.loading.contains(&repo.id)
+            && !self.pending.contains(&repo.id)
+            && !self
+                .cache
+                .get(&repo.id)
+                .is_some_and(|entry| entry.key.matches(repo))
+            && !self
+                .errors
+                .get(&repo.id)
+                .is_some_and(|error| error.key.matches(repo))
+    }
+
+    fn begin(&mut self, repo: &Repository) -> Option<(DetailsKey, u64)> {
+        if !self.needs_load(repo) {
+            return None;
+        }
+        let key = DetailsKey::of(repo);
+        let version = self.versions.get(&repo.id).copied().unwrap_or(0);
+        self.pending.remove(&repo.id);
+        self.loading.insert(repo.id.clone());
+        self.errors.remove(&repo.id);
+        Some((key, version))
+    }
+
+    fn finish(
+        &mut self,
+        repo_id: &str,
+        key: DetailsKey,
+        version: u64,
+        result: Result<RepoDetails, String>,
+    ) {
+        self.loading.remove(repo_id);
+        if self.versions.get(repo_id).copied().unwrap_or(0) != version {
+            return;
+        }
+        self.pending.remove(repo_id);
+        match result {
+            Ok(details) => {
+                self.errors.remove(repo_id);
+                self.cache
+                    .insert(repo_id.to_string(), CachedRepoDetails { key, details });
+            }
+            Err(message) => {
+                self.errors
+                    .insert(repo_id.to_string(), DetailsError { key, message });
+            }
+        }
+    }
+
+    fn invalidate(&mut self, repo_id: &str) {
+        *self.versions.entry(repo_id.to_string()).or_insert(0) += 1;
+        self.cache.remove(repo_id);
+        self.errors.remove(repo_id);
+        self.pending.insert(repo_id.to_string());
+    }
+
+    /// The overview now reports this repository's new HEAD, so a pending
+    /// detail read can start.
+    fn observed(&mut self, repo_ids: &[String]) {
+        for repo_id in repo_ids {
+            self.pending.remove(repo_id);
+        }
+    }
+
+    /// Retry a failed read now, without waiting for another overview scan.
+    fn retry(&mut self, repo_id: &str) {
+        *self.versions.entry(repo_id.to_string()).or_insert(0) += 1;
+        self.cache.remove(repo_id);
+        self.errors.remove(repo_id);
+        self.pending.remove(repo_id);
+    }
 }
 
 impl PendingScans {
@@ -319,6 +467,7 @@ pub struct VantageApp {
     /// A scan is running; new requests are coalesced into [`Self::pending_scans`].
     scan_in_flight: bool,
     pending_scans: PendingScans,
+    details: DetailsStore,
     /// Patch previews loaded on demand, keyed by `(repository id, file path)`.
     file_previews: std::collections::HashMap<(String, String), FilePreview>,
     file_previews_pending: std::collections::HashSet<(String, String)>,
@@ -430,6 +579,7 @@ impl VantageApp {
             scan_seq: 0,
             scan_in_flight: false,
             pending_scans: PendingScans::default(),
+            details: DetailsStore::default(),
             file_previews: std::collections::HashMap::new(),
             file_previews_pending: std::collections::HashSet::new(),
             modal_path_focus: cx.focus_handle(),
@@ -565,6 +715,8 @@ impl VantageApp {
                 }
 
                 app.prune_selection();
+                app.details.observed(&updated_ids);
+                app.refresh_selected_details(cx);
                 app.invalidate_file_previews_for(&updated_ids);
                 app.refresh_expanded_preview(cx);
 
@@ -777,6 +929,137 @@ impl VantageApp {
             .and_then(|id| self.repos.iter().find(|r| &r.id == id))
     }
 
+    /// Whether the selected repository's inspector details are loading,
+    /// failed, or ready.
+    pub fn details_state(&self, repo_id: &str) -> DetailsState {
+        if self.details.is_loading(repo_id) {
+            DetailsState::Loading
+        } else if self.details.error(repo_id).is_some() {
+            DetailsState::Error
+        } else {
+            DetailsState::Ready
+        }
+    }
+
+    /// The message from the last failed detail load for this repository.
+    pub fn details_error(&self, repo_id: &str) -> Option<&str> {
+        self.details.error(repo_id)
+    }
+
+    /// Retry a failed detail load for the selected repository.
+    pub fn retry_details(&mut self, cx: &mut Context<Self>) {
+        let Some(repo) = self.selected_repo().cloned() else {
+            return;
+        };
+        self.details.retry(&repo.id);
+        self.ensure_details_for(&repo, cx);
+        cx.notify();
+    }
+
+    fn apply_details_for(&mut self, repo_id: &str, details: &RepoDetails) {
+        if let Some(repo) = self.repos.iter_mut().find(|repo| repo.id == repo_id) {
+            repo.has_remote = details.has_remote;
+            repo.stash_count = details.stash_count;
+            repo.author = details.author.clone();
+            repo.branches = details.branches.clone();
+            repo.recent_commits = details.recent_commits.clone();
+        }
+    }
+
+    fn clear_details_for(&mut self, repo_id: &str) {
+        if let Some(repo) = self.repos.iter_mut().find(|repo| repo.id == repo_id) {
+            repo.has_remote = false;
+            repo.stash_count = 0;
+            repo.author = None;
+            repo.branches.clear();
+            repo.recent_commits.clear();
+        }
+    }
+
+    /// Load the inspector details for `repo` once per HEAD/branch, or apply
+    /// the cached copy. A request already running for this repository is not
+    /// duplicated; its completion re-checks the row and starts a new load only
+    /// when HEAD or the branch moved while it ran.
+    fn ensure_details_for(&mut self, repo: &Repository, cx: &mut Context<Self>) {
+        if let Some(details) = self.details.cached(repo).cloned() {
+            self.apply_details_for(&repo.id, &details);
+            if let Some(current) = self.selected_repo().cloned() {
+                self.warm_avatars_for(&current, cx);
+            }
+            return;
+        }
+
+        let Some((key, version)) = self.details.begin(repo) else {
+            return;
+        };
+        let Some(backend) = self.backend.clone() else {
+            self.details.finish(
+                &repo.id,
+                key,
+                version,
+                Err("Git engine unavailable".to_string()),
+            );
+            return;
+        };
+
+        let repo_id = repo.id.clone();
+        let branch = repo.current_branch.clone();
+        let has_head = repo.head_sha.is_some();
+        self.clear_details_for(&repo_id);
+        cx.spawn(async move |this, cx| {
+            let load_id = repo_id.clone();
+            let result = cx
+                .background_executor()
+                .spawn(async move { backend.details(&load_id, &branch, has_head) })
+                .await
+                .map_err(|error| error.to_string());
+
+            this.update(cx, |app, cx| {
+                app.details.finish(&repo_id, key, version, result);
+                if let Some(repo) = app.selected_repo().cloned() {
+                    if repo.id == repo_id {
+                        if let Some(details) = app.details.cached(&repo).cloned() {
+                            app.apply_details_for(&repo.id, &details);
+                            app.warm_avatars_for(&repo, cx);
+                        } else {
+                            // HEAD or the branch changed while the read ran;
+                            // load again for the row now on screen.
+                            app.ensure_details_for(&repo, cx);
+                        }
+                    }
+                }
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
+    }
+
+    fn refresh_selected_details(&mut self, cx: &mut Context<Self>) {
+        let Some(repo) = self.selected_repo().cloned() else {
+            return;
+        };
+        self.ensure_details_for(&repo, cx);
+    }
+
+    /// Drop the cached details so the next scan/selection reads them again.
+    fn invalidate_details(&mut self, repo_id: &str) {
+        self.details.invalidate(repo_id);
+        self.clear_details_for(repo_id);
+    }
+
+    fn warm_avatars_for(&mut self, repo: &Repository, cx: &mut Context<Self>) {
+        self.ensure_avatar(repo, cx);
+        let seen: Vec<(String, String)> = repo
+            .recent_commits
+            .iter()
+            .map(|commit| (commit.author_email.clone(), repo.local_path.clone()))
+            .collect();
+        for (email, path) in seen {
+            self.ensure_avatar_for(&email, &path, cx);
+        }
+    }
+
     /// The loaded preview for `file`, when it still matches the row's numbers.
     pub fn file_preview(&self, repo_id: &str, file: &ChangedFile) -> Option<&FilePreview> {
         self.file_previews
@@ -951,15 +1234,7 @@ impl VantageApp {
         self.settings.right_panel_open = true;
         self.save_settings(cx);
         if let Some(repo) = self.selected_repo().cloned() {
-            self.ensure_avatar(&repo, cx);
-            let seen: Vec<(String, String)> = repo
-                .recent_commits
-                .iter()
-                .map(|commit| (commit.author_email.clone(), repo.local_path.clone()))
-                .collect();
-            for (email, path) in seen {
-                self.ensure_avatar_for(&email, &path, cx);
-            }
+            self.ensure_details_for(&repo, cx);
         }
         cx.notify();
     }
@@ -2632,6 +2907,9 @@ impl VantageApp {
             self.expanded_file = None;
         }
         self.selected_repo_id = Some(id);
+        if let Some(repo) = self.selected_repo().cloned() {
+            self.ensure_details_for(&repo, cx);
+        }
         cx.notify();
     }
 
@@ -2640,7 +2918,7 @@ impl VantageApp {
         if let Some(repo) = self.selected_repo().cloned() {
             self.settings.right_panel_open = true;
             self.save_settings(cx);
-            self.ensure_avatar(&repo, cx);
+            self.ensure_details_for(&repo, cx);
             cx.notify();
         }
     }
@@ -3332,6 +3610,19 @@ impl VantageApp {
                 app.busy_repos.remove(&id);
                 match result {
                     Ok(value) => {
+                        if matches!(
+                            op_kind,
+                            RepoOp::Amend
+                                | RepoOp::Branch
+                                | RepoOp::Commit
+                                | RepoOp::Merge
+                                | RepoOp::Pull
+                                | RepoOp::Revert
+                                | RepoOp::Stash
+                                | RepoOp::Undo
+                        ) {
+                            app.invalidate_details(&id);
+                        }
                         if let Some(on_success) = report.on_success {
                             on_success(app, value);
                         }
@@ -3442,6 +3733,7 @@ impl VantageApp {
                         app.repos.insert(0, repository.clone());
                         app.selected_repo_id = Some(repository.id.clone());
                         app.settings.right_panel_open = true;
+                        app.ensure_details_for(&repository, cx);
 
                         app.modal_path.clear();
                         app.modal_custom_group.clear();
@@ -4479,6 +4771,7 @@ mod tests {
             name: "fixture".to_string(),
             workspace: "Ungrouped".to_string(),
             local_path: "/tmp/fixture".to_string(),
+            head_sha: Some("abc1234".to_string()),
             has_remote: true,
             stash_count: 0,
             current_branch: "main".to_string(),
@@ -4560,6 +4853,102 @@ mod tests {
         assert!(
             !preview.matches(&matching),
             "a rescan with new counts must not show the old patch"
+        );
+    }
+
+    fn details() -> RepoDetails {
+        RepoDetails {
+            has_remote: true,
+            stash_count: 1,
+            author: None,
+            branches: Vec::new(),
+            recent_commits: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn details_are_loaded_once_per_head_and_branch() {
+        let repo = repo_with_commits(&["abc1234"]);
+        let mut store = DetailsStore::default();
+        assert!(store.needs_load(&repo), "nothing cached for this HEAD");
+
+        let (key, version) = store.begin(&repo).expect("start the first load");
+        assert!(
+            !store.needs_load(&repo),
+            "a running request must not be duplicated"
+        );
+        store.finish(&repo.id, key, version, Ok(details()));
+
+        assert!(store.cached(&repo).is_some());
+        assert!(
+            !store.needs_load(&repo),
+            "the same HEAD and branch reuse the cached details"
+        );
+        assert!(
+            store.begin(&repo).is_none(),
+            "selecting the same row again must not start another load"
+        );
+
+        let mut moved = repo.clone();
+        moved.head_sha = Some("def5678".to_string());
+        assert!(
+            store.needs_load(&moved),
+            "moving HEAD makes the cached details stale"
+        );
+
+        let mut rebased = repo;
+        rebased.current_branch = "feature".to_string();
+        assert!(
+            store.needs_load(&rebased),
+            "checking out another branch makes the cached details stale"
+        );
+    }
+
+    #[test]
+    fn invalidating_details_discards_an_in_flight_result() {
+        let repo = repo_with_commits(&["abc1234"]);
+        let mut store = DetailsStore::default();
+        let (key, version) = store.begin(&repo).expect("start the load");
+
+        store.invalidate(&repo.id);
+        store.finish(&repo.id, key, version, Ok(details()));
+
+        assert!(
+            store.cached(&repo).is_none(),
+            "a result started before the operation must not fill the cache"
+        );
+        assert!(
+            store.is_loading(&repo.id),
+            "the row stays in its loading state until a fresh overview arrives"
+        );
+        assert!(!store.needs_load(&repo), "do not read against the old HEAD");
+        store.observed(std::slice::from_ref(&repo.id));
+        assert!(store.needs_load(&repo));
+    }
+
+    #[test]
+    fn a_failed_detail_load_stays_visible_until_the_key_changes() {
+        let repo = repo_with_commits(&["abc1234"]);
+        let mut store = DetailsStore::default();
+        let (key, version) = store.begin(&repo).expect("start the load");
+        store.finish(
+            &repo.id,
+            key,
+            version,
+            Err("git for-each-ref failed".to_string()),
+        );
+
+        assert_eq!(store.error(&repo.id), Some("git for-each-ref failed"));
+        assert!(
+            !store.needs_load(&repo),
+            "the same key is not retried in a loop; the error is shown instead"
+        );
+
+        let mut moved = repo;
+        moved.head_sha = Some("def5678".to_string());
+        assert!(
+            store.needs_load(&moved),
+            "a new HEAD retries the failed load"
         );
     }
 

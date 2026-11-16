@@ -120,13 +120,19 @@ pub struct Repository {
     pub name: String,
     pub workspace: String,
     pub local_path: String,
-    /// Whether an `origin` exists, which gates fetch/pull/push.
+    /// Commit at HEAD when the overview was read. Inspector details are cached
+    /// against it, so moving HEAD is the cheap signal that they are stale.
+    pub head_sha: Option<String>,
+    /// Whether an `origin` exists, which gates fetch/pull/push. Loaded with the
+    /// selected repository's details, not during the overview scan.
     pub has_remote: bool,
-    /// Number of stashes kept in the repository.
+    /// Number of stashes kept in the repository. Loaded with the selected
+    /// repository's details, not during the overview scan.
     pub stash_count: usize,
     pub current_branch: String,
     /// `None` when git has no usable `user.name` / `user.email` here, which
-    /// also means a commit would fail.
+    /// also means a commit would fail. Loaded with the selected repository's
+    /// details.
     pub author: Option<CommitIdentity>,
     pub sync_state: RepoSyncState,
     pub ahead_count: i32,
@@ -137,7 +143,9 @@ pub struct Repository {
     pub last_activity_label: String,
     pub last_activity_minutes: i64,
     pub uncommitted_files: Vec<ChangedFile>,
+    /// Lazily loaded for the selected repository; empty in overview snapshots.
     pub branches: Vec<BranchInfo>,
+    /// Lazily loaded for the selected repository; empty in overview snapshots.
     pub recent_commits: Vec<CommitEntry>,
 }
 
@@ -183,6 +191,7 @@ mod tests {
             name: "fixture".to_string(),
             workspace: "Ungrouped".to_string(),
             local_path: "/tmp/fixture".to_string(),
+            head_sha: Some("abc123".to_string()),
             has_remote,
             stash_count: 0,
             current_branch: "main".to_string(),

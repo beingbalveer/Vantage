@@ -14,7 +14,7 @@ use crate::model::{CommitIdentity, PreviewKind, PreviewLine};
 
 use vantage_core::git::status::StatusRecord;
 use vantage_core::git::{diff, log, refs};
-use vantage_core::GitRunner;
+use vantage_core::{repos, GitRunner};
 
 use crate::model::{BranchInfo, ChangedFile, CommitEntry, FileChangeStatus};
 
@@ -30,6 +30,54 @@ const PREVIEW_LINES: usize = 200;
 const MAX_PATCH_BYTES: usize = 512 * 1024;
 const UNKNOWN_AUTHOR: &str = "unknown";
 
+/// Everything the inspector needs but an overview row does not.
+///
+/// The dashboard scans every repository; these reads (branch list, history,
+/// stashes, identity, remote) are paid only for the selected repository.
+#[derive(Clone, Debug)]
+pub struct RepoDetails {
+    pub has_remote: bool,
+    pub stash_count: usize,
+    pub author: Option<CommitIdentity>,
+    pub branches: Vec<BranchInfo>,
+    pub recent_commits: Vec<CommitEntry>,
+}
+
+/// Load the selected repository's inspector data in one background job.
+pub fn repo_details(
+    rt: &tokio::runtime::Runtime,
+    runner: &GitRunner,
+    path: &Path,
+    current_branch: &str,
+    has_head: bool,
+) -> Result<RepoDetails, String> {
+    let default_branch = rt.block_on(repos::default_branch(runner, path));
+    let branches = branches(rt, runner, path, current_branch, &default_branch)?;
+    // An unborn branch has no history to read; `git log` would fail here.
+    let recent_commits = if has_head {
+        // "detached" is a display label; `git log` must be asked for HEAD.
+        let commit_target = if current_branch == "detached" {
+            "HEAD"
+        } else {
+            current_branch
+        };
+        commits(rt, runner, path, commit_target)?
+    } else {
+        Vec::new()
+    };
+    let stash_count = stash_count(rt, runner, path)?;
+    let author = commit_identity(path)?;
+    let has_remote = has_remote(path)?;
+
+    Ok(RepoDetails {
+        has_remote,
+        stash_count,
+        author,
+        branches,
+        recent_commits,
+    })
+}
+
 // ---------------- Branches ----------------
 
 /// Every local branch, current first and then newest tip first.
@@ -39,12 +87,11 @@ pub fn branches(
     path: &Path,
     current: &str,
     default: &str,
-) -> Vec<BranchInfo> {
-    let listed = match rt.block_on(refs::list_branches(runner, path)) {
-        Ok(list) => list,
-        Err(_) => return Vec::new(),
-    };
-    let tips = rt.block_on(branch_tips(runner, path));
+) -> Result<Vec<BranchInfo>, String> {
+    let listed = rt
+        .block_on(refs::list_branches(runner, path))
+        .map_err(|error| error.message)?;
+    let tips = rt.block_on(branch_tips(runner, path))?;
     let now = now_seconds();
 
     let mut seen: HashSet<String> = HashSet::new();
@@ -83,7 +130,7 @@ pub fn branches(
             .cmp(&a.0.is_current)
             .then_with(|| b.1.cmp(&a.1))
     });
-    snapshots.into_iter().map(|(info, _)| info).collect()
+    Ok(snapshots.into_iter().map(|(info, _)| info).collect())
 }
 
 struct BranchTip {
@@ -96,15 +143,18 @@ const BRANCH_TIP_FORMAT: &str = "%(refname:short)\x1f%(committerdate:unix)";
 /// Ahead/behind and tip-commit metadata for every local branch in one call.
 /// `state::BranchInfo` (what `refs::list_branches` returns) only carries the
 /// ref name and its committer date, so the remaining fields come from here.
-async fn branch_tips(runner: &GitRunner, repo_path: &Path) -> HashMap<String, BranchTip> {
+async fn branch_tips(
+    runner: &GitRunner,
+    repo_path: &Path,
+) -> Result<HashMap<String, BranchTip>, String> {
     let format_arg = format!("--format={BRANCH_TIP_FORMAT}");
-    let out = match runner
+    let out = runner
         .run_read(repo_path, &["for-each-ref", &format_arg, "refs/heads"])
         .await
-    {
-        Ok(out) if out.success() => out,
-        _ => return HashMap::new(),
-    };
+        .map_err(|error| error.message)?;
+    if !out.success() {
+        return Err(out.stderr);
+    }
 
     let mut tips = HashMap::new();
     for line in out.stdout_string().lines() {
@@ -123,7 +173,7 @@ async fn branch_tips(runner: &GitRunner, repo_path: &Path) -> HashMap<String, Br
             },
         );
     }
-    tips
+    Ok(tips)
 }
 
 // ---------------- Commits ----------------
@@ -134,27 +184,27 @@ pub fn commits(
     runner: &GitRunner,
     path: &Path,
     branch: &str,
-) -> Vec<CommitEntry> {
+) -> Result<Vec<CommitEntry>, String> {
     let target = if branch.trim().is_empty() {
         "HEAD"
     } else {
         branch.trim()
     };
-    let page = match rt.block_on(log::get_log_page(
-        runner,
-        path,
-        Some(target),
-        0,
-        COMMIT_LIMIT,
-        None,
-        None,
-    )) {
-        Ok(page) => page,
-        Err(_) => return Vec::new(),
-    };
+    let page = rt
+        .block_on(log::get_log_page(
+            runner,
+            path,
+            Some(target),
+            0,
+            COMMIT_LIMIT,
+            None,
+            None,
+        ))
+        .map_err(|error| error.message)?;
     let now = now_seconds();
 
-    page.into_iter()
+    Ok(page
+        .into_iter()
         .take(COMMIT_LIMIT as usize)
         .map(|commit| CommitEntry {
             sha: short_sha(&commit.sha, &commit.short),
@@ -167,7 +217,7 @@ pub fn commits(
             author_email: commit.author_email,
             relative_time: relative_iso_label(now, &commit.date),
         })
-        .collect()
+        .collect())
 }
 
 fn short_sha(sha: &str, short: &str) -> String {
@@ -630,10 +680,14 @@ pub fn compare_branches(
 // ---------------- Stashes ----------------
 
 /// How many stashes the repository keeps; the menu labels use the count.
-pub fn stash_count(rt: &tokio::runtime::Runtime, runner: &GitRunner, path: &Path) -> usize {
+pub fn stash_count(
+    rt: &tokio::runtime::Runtime,
+    runner: &GitRunner,
+    path: &Path,
+) -> Result<usize, String> {
     rt.block_on(vantage_core::git::stash::list_stashes(runner, path))
         .map(|entries| entries.len())
-        .unwrap_or(0)
+        .map_err(|error| error.message)
 }
 
 // ---------------- One commit ----------------
@@ -717,7 +771,7 @@ pub fn commit_files(
 /// dashboard needs it for the commit bar of the selected repository. `git config
 /// --get-regexp` already resolves precedence, so a repository-local `user.name`
 /// beats the global one.
-pub fn commit_identity(path: &Path) -> Option<CommitIdentity> {
+pub fn commit_identity(path: &Path) -> Result<Option<CommitIdentity>, String> {
     let output = std::process::Command::new("git")
         .arg("-C")
         .arg(path)
@@ -725,9 +779,9 @@ pub fn commit_identity(path: &Path) -> Option<CommitIdentity> {
         .env("LC_ALL", "C")
         .env("GIT_TERMINAL_PROMPT", "0")
         .output()
-        .ok()?;
+        .map_err(|error| format!("read the Git identity: {error}"))?;
     if !output.status.success() {
-        return None;
+        return Ok(None);
     }
 
     let mut name = None;
@@ -747,9 +801,9 @@ pub fn commit_identity(path: &Path) -> Option<CommitIdentity> {
         }
     }
 
-    Some(CommitIdentity {
-        name: name?,
-        email: email?,
+    Ok(match (name, email) {
+        (Some(name), Some(email)) => Some(CommitIdentity { name, email }),
+        _ => None,
     })
 }
 
@@ -761,11 +815,11 @@ pub fn commit_identity(path: &Path) -> Option<CommitIdentity> {
 /// and nothing else — so this is the only thing the UI needs from the remote.
 /// Like the other cheap config reads here it asks git directly, so worktrees and
 /// `include`d configs resolve correctly.
-pub fn has_remote(path: &Path) -> bool {
-    origin_url(path).is_some()
+pub fn has_remote(path: &Path) -> Result<bool, String> {
+    Ok(origin_url(path)?.is_some())
 }
 
-fn origin_url(repo_path: &Path) -> Option<String> {
+fn origin_url(repo_path: &Path) -> Result<Option<String>, String> {
     let output = std::process::Command::new("git")
         .arg("-C")
         .arg(repo_path)
@@ -775,13 +829,13 @@ fn origin_url(repo_path: &Path) -> Option<String> {
         .stdin(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())
         .output()
-        .ok()?;
+        .map_err(|error| format!("read the remote: {error}"))?;
 
     if !output.status.success() {
-        return None;
+        return Ok(None);
     }
     let url = String::from_utf8_lossy(&output.stdout).trim().to_string();
-    (!url.is_empty()).then_some(url)
+    Ok((!url.is_empty()).then_some(url))
 }
 
 // ---------------- Relative time ----------------

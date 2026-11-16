@@ -90,13 +90,13 @@ fn apply_env_state(entity: &gpui::Entity<VantageApp>, cx: &mut App) {
                         }
                     } else if let Some(repo) = other.strip_prefix("inspector:") {
                         app.select_repo(repo.to_string(), cx);
-                        if let Some(first) = app
-                            .selected_repo()
-                            .and_then(|r| r.uncommitted_files.first())
-                            .filter(|f| !f.diff_preview.is_empty())
-                            .map(|f| f.path.clone())
-                        {
-                            app.expanded_file = Some(first);
+                        if let Some((id, file)) = app.selected_repo().and_then(|r| {
+                            r.uncommitted_files
+                                .first()
+                                .map(|file| (r.id.clone(), file.clone()))
+                        }) {
+                            app.expanded_file = Some(file.path.clone());
+                            app.request_file_preview(id, &file, cx);
                         }
                     } else if let Some(tab) = other.strip_prefix("itab:") {
                         app.inspector_tab = match tab {
@@ -123,15 +123,14 @@ fn apply_env_state(entity: &gpui::Entity<VantageApp>, cx: &mut App) {
                 .await;
             entity
                 .update(cx, |app, cx| {
-                    if let Some(repo) = app.repos.first() {
+                    if let Some(repo) = app.repos.first().cloned() {
                         let id = repo.id.clone();
-                        let preview = repo
-                            .uncommitted_files
-                            .iter()
-                            .find(|file| !file.diff_preview.is_empty())
-                            .map(|file| file.path.clone());
-                        app.select_repo(id, cx);
-                        app.expanded_file = preview;
+                        let file = repo.uncommitted_files.first().cloned();
+                        app.select_repo(id.clone(), cx);
+                        if let Some(file) = file {
+                            app.expanded_file = Some(file.path.clone());
+                            app.request_file_preview(id, &file, cx);
+                        }
                     }
                 })
                 .ok();
