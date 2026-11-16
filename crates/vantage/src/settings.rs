@@ -199,6 +199,9 @@ pub struct UiSettings {
     pub pull_strategy: PullStrategy,
     /// Display fallback for a repository with no commits and no origin HEAD.
     pub default_branch: String,
+    /// Command used by Open in Editor. Empty means automatic detection from
+    /// `VISUAL`, `EDITOR`, or a common editor on `PATH`.
+    pub editor_command: String,
     pub remember_window: bool,
     pub window_bounds: Option<WindowBounds>,
     /// Repository detail pane visibility and width as a fraction of the
@@ -220,6 +223,7 @@ impl Default for UiSettings {
             fetch_on_launch: false,
             pull_strategy: PullStrategy::FastForward,
             default_branch: "main".to_string(),
+            editor_command: String::new(),
             remember_window: true,
             window_bounds: None,
             right_panel_open: false,
@@ -269,6 +273,7 @@ impl UiSettings {
         if validate_branch_name(&self.default_branch).is_err() {
             self.default_branch = "main".to_string();
         }
+        self.editor_command = self.editor_command.trim().to_string();
         if let Some(ref bounds) = self.window_bounds {
             let sane = bounds.width >= 1040
                 && bounds.height >= 640
@@ -325,6 +330,7 @@ mod tests {
         assert_eq!(settings.auto_fetch_minutes, 0);
         assert!(!settings.fetch_on_launch);
         assert_eq!(settings.pull_strategy, PullStrategy::FastForward);
+        assert!(settings.editor_command.is_empty());
         assert!(settings.remember_window);
         assert!(!settings.right_panel_open);
         assert_eq!(settings.right_panel_fraction, 0.67);
@@ -369,6 +375,7 @@ mod tests {
             auto_fetch_minutes: 15,
             fetch_on_launch: true,
             default_branch: "trunk".to_string(),
+            editor_command: "code --wait".to_string(),
             remember_window: false,
             pull_strategy: PullStrategy::Rebase,
             ..UiSettings::default()
@@ -394,6 +401,7 @@ mod tests {
         assert_eq!(loaded.auto_fetch_minutes, 15);
         assert!(loaded.fetch_on_launch);
         assert_eq!(loaded.default_branch, "trunk");
+        assert_eq!(loaded.editor_command, "code --wait");
         assert!(!loaded.remember_window);
         assert_eq!(loaded.pull_strategy, PullStrategy::Rebase);
     }
@@ -415,6 +423,23 @@ mod tests {
         assert_eq!(settings.auto_fetch_minutes, 0);
         assert_eq!(settings.default_branch, "main");
         assert!(settings.window_bounds.is_none());
+    }
+
+    #[test]
+    fn editor_command_is_trimmed_and_optional() {
+        let settings = UiSettings {
+            editor_command: "  code --wait  ".to_string(),
+            ..UiSettings::default()
+        }
+        .sanitized();
+        assert_eq!(settings.editor_command, "code --wait");
+
+        let settings = UiSettings {
+            editor_command: "   ".to_string(),
+            ..UiSettings::default()
+        }
+        .sanitized();
+        assert!(settings.editor_command.is_empty());
     }
 
     #[test]
