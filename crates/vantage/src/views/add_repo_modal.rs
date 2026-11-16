@@ -115,7 +115,7 @@ impl VantageApp {
             None => div()
                 .x11()
                 .fg(theme.text_dim)
-                .child("Vantage reads the name, branch, and stack from this folder."),
+                .child("Vantage detects the Git repository in this folder."),
         };
 
         form = form.child(

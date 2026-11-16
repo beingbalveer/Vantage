@@ -2045,9 +2045,10 @@ impl VantageApp {
         };
         self.confirm = Some(ConfirmPrompt {
             title: format!("Reset {} to {sha}?", repo.current_branch),
-            body: "The branch tip moves back to that commit. Your files are not touched, so the \
-                   difference appears as uncommitted changes. A backup ref is kept first."
-                .to_string(),
+            body:
+                "The branch tip and your tracked files move back to that commit. Reset needs a \
+                   clean working tree; uncommitted changes are refused. A backup ref is kept first."
+                    .to_string(),
             label: "Reset",
             action: ConfirmAction::ResetToCommit {
                 repo_id: repo_id.to_string(),
