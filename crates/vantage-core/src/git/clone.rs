@@ -55,10 +55,7 @@ pub fn is_safe_folder_name(name: &str) -> bool {
     }
     // Windows rejects trailing dots/spaces in a path segment.
     let last = trimmed.chars().last().unwrap_or(' ');
-    if last == '.' || last == ' ' {
-        return false;
-    }
-    true
+    !matches!(last, '.' | ' ')
 }
 
 /// Derive a sensible local folder name from a remote URL (`https`, `ssh`,
