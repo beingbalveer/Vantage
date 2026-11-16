@@ -132,10 +132,15 @@ pub fn load(email: &str, repo_path: &Path) -> Option<Avatar> {
 
 /// `…/vantage/avatars`, beside the workspace `state.json`.
 pub fn cache_dir() -> Option<PathBuf> {
-    let state = vantage_core::persist::StatePersistence::new().ok()?;
-    let dir = state.path().parent()?.join("avatars");
+    let state_path = vantage_core::repos::state_path().ok()?;
+    let dir = cache_dir_for(&state_path)?;
     std::fs::create_dir_all(&dir).ok()?;
     Some(dir)
+}
+
+/// The avatar cache directory for a given workspace state file.
+fn cache_dir_for(state_path: &Path) -> Option<PathBuf> {
+    Some(state_path.parent()?.join("avatars"))
 }
 
 /// A GitHub login is alphanumeric with hyphens, up to 39 characters.
@@ -248,6 +253,14 @@ fn gh_config_paths() -> Vec<PathBuf> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn avatar_cache_lives_beside_the_workspace_state_file() {
+        assert_eq!(
+            cache_dir_for(Path::new("/tmp/vantage/state.json")),
+            Some(PathBuf::from("/tmp/vantage/avatars"))
+        );
+    }
 
     #[test]
     fn noreply_email_names_the_login() {

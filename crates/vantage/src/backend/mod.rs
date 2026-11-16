@@ -194,9 +194,7 @@ impl Backend {
 
     /// Absolute path of the workspace state file.
     pub fn state_path(&self) -> std::path::PathBuf {
-        vantage_core::persist::StatePersistence::new()
-            .map(|persistence| persistence.path().to_path_buf())
-            .unwrap_or_default()
+        vantage_core::repos::state_path().unwrap_or_default()
     }
 
     /// Check out `branch` in one repo. The caller re-reads the row with
