@@ -132,8 +132,8 @@ pub fn load(email: &str, repo_path: &Path) -> Option<Avatar> {
 
 /// `…/vantage/avatars`, beside the workspace `state.json`.
 pub fn cache_dir() -> Option<PathBuf> {
-    let state = vantage_core::persist::StatePersistence::new().ok()?;
-    let dir = state.path().parent()?.join("avatars");
+    let state_path = vantage_core::repos::state_path();
+    let dir = state_path.parent()?.join("avatars");
     std::fs::create_dir_all(&dir).ok()?;
     Some(dir)
 }

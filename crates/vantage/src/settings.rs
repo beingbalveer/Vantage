@@ -181,14 +181,15 @@ fn os_version() -> String {
     std::env::consts::OS.to_string()
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
 pub struct UiSettings {
     pub version: u32,
     pub theme: ThemeChoice,
     pub default_view: DefaultView,
     pub sort: SortOrder,
-    /// Last sidebar state; toggling the rail persists this immediately.
+    /// Last sidebar state; toggling the rail persists this with the debounced
+    /// settings writer.
     pub sidebar_collapsed: bool,
     /// Sidebar width in points while it is expanded.
     pub sidebar_width: f32,

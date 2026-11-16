@@ -130,6 +130,10 @@ pub enum FieldId {
 pub struct VantageApp {
     pub theme: Theme,
     pub settings: UiSettings,
+    /// The settings last handed to the writer. A click that leaves preferences
+    /// unchanged (opening the panel that is already open, say) must not queue a
+    /// disk write at all.
+    last_saved_settings: UiSettings,
     pub is_settings_open: bool,
     pub settings_section: SettingsSection,
     pub settings_reset_confirm: bool,
@@ -246,6 +250,8 @@ pub struct VantageApp {
     scan_seq: u64,
     modal_path_focus: FocusHandle,
     modal_custom_group_focus: FocusHandle,
+    /// Flushes queued preference writes before the process exits.
+    _quit_subscription: gpui::Subscription,
 }
 
 impl VantageApp {
@@ -259,6 +265,10 @@ impl VantageApp {
             .as_ref()
             .map(|backend| backend.ui_settings())
             .unwrap_or_default();
+        let quit_subscription = cx.on_app_quit(|app, _cx| {
+            app.flush_state();
+            async {}
+        });
 
         Self {
             theme: if settings.theme == ThemeChoice::Dark {
@@ -267,6 +277,7 @@ impl VantageApp {
                 Theme::light()
             },
             settings: settings.clone(),
+            last_saved_settings: settings.clone(),
             is_settings_open: false,
             settings_section: SettingsSection::General,
             settings_reset_confirm: false,
@@ -352,6 +363,7 @@ impl VantageApp {
             scan_seq: 0,
             modal_path_focus: cx.focus_handle(),
             modal_custom_group_focus: cx.focus_handle(),
+            _quit_subscription: quit_subscription,
         }
     }
 
@@ -517,7 +529,7 @@ impl VantageApp {
     /// Only rows backed by the engine are merged in: repositories that failed to
     /// scan must not overwrite the assignments already on disk, and rows that
     /// are not on screen keep their stored group.
-    pub fn persist(&mut self, _cx: &mut Context<Self>) {
+    pub fn persist(&mut self, cx: &mut Context<Self>) {
         let Some(backend) = self.backend.clone() else {
             return;
         };
@@ -533,7 +545,9 @@ impl VantageApp {
                     .insert(repo.id.clone(), repo.workspace.clone());
             }
         }
-        backend.set_groups(&self.groups, &self.assignments).ok();
+        if let Err(error) = backend.set_groups(&self.groups, &self.assignments) {
+            self.show_toast(format!("Could not save group changes: {error}"), cx);
+        }
     }
 
     fn repo_path_opt(&self, repo: &Repository) -> Option<std::path::PathBuf> {
@@ -712,8 +726,10 @@ impl VantageApp {
             self.copied_path = false;
         }
         self.selected_repo_id = Some(id);
-        self.settings.right_panel_open = true;
-        self.save_settings(cx);
+        if !self.settings.right_panel_open {
+            self.settings.right_panel_open = true;
+            self.save_settings(cx);
+        }
         if let Some(repo) = self.selected_repo().cloned() {
             self.ensure_avatar(&repo, cx);
             let seen: Vec<(String, String)> = repo
@@ -1001,12 +1017,57 @@ impl VantageApp {
     }
 
     pub fn save_settings(&mut self, cx: &mut Context<Self>) {
+        if self.settings == self.last_saved_settings {
+            return;
+        }
         let Some(backend) = self.backend.clone() else {
             return;
         };
-        if let Err(error) = backend.set_ui_settings(&self.settings) {
-            self.show_toast(format!("Could not save settings: {error}"), cx);
+        match backend.set_ui_settings(&self.settings) {
+            Ok(()) => self.last_saved_settings = self.settings.clone(),
+            Err(error) => self.show_toast(format!("Could not save settings: {error}"), cx),
         }
+    }
+
+    /// Commit queued preference writes. Called on quit; a failure here has no
+    /// window left to toast in, so it goes to stderr as a last resort.
+    pub fn flush_state(&mut self) {
+        let Some(backend) = self.backend.clone() else {
+            return;
+        };
+        if let Err(error) = backend.flush_state() {
+            eprintln!("failed to save state while quitting: {error}");
+        }
+    }
+
+    /// Poll the writer for problems that happen after a debounced save
+    /// returned. Without this a read-only state directory would look like a
+    /// successful toggle until the next launch.
+    pub fn watch_state_notices(&mut self, cx: &mut Context<Self>) {
+        cx.spawn(async move |this, cx| loop {
+            cx.background_executor()
+                .timer(Duration::from_millis(900))
+                .await;
+
+            let notice = this.update(cx, |app, _| {
+                app.backend
+                    .as_ref()
+                    .and_then(|backend| backend.take_state_notice())
+            });
+            match notice {
+                Ok(Some(message)) => {
+                    if this
+                        .update(cx, |app, cx| app.show_toast(message, cx))
+                        .is_err()
+                    {
+                        break;
+                    }
+                }
+                Ok(None) => {}
+                Err(_) => break,
+            }
+        })
+        .detach();
     }
 
     pub fn save_window_bounds(
@@ -2399,8 +2460,10 @@ impl VantageApp {
     /// Open the highlighted repository's detail pane.
     pub fn open_selected(&mut self, cx: &mut Context<Self>) {
         if let Some(repo) = self.selected_repo().cloned() {
-            self.settings.right_panel_open = true;
-            self.save_settings(cx);
+            if !self.settings.right_panel_open {
+                self.settings.right_panel_open = true;
+                self.save_settings(cx);
+            }
             self.ensure_avatar(&repo, cx);
             cx.notify();
         }

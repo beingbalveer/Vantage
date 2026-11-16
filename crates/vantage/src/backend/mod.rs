@@ -111,7 +111,19 @@ impl Backend {
         let repository = self
             .map_entry(&entry, group_of(&assignments, &entry.id))
             .map_err(anyhow::Error::msg)?;
-        self.save(&state)?;
+        // Persist only the new entry instead of the snapshot read above: a
+        // queued settings write may have changed other fields in the meantime.
+        let path = entry.path.clone();
+        self.update_now(move |state| {
+            if state.repos.iter().any(|repo| repo.path == path) {
+                return Err(vantage_core::AppError::new(
+                    "DuplicateRepo",
+                    format!("'{}' is already in the workspace.", path),
+                ));
+            }
+            state.repos.push(entry);
+            Ok(())
+        })?;
         Ok(repository)
     }
 
@@ -184,19 +196,35 @@ impl Backend {
         UiSettings::from_state(&self.state())
     }
 
-    /// Persist v2 preferences without disturbing groups, assignments or any
+    /// Queue v2 preferences without disturbing groups, assignments or any
     /// other key in the shared `vantage` object.
+    ///
+    /// This is the hot path for selection and layout clicks, so it is coalesced
+    /// by the background writer instead of rewriting the whole state file on
+    /// every event. Call [`Backend::flush_state`] before quitting.
     pub fn set_ui_settings(&self, settings: &UiSettings) -> Result<()> {
-        let mut state = self.state();
-        sets_ui_settings_in(&mut state, settings)?;
-        self.save(&state)
+        let settings = settings.clone();
+        repos::update_state_debounced(move |state| {
+            sets_ui_settings_in(state, &settings)
+                .map_err(|error| vantage_core::AppError::other(error.to_string()))
+        })
+        .context("save Vantage settings")
     }
 
-    /// Absolute path of the workspace state file.
+    /// Wait for queued preference writes to reach disk.
+    pub fn flush_state(&self) -> Result<()> {
+        repos::flush_state().context("flush the workspace state")
+    }
+
+    /// The oldest asynchronous persistence problem, if any. The UI polls this
+    /// so a failed debounced write still becomes a visible toast.
+    pub fn take_state_notice(&self) -> Option<String> {
+        repos::take_state_notice()
+    }
+
+    /// Absolute path of the workspace state file, from the cached handle.
     pub fn state_path(&self) -> std::path::PathBuf {
-        vantage_core::persist::StatePersistence::new()
-            .map(|persistence| persistence.path().to_path_buf())
-            .unwrap_or_default()
+        repos::state_path()
     }
 
     /// Check out `branch` in one repo. The caller re-reads the row with
@@ -277,11 +305,11 @@ impl Backend {
 
     /// Drop a repository from the workspace list; the folder stays on disk.
     pub fn forget(&self, repo_id: &str) -> Result<()> {
-        let mut state = self.state();
-        if repos::remove(&mut state, repo_id) {
-            self.save(&state)?;
-        }
-        Ok(())
+        let repo_id = repo_id.to_string();
+        self.update_now(move |state| {
+            repos::remove(state, &repo_id);
+            Ok(())
+        })
     }
 
     /// Clone `url` into `parent` (under `name` when given) and register it.
@@ -597,9 +625,12 @@ impl Backend {
         groups: &[String],
         assignments: &BTreeMap<String, String>,
     ) -> Result<()> {
-        let mut state = self.state();
-        sets_groups_in(&mut state, groups, assignments);
-        self.save(&state)
+        let groups = groups.to_vec();
+        let assignments = assignments.clone();
+        self.update_now(move |state| {
+            sets_groups_in(state, &groups, &assignments);
+            Ok(())
+        })
     }
 
     /// Absolute path for a repo id.
@@ -622,8 +653,13 @@ impl Backend {
         repos::load_state().0
     }
 
-    fn save(&self, state: &PersistedState) -> Result<()> {
-        repos::save_state(state).context("save the workspace state")
+    /// Apply a critical mutation to the latest on-disk state and wait for it,
+    /// so it cannot be lost under a queued settings write.
+    fn update_now<F>(&self, update: F) -> Result<()>
+    where
+        F: FnOnce(&mut PersistedState) -> Result<(), vantage_core::AppError> + Send + 'static,
+    {
+        repos::update_state_now(update).context("save the workspace state")
     }
 
     /// Move grouping settings written under the pre-rename key to
@@ -637,7 +673,10 @@ impl Backend {
         if !migrate_legacy_groups_in(&mut state) {
             return;
         }
-        if let Err(error) = self.save(&state) {
+        if let Err(error) = self.update_now(|state| {
+            migrate_legacy_groups_in(state);
+            Ok(())
+        }) {
             eprintln!("failed to migrate legacy group settings: {error:#}");
         }
     }

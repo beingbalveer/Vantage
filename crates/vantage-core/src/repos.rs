@@ -52,6 +52,42 @@ pub fn save_state(state: &PersistedState) -> Result<(), AppError> {
     persistence()?.save(state)
 }
 
+/// Apply a low-priority change (settings, selection, layout) in the background.
+/// The update is coalesced with nearby changes so a click does not wait on disk.
+pub fn update_state_debounced<F>(update: F) -> Result<(), AppError>
+where
+    F: FnOnce(&mut PersistedState) -> Result<(), AppError> + Send + 'static,
+{
+    persistence()?.update_debounced(update)
+}
+
+/// Apply a critical mutation to the latest state and wait for the write.
+pub fn update_state_now<F>(update: F) -> Result<(), AppError>
+where
+    F: FnOnce(&mut PersistedState) -> Result<(), AppError> + Send + 'static,
+{
+    persistence()?.update_and_wait(update)
+}
+
+/// Wait for every queued state change to reach disk. Called before quitting so
+/// a debounced preference cannot be lost on exit.
+pub fn flush_state() -> Result<(), AppError> {
+    persistence()?.flush()
+}
+
+/// Take the oldest asynchronous persistence notice for the UI to show.
+pub fn take_state_notice() -> Option<String> {
+    persistence().ok()?.take_notice()
+}
+
+/// Absolute path of the workspace state file, reusing the process-wide handle.
+/// Building a handle per call would start a writer thread per call.
+pub fn state_path() -> PathBuf {
+    persistence()
+        .map(|persistence| persistence.path().to_path_buf())
+        .unwrap_or_default()
+}
+
 // ---------------- Path validation / entry construction ----------------
 
 /// Resolve `path` to the root of the git work tree that contains it.
