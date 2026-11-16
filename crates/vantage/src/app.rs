@@ -2429,15 +2429,28 @@ impl VantageApp {
         cx.notify();
     }
 
-    /// Start a branch action and pre-fill its name field where it makes sense.
-    pub fn start_branch_prompt(&mut self, prompt: BranchPrompt, cx: &mut Context<Self>) {
+    /// Start a branch action for `repo_id`, pre-filling its name field where it
+    /// makes sense.
+    ///
+    /// The repository is captured here, not read from the selection at submit
+    /// time, so a prompt can only ever write to the repository that opened it.
+    pub fn start_branch_prompt(
+        &mut self,
+        repo_id: &str,
+        kind: BranchPromptKind,
+        cx: &mut Context<Self>,
+    ) {
         self.context_menu = None;
-        match &prompt {
-            BranchPrompt::Create { .. } => self.branch_field.clear(),
-            BranchPrompt::Rename { from } => self.branch_field.set(from.clone()),
-            BranchPrompt::Delete { .. } => self.branch_field.clear(),
+        match &kind {
+            BranchPromptKind::Create { .. } | BranchPromptKind::Delete { .. } => {
+                self.branch_field.clear()
+            }
+            BranchPromptKind::Rename { from } => self.branch_field.set(from.clone()),
         }
-        self.branch_prompt = Some(prompt);
+        self.branch_prompt = Some(BranchPrompt {
+            repo_id: repo_id.to_string(),
+            kind,
+        });
         cx.notify();
     }
 
@@ -2447,47 +2460,76 @@ impl VantageApp {
         cx.notify();
     }
 
-    /// Enter in the name field (or the row's Save button) runs the action.
+    /// Enter in the name field (or the row's Save button) runs the action
+    /// against the repository the prompt captured when it opened.
     pub fn submit_branch_prompt(&mut self, cx: &mut Context<Self>) {
         let Some(prompt) = self.branch_prompt.clone() else {
             return;
         };
-        let Some(repo) = self.selected_repo().cloned() else {
+        let Some(repo) = self
+            .repos
+            .iter()
+            .find(|repo| repo.id == prompt.repo_id)
+            .cloned()
+        else {
+            // The prompt outlived its repository. Refuse rather than acting on
+            // whichever repository happens to be selected now.
+            self.branch_prompt = None;
+            self.branch_field.clear();
+            self.show_toast(
+                "The repository for this branch action is no longer in the workspace. Nothing was changed.",
+                cx,
+            );
             return;
         };
         let typed = self.branch_field.value.trim().to_string();
 
-        let (ok, fail, op): (String, String, BranchAction) = match &prompt {
-            BranchPrompt::Create { base } => {
+        let (ok, fail, op): (String, String, BranchAction) = match &prompt.kind {
+            BranchPromptKind::Create { base } => {
                 if typed.is_empty() {
                     self.show_toast("Type a branch name first", cx);
                     return;
                 }
                 let base = base.clone();
+                let check = prompt.kind.clone();
                 (
                     format!("Created {typed} from {base}"),
                     format!("Could not create {typed}"),
-                    Box::new(move |backend, id| backend.create_branch(id, &typed, &base)),
+                    Box::new(move |backend, id| {
+                        validate_branch_prompt(&check, &backend.local_branches(id)?)
+                            .map_err(anyhow::Error::msg)?;
+                        backend.create_branch(id, &typed, &base)
+                    }),
                 )
             }
-            BranchPrompt::Rename { from } => {
+            BranchPromptKind::Rename { from } => {
                 if typed.is_empty() {
                     self.show_toast("Type a branch name first", cx);
                     return;
                 }
                 let from = from.clone();
+                let check = prompt.kind.clone();
                 (
                     format!("Renamed {from} to {typed}"),
                     format!("Could not rename {from}"),
-                    Box::new(move |backend, id| backend.rename_branch(id, &from, &typed)),
+                    Box::new(move |backend, id| {
+                        validate_branch_prompt(&check, &backend.local_branches(id)?)
+                            .map_err(anyhow::Error::msg)?;
+                        backend.rename_branch(id, &from, &typed)
+                    }),
                 )
             }
-            BranchPrompt::Delete { name } => {
+            BranchPromptKind::Delete { name } => {
                 let name = name.clone();
+                let check = prompt.kind.clone();
                 (
                     format!("Deleted {name}"),
                     format!("Could not delete {name}"),
-                    Box::new(move |backend, id| backend.delete_branch(id, &name, false)),
+                    Box::new(move |backend, id| {
+                        validate_branch_prompt(&check, &backend.local_branches(id)?)
+                            .map_err(anyhow::Error::msg)?;
+                        backend.delete_branch(id, &name, false)
+                    }),
                 )
             }
         };
@@ -2903,17 +2945,29 @@ impl VantageApp {
             window.focus(&self.branch_focus);
         }
 
-        let (title, action_label, destructive) = match &prompt {
-            BranchPrompt::Create { base } => {
+        let (title, action_label, destructive) = match &prompt.kind {
+            BranchPromptKind::Create { base } => {
                 (format!("New branch from {base}"), "Create branch", false)
             }
-            BranchPrompt::Rename { from } => (format!("Rename {from}"), "Rename", false),
-            BranchPrompt::Delete { name } => (format!("Delete {name}?"), "Delete", true),
+            BranchPromptKind::Rename { from } => (format!("Rename {from}"), "Rename", false),
+            BranchPromptKind::Delete { name } => (format!("Delete {name}?"), "Delete", true),
         };
+        let repo_label = self
+            .repos
+            .iter()
+            .find(|repo| repo.id == prompt.repo_id)
+            .map(|repo| repo.name.clone())
+            .unwrap_or_else(|| prompt.repo_id.clone());
 
         let mut body = div().flex().flex_col().gap(px(12.0)).w_full();
-        match &prompt {
-            BranchPrompt::Delete { name } => {
+        body = body.child(
+            div()
+                .xs()
+                .fg(theme.label_muted)
+                .child(format!("Repository: {repo_label}")),
+        );
+        match &prompt.kind {
+            BranchPromptKind::Delete { name } => {
                 body = body.child(div().xs().fg(theme.text_body).child(format!(
                     "{name} will be removed. Git refuses when the branch has unmerged work."
                 )))
@@ -3891,39 +3945,28 @@ impl Render for VantageApp {
                                     ContextMenu::Branch { repo_id, name, .. },
                                     "New branch from this branch",
                                 ) => {
-                                    // The action belongs to the repository the
-                                    // menu came from, not whatever is selected now.
-                                    if this.selected_repo_id.as_deref() == Some(repo_id.as_str()) {
-                                        this.start_branch_prompt(
-                                            BranchPrompt::Create { base: name.clone() },
-                                            cx,
-                                        );
-                                    } else {
-                                        this.close_file_menu(cx);
-                                    }
+                                    this.start_branch_prompt(
+                                        repo_id,
+                                        BranchPromptKind::Create { base: name.clone() },
+                                        cx,
+                                    );
                                 }
                                 (
                                     ContextMenu::Branch { repo_id, name, .. },
                                     "Rename current branch",
                                 ) => {
-                                    if this.selected_repo_id.as_deref() == Some(repo_id.as_str()) {
-                                        this.start_branch_prompt(
-                                            BranchPrompt::Rename { from: name.clone() },
-                                            cx,
-                                        );
-                                    } else {
-                                        this.close_file_menu(cx);
-                                    }
+                                    this.start_branch_prompt(
+                                        repo_id,
+                                        BranchPromptKind::Rename { from: name.clone() },
+                                        cx,
+                                    );
                                 }
                                 (ContextMenu::Branch { repo_id, name, .. }, "Delete branch") => {
-                                    if this.selected_repo_id.as_deref() == Some(repo_id.as_str()) {
-                                        this.start_branch_prompt(
-                                            BranchPrompt::Delete { name: name.clone() },
-                                            cx,
-                                        );
-                                    } else {
-                                        this.close_file_menu(cx);
-                                    }
+                                    this.start_branch_prompt(
+                                        repo_id,
+                                        BranchPromptKind::Delete { name: name.clone() },
+                                        cx,
+                                    );
                                 }
                                 (
                                     ContextMenu::Commit {
@@ -4035,14 +4078,65 @@ pub struct CommitView {
 }
 
 /// An in-progress branch action, answered by the inline row in the Branches tab.
+///
+/// `repo_id` is captured when the prompt opens. Submission always resolves that
+/// repository, never the current selection.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub enum BranchPrompt {
+pub struct BranchPrompt {
+    pub repo_id: String,
+    pub kind: BranchPromptKind,
+}
+
+/// The branch action a prompt is asking for.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum BranchPromptKind {
     /// Create a branch from an existing one.
     Create { base: String },
     /// Rename the current branch.
     Rename { from: String },
     /// Delete a branch after a confirm.
     Delete { name: String },
+}
+
+/// Refuse a prompt whose branch has changed state since the menu opened.
+///
+/// `branches` is a fresh listing from git for the prompt's repository. Git
+/// still has the final say when the write runs; this catches the common case of
+/// a branch that was deleted or checked out elsewhere while the dialog was open
+/// and gives a message that names the branch.
+fn validate_branch_prompt(
+    kind: &BranchPromptKind,
+    branches: &[vantage_core::state::BranchInfo],
+) -> Result<(), String> {
+    match kind {
+        BranchPromptKind::Create { base } => {
+            if branches.iter().any(|branch| branch.name == *base) {
+                Ok(())
+            } else {
+                Err(format!(
+                    "Branch '{base}' no longer exists, so nothing was created."
+                ))
+            }
+        }
+        BranchPromptKind::Rename { from } => match branches.iter().find(|b| b.name == *from) {
+            None => Err(format!(
+                "Branch '{from}' no longer exists, so nothing was renamed."
+            )),
+            Some(branch) if !branch.is_head => Err(format!(
+                "'{from}' is no longer the checked-out branch; switch back to it before renaming."
+            )),
+            Some(_) => Ok(()),
+        },
+        BranchPromptKind::Delete { name } => match branches.iter().find(|b| b.name == *name) {
+            None => Err(format!(
+                "Branch '{name}' no longer exists, so nothing was deleted."
+            )),
+            Some(branch) if branch.is_head => Err(format!(
+                "'{name}' is now the checked-out branch; switch to another branch first."
+            )),
+            Some(_) => Ok(()),
+        },
+    }
 }
 
 /// A right-click menu, anchored at the pointer.
@@ -4397,5 +4491,135 @@ mod tests {
         let repo = repo_with(vec![file("untracked.rs", false)]);
         assert!(ticked_paths(None, &repo).is_empty());
         assert!(ticked_paths(Some(&overrides(&[("untracked.rs", false)])), &repo).is_empty());
+    }
+
+    fn repo_named(id: &str, name: &str) -> Repository {
+        let mut repo = repo_with(Vec::new());
+        repo.id = id.to_string();
+        repo.name = name.to_string();
+        repo
+    }
+
+    fn branch(name: &str, is_head: bool) -> vantage_core::state::BranchInfo {
+        vantage_core::state::BranchInfo {
+            name: name.to_string(),
+            upstream: None,
+            is_head,
+            updated_at: None,
+        }
+    }
+
+    #[test]
+    fn create_prompt_refuses_a_base_branch_that_disappeared() {
+        let error = validate_branch_prompt(
+            &BranchPromptKind::Create {
+                base: "main".to_string(),
+            },
+            &[branch("feature", false)],
+        )
+        .expect_err("a missing base branch must be refused");
+        assert!(error.contains("'main' no longer exists"), "{error}");
+    }
+
+    #[test]
+    fn rename_prompt_refuses_a_branch_that_is_no_longer_current() {
+        let error = validate_branch_prompt(
+            &BranchPromptKind::Rename {
+                from: "main".to_string(),
+            },
+            &[branch("main", false), branch("other", true)],
+        )
+        .expect_err("a branch that is no longer checked out must not be renamed");
+        assert!(
+            error.contains("no longer the checked-out branch"),
+            "{error}"
+        );
+    }
+
+    #[test]
+    fn delete_prompt_refuses_a_branch_that_is_now_current() {
+        let error = validate_branch_prompt(
+            &BranchPromptKind::Delete {
+                name: "feature".to_string(),
+            },
+            &[branch("feature", true)],
+        )
+        .expect_err("git refuses to delete the checked-out branch, so say so first");
+        assert!(error.contains("now the checked-out branch"), "{error}");
+    }
+
+    #[gpui::test]
+    fn branch_prompt_keeps_its_repository_after_the_selection_changes(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        use gpui::AppContext;
+
+        let app = cx.new(VantageApp::new);
+        cx.update(|cx| {
+            app.update(cx, |app, cx| {
+                app.repos = vec![repo_named("repo-1", "alpha"), repo_named("repo-2", "beta")];
+                app.selected_repo_id = Some("repo-1".to_string());
+                app.start_branch_prompt(
+                    "repo-1",
+                    BranchPromptKind::Delete {
+                        name: "feature".to_string(),
+                    },
+                    cx,
+                );
+                assert_eq!(
+                    app.branch_prompt
+                        .as_ref()
+                        .map(|prompt| prompt.repo_id.as_str()),
+                    Some("repo-1")
+                );
+
+                // The user moves to another repository before answering.
+                app.selected_repo_id = Some("repo-2".to_string());
+                app.submit_branch_prompt(cx);
+
+                assert!(
+                    app.busy_repos.contains_key("repo-1"),
+                    "the delete must run against the repository that opened the prompt"
+                );
+                assert!(
+                    !app.busy_repos.contains_key("repo-2"),
+                    "the selection at submit time must not receive the operation"
+                );
+                assert!(app.branch_prompt.is_none());
+            });
+        });
+    }
+
+    #[gpui::test]
+    fn branch_prompt_refuses_a_repository_that_is_gone(cx: &mut gpui::TestAppContext) {
+        use gpui::AppContext;
+
+        let app = cx.new(VantageApp::new);
+        cx.update(|cx| {
+            app.update(cx, |app, cx| {
+                app.repos = vec![repo_named("repo-2", "beta")];
+                app.selected_repo_id = Some("repo-2".to_string());
+                app.start_branch_prompt(
+                    "repo-1",
+                    BranchPromptKind::Delete {
+                        name: "feature".to_string(),
+                    },
+                    cx,
+                );
+
+                app.submit_branch_prompt(cx);
+
+                assert!(
+                    app.busy_repos.is_empty(),
+                    "nothing may run when the prompt's repository is gone"
+                );
+                assert!(app.branch_prompt.is_none());
+                let toast = app.toast.clone().unwrap_or_default();
+                assert!(
+                    toast.contains("no longer in the workspace"),
+                    "expected a target error, got {toast:?}"
+                );
+            });
+        });
     }
 }
