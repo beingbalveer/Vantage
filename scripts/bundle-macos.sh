@@ -24,6 +24,10 @@
 #                            notarytool credentials. When all three are set the
 #                            app and the DMG are notarized and stapled.
 #
+# Published builds rely on signing and notarization: the generated cask leaves
+# macOS's quarantine attribute in place instead of bypassing Gatekeeper. An
+# ad-hoc build installed from that cask needs right-click > Open on first launch.
+#
 # Output (in dist/): Vantage.app, Vantage_<version>_universal.dmg,
 # Vantage_<version>_universal.app.zip, vantage.rb, SHA256SUMS.
 
@@ -202,6 +206,8 @@ fi
 dmg_sha="$(shasum -a 256 "$DIST/$dmg" | awk '{print $1}')"
 
 cat >"$DIST/vantage.rb" <<CASK
+# frozen_string_literal: true
+
 cask "vantage" do
   version "$version"
   sha256 "$dmg_sha"
@@ -220,14 +226,12 @@ cask "vantage" do
 
   app "Vantage.app"
 
-  postflight_steps do
-    run "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "{{staged_path}}"]
-  end
-
+  # A published build relies on Developer ID signing and notarization for
+  # Gatekeeper approval; the quarantine attribute is intentionally left in place.
   zap trash: [
     "~/Library/Application Support/vantage",
-    "~/Library/Caches/vantage",
     "~/Library/Caches/$BUNDLE_ID",
+    "~/Library/Caches/vantage",
     "~/Library/Preferences/$BUNDLE_ID.plist",
     "~/Library/Saved Application State/$BUNDLE_ID.savedState",
   ]

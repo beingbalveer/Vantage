@@ -122,10 +122,12 @@ Each release publishes four files:
 | `vantage.rb` | Homebrew cask for that exact build, pinned to its `sha256` |
 
 Release builds are signed with a Developer ID certificate and notarized by
-Apple when those credentials are configured; builds made without them are
-ad-hoc signed and need **right-click → Open** on first launch. Vantage has no
-account, no telemetry and no updater daemon: check the releases page for new
-versions.
+Apple when those credentials are configured. Builds made without them are
+ad-hoc signed; Gatekeeper blocks them, so first launch needs **right-click →
+Open**. The Homebrew cask intentionally leaves the quarantine attribute in
+place instead of bypassing Gatekeeper, so a published build needs to be signed
+and notarized to open normally. Vantage has no account, no telemetry and no
+updater daemon: check the releases page for new versions.
 
 Linux builds from source (below); the release pipeline currently publishes
 macOS only.

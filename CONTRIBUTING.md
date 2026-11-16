@@ -131,7 +131,10 @@ Releases are universal (arm64 + x86_64) signed DMGs, published from a tag by
 
 The workflow signs with a Developer ID and notarizes when these repository
 secrets exist; without them it falls back to ad-hoc signing and prints a
-warning, which is fine for local builds but not for distribution.
+warning, which is fine for local builds but not for distribution. Published
+releases rely on signing and notarization: the generated Homebrew cask does not
+strip the quarantine attribute, so an ad-hoc build installed from it needs
+right-click → Open on first launch.
 
 | Secret | Contents |
 |---|---|
