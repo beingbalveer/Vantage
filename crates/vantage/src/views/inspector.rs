@@ -1075,7 +1075,7 @@ impl VantageApp {
                     .flex_shrink_0()
                     .child(view.sha.clone()),
             )
-            .when(!view.comparing, |d| {
+            .when(!view.comparing(), |d| {
                 d.child(crate::ui::avatar(
                     &theme,
                     &view.author,
@@ -1243,6 +1243,37 @@ impl VantageApp {
                 .xs()
                 .fg(theme.label_muted)
                 .child("Loading the commit…"),
+            None if view.error.is_some() => {
+                let error = view.error.clone().unwrap_or_default();
+                let title = if view.comparing() {
+                    "Could not compare these branches."
+                } else {
+                    "Could not load this commit."
+                };
+                div()
+                    .flex()
+                    .flex_col()
+                    .items_center()
+                    .gap(px(8.0))
+                    .w_full()
+                    .px(px(16.0))
+                    .py(px(24.0))
+                    .child(div().xs().medium().fg(theme.status_red).child(title))
+                    .child(div().xs().fg(theme.text_soft).text_center().child(error))
+                    .child(
+                        secondary_button(&theme, "Retry", None)
+                            .id("commit-retry")
+                            .on_click(cx.listener(|this, _e, _w, cx| this.reload_commit_view(cx))),
+                    )
+            }
+            None if view.comparing() => div()
+                .py(px(24.0))
+                .w_full()
+                .flex()
+                .justify_center()
+                .xs()
+                .fg(theme.label_muted)
+                .child("No textual changes between these branches."),
             None => div()
                 .py(px(24.0))
                 .w_full()

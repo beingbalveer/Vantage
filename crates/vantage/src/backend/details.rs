@@ -12,8 +12,10 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::model::{CommitIdentity, PreviewKind, PreviewLine};
 
+use vantage_core::git::runner::GitOutput;
+use vantage_core::git::stash;
 use vantage_core::git::{diff, log, refs, status};
-use vantage_core::GitRunner;
+use vantage_core::{AppError, GitRunner};
 
 use crate::model::{BranchInfo, ChangedFile, CommitEntry, FileChangeStatus};
 
@@ -661,24 +663,42 @@ fn untracked_preview(repo_path: &Path, relative: &str) -> (Vec<PreviewLine>, boo
 
 // ---------------- Compare + ignored ----------------
 
+/// A read that ran but exited unsuccessfully, with Git's own explanation.
+///
+/// The runner returns `Ok` for any command git actually started, including a
+/// non-zero exit, so callers must turn a failed status into a visible error
+/// instead of the empty output looking like "nothing changed".
+fn failed_read(action: &str, output: &GitOutput) -> AppError {
+    let stderr = output.stderr.trim();
+    let message = if stderr.is_empty() {
+        format!("git {action} exited with {}.", output.status)
+    } else {
+        stderr.to_string()
+    };
+    AppError::other(message).with_stderr(output.stderr.clone())
+}
+
 /// Files between two branches, with the same preview shape a commit uses.
+///
+/// An unknown branch or invalid range is returned as an error carrying Git's
+/// message, never as an empty file list.
 pub fn compare_branches(
     rt: &tokio::runtime::Runtime,
     runner: &GitRunner,
     path: &Path,
     base: &str,
     head: &str,
-) -> Vec<crate::model::CommitFile> {
+) -> Result<Vec<crate::model::CommitFile>, AppError> {
     let range = format!("{base}...{head}");
     let patch = rt.block_on(async {
         runner
             .run_read(path, &["diff", "--no-color", "--no-ext-diff", "-M", &range])
             .await
-    });
-    let patch = match patch {
-        Ok(out) if out.success() => out.stdout_string(),
-        _ => return Vec::new(),
-    };
+    })?;
+    if !patch.success() {
+        return Err(failed_read("diff", &patch));
+    }
+    let patch = patch.stdout_string();
 
     let counts = rt.block_on(async {
         runner
@@ -718,14 +738,26 @@ pub fn compare_branches(
         })
         .collect();
     files.sort_by(|a, b| a.path.cmp(&b.path));
-    files
+    Ok(files)
 }
 
 // ---------------- Stashes ----------------
 
+/// The stash list shown by the stash dialog.
+///
+/// A failed read stays an error so the dialog can show Git's message and offer
+/// a retry; an empty repository stash list is a successful empty vector.
+pub fn stash_entries(
+    rt: &tokio::runtime::Runtime,
+    runner: &GitRunner,
+    path: &Path,
+) -> Result<Vec<vantage_core::state::StashEntry>, AppError> {
+    rt.block_on(stash::list_stashes(runner, path))
+}
+
 /// How many stashes the repository keeps; the menu labels use the count.
 pub fn stash_count(rt: &tokio::runtime::Runtime, runner: &GitRunner, path: &Path) -> usize {
-    rt.block_on(vantage_core::git::stash::list_stashes(runner, path))
+    rt.block_on(stash::list_stashes(runner, path))
         .map(|entries| entries.len())
         .unwrap_or(0)
 }
@@ -735,13 +767,14 @@ pub fn stash_count(rt: &tokio::runtime::Runtime, runner: &GitRunner, path: &Path
 /// The files a commit touched, each with its own patch lines and counts.
 ///
 /// `git show` gives the patch with the same shape as a working-tree diff, so it
-/// reuses the parser the Changes tab already relies on.
+/// reuses the parser the Changes tab already relies on. A missing commit or
+/// other Git failure is an error carrying Git's message.
 pub fn commit_files(
     rt: &tokio::runtime::Runtime,
     runner: &GitRunner,
     path: &Path,
     sha: &str,
-) -> Vec<crate::model::CommitFile> {
+) -> Result<Vec<crate::model::CommitFile>, AppError> {
     let patch = rt.block_on(async {
         runner
             .run_read(
@@ -756,11 +789,11 @@ pub fn commit_files(
                 ],
             )
             .await
-    });
-    let patch = match patch {
-        Ok(out) if out.success() => out.stdout_string(),
-        _ => return Vec::new(),
-    };
+    })?;
+    if !patch.success() {
+        return Err(failed_read("show", &patch));
+    }
+    let patch = patch.stdout_string();
 
     let counts = rt.block_on(async {
         runner
@@ -800,7 +833,7 @@ pub fn commit_files(
         })
         .collect();
     files.sort_by(|a, b| a.path.cmp(&b.path));
-    files
+    Ok(files)
 }
 
 // ---------------- Commit identity ----------------
@@ -1119,5 +1152,176 @@ u UU N... 100644 100644 100644 100644 aaaaaaa bbbbbbb ccccccc conflicted.rs\0\
         assert!(second
             .iter()
             .any(|line| line.kind == PreviewKind::Context && line.text == "keep"));
+    }
+
+    /// A disposable repository with one commit on `main`, removed on drop.
+    struct TestRepo {
+        path: std::path::PathBuf,
+    }
+
+    impl TestRepo {
+        fn new(label: &str) -> Self {
+            use std::sync::atomic::{AtomicUsize, Ordering};
+            static NEXT: AtomicUsize = AtomicUsize::new(0);
+
+            let unique = NEXT.fetch_add(1, Ordering::Relaxed);
+            let path = std::env::temp_dir().join(format!(
+                "vantage-p2-06-{}-{}-{}",
+                std::process::id(),
+                label,
+                unique
+            ));
+            std::fs::remove_dir_all(&path).ok();
+            std::fs::create_dir_all(&path).expect("create the test repository folder");
+            let repo = Self { path };
+            repo.git(&["init", "-b", "main"]);
+            repo.write("one.txt", "one\n");
+            repo.git(&["add", "one.txt"]);
+            repo.commit("one", false);
+            repo
+        }
+
+        fn write(&self, name: &str, contents: &str) {
+            std::fs::write(self.path.join(name), contents).expect("write the test file");
+        }
+
+        fn git(&self, args: &[&str]) -> String {
+            let output = std::process::Command::new("git")
+                .arg("-C")
+                .arg(&self.path)
+                .args(args)
+                .env("LC_ALL", "C")
+                .env("GIT_TERMINAL_PROMPT", "0")
+                .env("GIT_PAGER", "cat")
+                .output()
+                .expect("run git");
+            assert!(
+                output.status.success(),
+                "git {} failed: {}",
+                args.join(" "),
+                String::from_utf8_lossy(&output.stderr)
+            );
+            String::from_utf8_lossy(&output.stdout).to_string()
+        }
+
+        fn commit(&self, message: &str, allow_empty: bool) -> String {
+            let mut args = vec![
+                "-c",
+                "user.name=Vantage Test",
+                "-c",
+                "user.email=vantage@example.invalid",
+                "-c",
+                "commit.gpgsign=false",
+                "commit",
+                "--no-verify",
+            ];
+            if allow_empty {
+                args.push("--allow-empty");
+            }
+            args.push("-m");
+            args.push(message);
+            self.git(&args);
+            self.git(&["rev-parse", "HEAD"]).trim().to_string()
+        }
+    }
+
+    impl Drop for TestRepo {
+        fn drop(&mut self) {
+            std::fs::remove_dir_all(&self.path).ok();
+        }
+    }
+
+    fn test_runtime() -> tokio::runtime::Runtime {
+        tokio::runtime::Runtime::new().expect("start the test git runtime")
+    }
+
+    #[test]
+    fn commit_files_reads_a_commit_and_keeps_empty_commits_empty() {
+        let repo = TestRepo::new("commit");
+        let runtime = test_runtime();
+        let runner = GitRunner::new();
+
+        let sha = repo.git(&["rev-parse", "HEAD"]).trim().to_string();
+        let files = commit_files(&runtime, &runner, &repo.path, &sha)
+            .expect("a commit with a change must load");
+        assert_eq!(files.len(), 1);
+        assert_eq!(files[0].path, "one.txt");
+
+        let empty = repo.commit("empty", true);
+        let files = commit_files(&runtime, &runner, &repo.path, &empty)
+            .expect("an empty commit is a successful empty load");
+        assert!(files.is_empty());
+    }
+
+    #[test]
+    fn commit_files_reports_a_missing_commit() {
+        let repo = TestRepo::new("missing-commit");
+        let runtime = test_runtime();
+        let runner = GitRunner::new();
+
+        let error = commit_files(&runtime, &runner, &repo.path, "missing-ref")
+            .expect_err("a missing commit must not look like an empty diff");
+
+        assert!(
+            error.message.contains("missing-ref"),
+            "git's message should name the bad ref: {}",
+            error.message
+        );
+        assert!(
+            error.message.contains("fatal:"),
+            "git's own message should be kept: {}",
+            error.message
+        );
+    }
+
+    #[test]
+    fn compare_branches_reports_an_unknown_range_and_reads_a_known_one() {
+        let repo = TestRepo::new("compare");
+        let runtime = test_runtime();
+        let runner = GitRunner::new();
+
+        let error = compare_branches(&runtime, &runner, &repo.path, "main", "no-such-branch")
+            .expect_err("an unknown branch must not look like an empty comparison");
+        assert!(
+            error.message.contains("no-such-branch"),
+            "git's message should name the bad branch: {}",
+            error.message
+        );
+        assert!(
+            error.message.contains("fatal:"),
+            "git's own message should be kept: {}",
+            error.message
+        );
+
+        repo.git(&["checkout", "-b", "other"]);
+        repo.write("two.txt", "two\n");
+        repo.git(&["add", "two.txt"]);
+        repo.commit("two", false);
+
+        let files = compare_branches(&runtime, &runner, &repo.path, "main", "other")
+            .expect("a known range must load");
+        assert_eq!(files.len(), 1);
+        assert_eq!(files[0].path, "two.txt");
+    }
+
+    #[test]
+    fn stash_entries_reports_a_failed_load() {
+        let path =
+            std::env::temp_dir().join(format!("vantage-p2-06-not-a-repo-{}", std::process::id()));
+        std::fs::remove_dir_all(&path).ok();
+        std::fs::create_dir_all(&path).expect("create a folder that is not a repository");
+        let runtime = test_runtime();
+        let runner = GitRunner::new();
+
+        let error = stash_entries(&runtime, &runner, &path)
+            .expect_err("a failed stash read must not look like an empty stash list");
+
+        assert!(
+            error.message.contains("not a git repository"),
+            "git's own message should be kept: {}",
+            error.message
+        );
+
+        std::fs::remove_dir_all(&path).ok();
     }
 }

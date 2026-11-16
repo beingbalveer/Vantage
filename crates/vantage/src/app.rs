@@ -1650,6 +1650,9 @@ impl VantageApp {
         cx: &mut Context<Self>,
     ) {
         self.context_menu = None;
+        let source = CommitSource::Commit {
+            sha: commit.sha.clone(),
+        };
         self.commit_view = Some(CommitView {
             repo_id: repo.id.clone(),
             sha: commit.sha.clone(),
@@ -1660,23 +1663,66 @@ impl VantageApp {
             files: Vec::new(),
             selected: 0,
             loading: true,
-            comparing: false,
+            error: None,
+            source,
         });
+        self.reload_commit_view(cx);
+    }
 
-        let Some(backend) = self.backend.clone() else {
+    /// (Re)load the files for the open commit or comparison view.
+    ///
+    /// The header stays visible while git runs; a failed read leaves the view
+    /// up with Git's own message and a retry instead of an empty diff.
+    pub fn reload_commit_view(&mut self, cx: &mut Context<Self>) {
+        let Some(view) = self.commit_view.as_mut() else {
             return;
         };
-        let repo_id = repo.id.clone();
-        let sha = commit.sha.clone();
+        let repo_id = view.repo_id.clone();
+        let source = view.source.clone();
+        view.files.clear();
+        view.selected = 0;
+        view.loading = true;
+        view.error = None;
+
+        let Some(backend) = self.backend.clone() else {
+            if let Some(view) = self.commit_view.as_mut() {
+                view.loading = false;
+                view.error = Some("The git backend is not running.".to_string());
+            }
+            cx.notify();
+            return;
+        };
+
+        let load_repo = repo_id.clone();
+        let load_source = source.clone();
         cx.spawn(async move |this, cx| {
-            let files = cx
+            let result = cx
                 .background_executor()
-                .spawn(async move { backend.commit_files(&repo_id, &sha) })
+                .spawn(async move {
+                    match &load_source {
+                        CommitSource::Commit { sha } => backend.commit_files(&load_repo, sha),
+                        CommitSource::Compare { base, head } => {
+                            backend.compare(&load_repo, base, head)
+                        }
+                    }
+                })
                 .await;
             this.update(cx, |app, cx| {
                 if let Some(view) = app.commit_view.as_mut() {
-                    view.files = files.unwrap_or_default();
-                    view.loading = false;
+                    if view.repo_id == repo_id && view.source == source {
+                        view.loading = false;
+                        match result {
+                            Ok(files) => {
+                                view.files = files;
+                                view.selected = 0;
+                                view.error = None;
+                            }
+                            Err(error) => {
+                                view.files.clear();
+                                view.error = Some(detail_error_text(&error));
+                            }
+                        }
+                    }
                 }
                 cx.notify();
             })
@@ -1911,21 +1957,59 @@ impl VantageApp {
     /// Open the stash list for a repository.
     pub fn open_stash_modal(&mut self, repo_id: &str, cx: &mut Context<Self>) {
         self.context_menu = None;
-        let Some(backend) = self.backend.clone() else {
+        self.stash_modal = Some(StashModal {
+            repo_id: repo_id.to_string(),
+            entries: Vec::new(),
+            loading: true,
+            error: None,
+        });
+        self.reload_stashes(cx);
+    }
+
+    /// (Re)load the open stash dialog's list.
+    ///
+    /// A failed read keeps the dialog up with Git's message and a retry instead
+    /// of showing an empty repository as if it had no stashes.
+    pub fn reload_stashes(&mut self, cx: &mut Context<Self>) {
+        let Some(modal) = self.stash_modal.as_mut() else {
             return;
         };
-        let id = repo_id.to_string();
-        let load_id = id.clone();
+        let repo_id = modal.repo_id.clone();
+        modal.entries.clear();
+        modal.loading = true;
+        modal.error = None;
+
+        let Some(backend) = self.backend.clone() else {
+            if let Some(modal) = self.stash_modal.as_mut() {
+                modal.loading = false;
+                modal.error = Some("The git backend is not running.".to_string());
+            }
+            cx.notify();
+            return;
+        };
+
+        let load_repo = repo_id.clone();
         cx.spawn(async move |this, cx| {
-            let entries = cx
+            let result = cx
                 .background_executor()
-                .spawn(async move { backend.stashes(&load_id) })
+                .spawn(async move { backend.stashes(&load_repo) })
                 .await;
             this.update(cx, |app, cx| {
-                app.stash_modal = Some(StashModal {
-                    repo_id: id,
-                    entries: entries.unwrap_or_default(),
-                });
+                if let Some(modal) = app.stash_modal.as_mut() {
+                    if modal.repo_id == repo_id {
+                        modal.loading = false;
+                        match result {
+                            Ok(entries) => {
+                                modal.entries = entries;
+                                modal.error = None;
+                            }
+                            Err(error) => {
+                                modal.entries.clear();
+                                modal.error = Some(detail_error_text(&error));
+                            }
+                        }
+                    }
+                }
                 cx.notify();
             })
             .ok();
@@ -2075,30 +2159,13 @@ impl VantageApp {
             files: Vec::new(),
             selected: 0,
             loading: true,
-            comparing: true,
+            error: None,
+            source: CommitSource::Compare {
+                base,
+                head: other.to_string(),
+            },
         });
-
-        let Some(backend) = self.backend.clone() else {
-            return;
-        };
-        let id = repo.id.clone();
-        let other = other.to_string();
-        cx.spawn(async move |this, cx| {
-            let files = cx
-                .background_executor()
-                .spawn(async move { backend.compare(&id, &base, &other) })
-                .await;
-            this.update(cx, |app, cx| {
-                if let Some(view) = app.commit_view.as_mut() {
-                    view.files = files.unwrap_or_default();
-                    view.loading = false;
-                }
-                cx.notify();
-            })
-            .ok();
-        })
-        .detach();
-        cx.notify();
+        self.reload_commit_view(cx);
     }
 
     /// Ask before merging another branch into the current one.
@@ -2505,7 +2572,37 @@ impl VantageApp {
         };
 
         let mut list = div().flex().flex_col().gap(px(2.0)).w_full();
-        if modal.entries.is_empty() {
+        if modal.loading {
+            list = list.child(
+                div()
+                    .py(px(10.0))
+                    .xs()
+                    .fg(theme.label_muted)
+                    .child("Loading stashes…"),
+            );
+        } else if let Some(error) = &modal.error {
+            list = list.child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .items_start()
+                    .gap(px(8.0))
+                    .py(px(10.0))
+                    .child(
+                        div()
+                            .xs()
+                            .medium()
+                            .fg(theme.status_red)
+                            .child("Could not read the stashes."),
+                    )
+                    .child(div().xs().fg(theme.text_soft).child(error.clone()))
+                    .child(
+                        crate::ui::secondary_button(&theme, "Retry", None)
+                            .id("stash-retry")
+                            .on_click(cx.listener(|this, _e, _w, cx| this.reload_stashes(cx))),
+                    ),
+            );
+        } else if modal.entries.is_empty() {
             list = list.child(
                 div()
                     .py(px(10.0))
@@ -3998,6 +4095,9 @@ impl Render for VantageApp {
 pub struct StashModal {
     pub repo_id: String,
     pub entries: Vec<vantage_core::state::StashEntry>,
+    pub loading: bool,
+    /// Git's own message when the list could not be read.
+    pub error: Option<String>,
 }
 
 /// A destructive action waiting for confirmation.
@@ -4018,6 +4118,14 @@ pub enum ConfirmAction {
     ResetToCommit { repo_id: String, sha: String },
 }
 
+/// What a [`CommitView`] should read, kept with the view so a failed load can
+/// be retried without the commit row that opened it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum CommitSource {
+    Commit { sha: String },
+    Compare { base: String, head: String },
+}
+
 /// A commit opened in the detail view: its files, and which one is on screen.
 #[derive(Clone, Debug)]
 pub struct CommitView {
@@ -4030,8 +4138,34 @@ pub struct CommitView {
     pub files: Vec<crate::model::CommitFile>,
     pub selected: usize,
     pub loading: bool,
+    /// Git's own message when the files could not be read.
+    pub error: Option<String>,
+    pub source: CommitSource,
+}
+
+impl CommitView {
     /// True when this is a branch comparison rather than one commit.
-    pub comparing: bool,
+    pub fn comparing(&self) -> bool {
+        matches!(self.source, CommitSource::Compare { .. })
+    }
+}
+
+/// Git's explanation for a failed detail read, without Vantage's error code.
+///
+/// Most errors put Git's stderr in `message` already; a typed error such as an
+/// auth failure keeps a friendlier message and the raw text separately, so both
+/// are shown rather than dropping what Git said.
+fn detail_error_text(error: &anyhow::Error) -> String {
+    let Some(error) = error.downcast_ref::<vantage_core::AppError>() else {
+        return error.to_string();
+    };
+    let message = error.message.trim();
+    match error.stderr.as_deref().map(str::trim) {
+        Some(stderr) if !stderr.is_empty() && !message.contains(stderr) => {
+            format!("{message}\n\n{stderr}")
+        }
+        _ => message.to_string(),
+    }
 }
 
 /// An in-progress branch action, answered by the inline row in the Branches tab.
