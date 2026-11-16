@@ -1,6 +1,6 @@
 //! Hover card for an identity: who the avatar belongs to.
 
-use gpui::{div, prelude::*, px, Context, IntoElement, Render, Window};
+use gpui::{div, prelude::*, px, AnyView, App, Context, IntoElement, Render, Window};
 
 use crate::theme::Theme;
 use crate::ui::Txt;
@@ -86,4 +86,16 @@ impl Render for TextTooltip {
             .whitespace_nowrap()
             .child(self.text.clone())
     }
+}
+
+/// Build a [`TextTooltip`] for an icon-only control.
+///
+/// GPUI 0.2.2 exposes no accessibility tree, so this visible hover label is
+/// the only accessible-name affordance the app can attach today. Give every
+/// icon-only button one.
+pub fn label_tooltip(
+    theme: Theme,
+    label: &'static str,
+) -> impl Fn(&mut Window, &mut App) -> AnyView + 'static {
+    move |_window, cx| cx.new(|_| TextTooltip::new(theme, label)).into()
 }

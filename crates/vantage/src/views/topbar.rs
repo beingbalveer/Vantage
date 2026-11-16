@@ -64,8 +64,7 @@ impl VantageApp {
                     })),
             )
             .child(
-                icon_button(&theme, "panel-left")
-                    .id("sidebar-toggle")
+                icon_button(&theme, "panel-left", "sidebar-toggle", "Toggle sidebar")
                     .on_click(cx.listener(|this, _e, _w, cx| this.toggle_sidebar(cx))),
             )
             .child(
@@ -92,25 +91,33 @@ impl VantageApp {
                     .gap(px(10.0))
                     .flex_shrink_0()
                     .child(
-                        icon_button(&theme, "refresh-cw")
-                            .id("refresh-status")
-                            .on_click(cx.listener(|this, _e, _w, cx| this.refresh(cx))),
+                        icon_button(
+                            &theme,
+                            "refresh-cw",
+                            "refresh-status",
+                            "Refresh repositories",
+                        )
+                        .on_click(cx.listener(|this, _e, _w, cx| this.refresh(cx))),
                     )
                     .child(
-                        icon_button(&theme, "plus")
-                            .id("add-repository")
-                            .on_click(cx.listener(|this, _e, window, cx| {
+                        icon_button(&theme, "plus", "add-repository", "Add repository").on_click(
+                            cx.listener(|this, _e, window, cx| {
                                 this.open_add_modal(cx);
                                 window.focus(&this.field_focus(FieldId::ModalPath));
-                            })),
+                            }),
+                        ),
                     )
                     .child(
-                        icon_button(&theme, "panel-right")
-                            .id("right-panel-toggle")
-                            .on_click(cx.listener(|this, _e, window, cx| {
-                                this.toggle_right_panel(cx);
-                                window.refresh();
-                            })),
+                        icon_button(
+                            &theme,
+                            "panel-right",
+                            "right-panel-toggle",
+                            "Toggle details panel",
+                        )
+                        .on_click(cx.listener(|this, _e, window, cx| {
+                            this.toggle_right_panel(cx);
+                            window.refresh();
+                        })),
                     ),
             )
     }

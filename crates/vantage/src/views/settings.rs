@@ -61,8 +61,7 @@ impl VantageApp {
                             .child("Settings"),
                     )
                     .child(
-                        crate::ui::icon_button(&theme, "x")
-                            .id("settings-close")
+                        crate::ui::icon_button(&theme, "x", "settings-close", "Close settings")
                             .on_click(cx.listener(|this, _e, _w, cx| this.close_settings(cx))),
                     ),
             )

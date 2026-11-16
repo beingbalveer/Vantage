@@ -2544,7 +2544,7 @@ impl VantageApp {
                             .child(
                                 div()
                                     .mono_xs()
-                                    .fg(theme.label_muted)
+                                    .fg(theme.text_meta)
                                     .child(format!("stash@{{{index}}} \u{00b7} {}", entry.date)),
                             ),
                     )
@@ -2557,8 +2557,11 @@ impl VantageApp {
                             .child(
                                 div()
                                     .id(gpui::SharedString::from(format!("stash-pop-{index}")))
-                                    .px(px(6.0))
-                                    .py(px(2.0))
+                                    .flex()
+                                    .items_center()
+                                    .justify_center()
+                                    .h(px(crate::ui::HIT_TARGET_MIN))
+                                    .px(px(8.0))
                                     .rounded(px(4.0))
                                     .cursor_pointer()
                                     .xs()
@@ -2573,12 +2576,15 @@ impl VantageApp {
                             .child(
                                 div()
                                     .id(gpui::SharedString::from(format!("stash-drop-{index}")))
-                                    .px(px(6.0))
-                                    .py(px(2.0))
+                                    .flex()
+                                    .items_center()
+                                    .justify_center()
+                                    .h(px(crate::ui::HIT_TARGET_MIN))
+                                    .px(px(8.0))
                                     .rounded(px(4.0))
                                     .cursor_pointer()
                                     .xs()
-                                    .fg(theme.label_muted)
+                                    .fg(theme.text_meta)
                                     .hover(move |s| s.fg(theme.status_red).underline())
                                     .child("Drop")
                                     .on_click(cx.listener(move |this, _e, _w, cx| {
@@ -2643,6 +2649,7 @@ impl VantageApp {
             "Create repository"
         };
         let mut confirm = crate::ui::accent_button(&theme, label)
+            .h(px(crate::ui::HIT_TARGET_PRIMARY))
             .id("new-repo-confirm")
             .on_click(cx.listener(|this, _e, _w, cx| this.submit_new_repo(cx)));
         if self.is_creating_repo {
@@ -2657,6 +2664,7 @@ impl VantageApp {
             .child(
                 crate::ui::checkbox(&theme, ignore)
                     .id("new-repo-gitignore")
+                    .debug_selector(|| "new-repo-gitignore-target".to_string())
                     .on_click(cx.listener(|this, _e, _w, cx| {
                         this.new_repo_gitignore = !this.new_repo_gitignore;
                         cx.notify();
@@ -2695,21 +2703,39 @@ impl VantageApp {
                 "A folder is created inside the destination, initialised as a Git repository and \
                  added to the list.",
             ))
-            .child(self.text_field(
-                FieldId::NewRepoName,
-                "Repository name",
-                crate::ui::FieldVariant::Form,
-                window,
-                cx,
-            ))
-            .child(self.text_field(
-                FieldId::NewRepoParent,
-                "Destination folder",
-                crate::ui::FieldVariant::Form,
-                window,
-                cx,
-            ))
+            .child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .w_full()
+                    .child(crate::ui::field_label(&theme, "Repository name"))
+                    .child(self.text_field(
+                        FieldId::NewRepoName,
+                        "Repository name",
+                        crate::ui::FieldVariant::Form,
+                        window,
+                        cx,
+                    )),
+            )
+            .child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .w_full()
+                    .child(crate::ui::field_label(&theme, "Destination folder"))
+                    .child(self.text_field(
+                        FieldId::NewRepoParent,
+                        "Destination folder",
+                        crate::ui::FieldVariant::Form,
+                        window,
+                        cx,
+                    )),
+            )
             .child(toggle)
+            .child(crate::ui::keyboard_hint(
+                &theme,
+                "Enter creates · Esc cancels",
+            ))
             .child(
                 div()
                     .flex()
@@ -2718,6 +2744,7 @@ impl VantageApp {
                     .gap(px(8.0))
                     .child(
                         crate::ui::secondary_button(&theme, "Cancel", None)
+                            .h(px(crate::ui::HIT_TARGET_PRIMARY))
                             .id("new-repo-cancel")
                             .on_click(
                                 cx.listener(|this, _e, _w, cx| this.close_new_repo_modal(cx)),
@@ -2755,6 +2782,7 @@ impl VantageApp {
             "Clone"
         };
         let mut confirm = crate::ui::accent_button(&theme, label)
+            .h(px(crate::ui::HIT_TARGET_PRIMARY))
             .id("clone-confirm")
             .on_click(cx.listener(|this, _e, _w, cx| this.submit_clone(cx)));
         if self.is_cloning {
@@ -2787,19 +2815,37 @@ impl VantageApp {
                 "A URL, or a GitHub shorthand like owner/repo. The folder is created inside the \
                  destination.",
             ))
-            .child(self.text_field(
-                FieldId::CloneUrl,
-                "https://github.com/owner/repo.git",
-                crate::ui::FieldVariant::Form,
-                window,
-                cx,
-            ))
-            .child(self.text_field(
-                FieldId::CloneParent,
-                "Destination folder",
-                crate::ui::FieldVariant::Form,
-                window,
-                cx,
+            .child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .w_full()
+                    .child(crate::ui::field_label(&theme, "Repository URL"))
+                    .child(self.text_field(
+                        FieldId::CloneUrl,
+                        "https://github.com/owner/repo.git",
+                        crate::ui::FieldVariant::Form,
+                        window,
+                        cx,
+                    )),
+            )
+            .child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .w_full()
+                    .child(crate::ui::field_label(&theme, "Destination folder"))
+                    .child(self.text_field(
+                        FieldId::CloneParent,
+                        "Destination folder",
+                        crate::ui::FieldVariant::Form,
+                        window,
+                        cx,
+                    )),
+            )
+            .child(crate::ui::keyboard_hint(
+                &theme,
+                "Enter clones · Esc cancels",
             ))
             .child(
                 div()
@@ -2809,6 +2855,7 @@ impl VantageApp {
                     .gap(px(8.0))
                     .child(
                         crate::ui::secondary_button(&theme, "Cancel", None)
+                            .h(px(crate::ui::HIT_TARGET_PRIMARY))
                             .id("clone-cancel")
                             .on_click(cx.listener(|this, _e, _w, cx| this.close_clone_modal(cx))),
                     )
@@ -2863,11 +2910,13 @@ impl VantageApp {
                     .gap(px(8.0))
                     .child(
                         crate::ui::secondary_button(&theme, "Cancel", None)
+                            .h(px(crate::ui::HIT_TARGET_PRIMARY))
                             .id("confirm-cancel")
                             .on_click(cx.listener(|this, _e, _w, cx| this.cancel_confirm(cx))),
                     )
                     .child(
                         crate::ui::accent_button(&theme, prompt.label)
+                            .h(px(crate::ui::HIT_TARGET_PRIMARY))
                             .id("confirm-ok")
                             .bg(theme.status_red)
                             .hover(move |s| s.bg(theme.del_text))
@@ -2919,17 +2968,24 @@ impl VantageApp {
                 )))
             }
             _ => {
-                body = body.child(self.text_field(
-                    FieldId::BranchName,
-                    "Branch name",
-                    crate::ui::FieldVariant::Form,
-                    window,
-                    cx,
-                ))
+                body = body
+                    .child(crate::ui::field_label(&theme, "Branch name"))
+                    .child(self.text_field(
+                        FieldId::BranchName,
+                        "Branch name",
+                        crate::ui::FieldVariant::Form,
+                        window,
+                        cx,
+                    ))
+                    .child(crate::ui::keyboard_hint(
+                        &theme,
+                        "Enter confirms · Esc cancels",
+                    ))
             }
         }
 
         let mut confirm = crate::ui::accent_button(&theme, action_label)
+            .h(px(crate::ui::HIT_TARGET_PRIMARY))
             .id("branch-modal-confirm")
             .on_click(cx.listener(|this, _e, _w, cx| this.submit_branch_prompt(cx)));
         if destructive {
@@ -2964,6 +3020,7 @@ impl VantageApp {
                     .gap(px(8.0))
                     .child(
                         crate::ui::secondary_button(&theme, "Cancel", None)
+                            .h(px(crate::ui::HIT_TARGET_PRIMARY))
                             .id("branch-modal-cancel")
                             .on_click(
                                 cx.listener(|this, _e, _w, cx| this.cancel_branch_prompt(cx)),
@@ -3785,7 +3842,7 @@ impl Render for VantageApp {
                         .flex()
                         .items_center()
                         .px(px(8.0))
-                        .py(px(6.0))
+                        .py(px(8.0))
                         .rounded(px(4.0))
                         .cursor_pointer()
                         .xs()
@@ -4397,5 +4454,34 @@ mod tests {
         let repo = repo_with(vec![file("untracked.rs", false)]);
         assert!(ticked_paths(None, &repo).is_empty());
         assert!(ticked_paths(Some(&overrides(&[("untracked.rs", false)])), &repo).is_empty());
+    }
+
+    #[gpui::test]
+    fn checkbox_hit_target_is_at_least_32_square(cx: &mut gpui::TestAppContext) {
+        use gpui::AppContext;
+
+        use crate::root::RootView;
+
+        let app = cx.new(VantageApp::new);
+        let (_root, cx) = cx.add_window_view(|_window, _cx| RootView::new(app.clone()));
+
+        cx.update(|window, cx| {
+            app.update(cx, |app, cx| app.open_new_repo_modal(cx));
+            window.draw(cx).clear();
+        });
+        cx.run_until_parked();
+        cx.update(|window, cx| {
+            window.draw(cx).clear();
+        });
+
+        let bounds = cx
+            .debug_bounds("new-repo-gitignore-target")
+            .expect("the checkbox should be rendered in the New Repository dialog");
+        assert!(
+            f32::from(bounds.size.width) >= 32.0 && f32::from(bounds.size.height) >= 32.0,
+            "checkbox target is {}×{}, expected at least 32×32",
+            f32::from(bounds.size.width),
+            f32::from(bounds.size.height)
+        );
     }
 }

@@ -4,13 +4,14 @@ use std::time::Duration;
 
 use gpui::{
     div, prelude::*, px, Animation, AnimationExt, Div, ElementId, IntoElement, Rgba, SharedString,
-    Styled, Transformation,
+    Stateful, Styled, Transformation,
 };
 
 use crate::icons::{icon as raw_icon, icon_svg};
 use crate::theme::Theme;
 
 use super::tokens::{IconSize, CONTROL_MD, RADIUS_MD};
+use super::tooltip::label_tooltip;
 
 /// One full turn of the spinner. Slow enough to read as "working", fast enough
 /// to look alive on a short fetch.
@@ -21,11 +22,22 @@ pub fn icon(name: &'static str, size: IconSize, color: Rgba) -> impl IntoElement
     raw_icon(name, size.px(), color)
 }
 
-/// A square, borderless toolbar button. Callers add the id and click handler.
-pub fn icon_button(theme: &Theme, name: &'static str) -> Div {
+/// A square, borderless toolbar button.
+///
+/// The label is shown as a tooltip: it is the only name GPUI 0.2.2 can render
+/// for an icon-only control. Taking the id here makes it impossible to build an
+/// icon button without one.
+pub fn icon_button(
+    theme: &Theme,
+    name: &'static str,
+    id: impl Into<ElementId>,
+    label: &'static str,
+) -> Stateful<Div> {
     let hover = theme.nav_hover_bg;
+    let theme = *theme;
 
     div()
+        .id(id)
         .flex()
         .items_center()
         .justify_center()
@@ -35,6 +47,7 @@ pub fn icon_button(theme: &Theme, name: &'static str) -> Div {
         .flex_shrink_0()
         .cursor_pointer()
         .hover(move |s| s.bg(hover))
+        .tooltip(label_tooltip(theme, label))
         .child(icon(name, IconSize::Md, theme.label_muted))
 }
 

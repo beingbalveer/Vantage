@@ -6,7 +6,7 @@ use gpui::{div, prelude::*, px, relative, Context, Div, IntoElement, Styled};
 use crate::app::{SummaryFilter, VantageApp};
 use crate::model::RepoSyncState;
 use crate::theme::Theme;
-use crate::ui::{icon, status_badges, IconSize};
+use crate::ui::{icon, status_badges, IconSize, HIT_TARGET_MIN};
 use crate::ui::{primary_button, Txt};
 
 struct TableRow {
@@ -288,23 +288,21 @@ impl VantageApp {
                     .items_center()
                     .gap(px(6.0))
                     .w_full()
-                    .child(icon("git-branch", IconSize::Xxs, theme.text_dim))
+                    .child(icon("git-branch", IconSize::Xs, theme.text_meta))
                     .child(
                         div()
                             .flex_1()
                             .min_w(px(0.0))
-                            .text_size(px(10.0))
-                            .line_height(px(14.0))
-                            .font_family(crate::theme::FONT_MONO)
-                            .fg(theme.label_muted)
+                            .mono_xs()
+                            .fg(theme.text_meta)
                             .truncate()
                             .child(row.branch.clone()),
                     )
                     .child(
                         div()
                             .flex_shrink_0()
-                            .text_size(px(11.0))
-                            .fg(theme.text_dim)
+                            .xs()
+                            .fg(theme.text_meta)
                             .whitespace_nowrap()
                             .child(row.activity.clone()),
                     ),
@@ -394,7 +392,7 @@ impl VantageApp {
                 SummaryFilter::All,
                 summary.total,
                 "repositories",
-                theme.text_dim,
+                theme.label_muted,
             ),
             (
                 SummaryFilter::Uncommitted,
@@ -424,9 +422,9 @@ impl VantageApp {
                     .flex()
                     .items_center()
                     .gap(px(5.0))
-                    .px(px(6.0))
-                    .py(px(3.0))
-                    .rounded(px(5.0))
+                    .h(px(HIT_TARGET_MIN))
+                    .px(px(10.0))
+                    .rounded(px(6.0))
                     .cursor_pointer()
                     .whitespace_nowrap()
                     .when(selected, |d| d.bg(theme.nav_active_bg))
@@ -443,7 +441,7 @@ impl VantageApp {
                             })
                             .child(count.to_string()),
                     )
-                    .child(div().xs().fg(theme.label_muted).child(label))
+                    .child(div().xs().fg(theme.text_meta).child(label))
                     .on_click(cx.listener(move |this, _e, _w, cx| {
                         this.toggle_summary_filter(filter, cx);
                     })),
@@ -456,10 +454,11 @@ impl VantageApp {
                     .id("summary-clear")
                     .flex()
                     .items_center()
+                    .justify_center()
                     .gap(px(4.0))
-                    .px(px(6.0))
-                    .py(px(3.0))
-                    .rounded(px(5.0))
+                    .h(px(HIT_TARGET_MIN))
+                    .px(px(10.0))
+                    .rounded(px(6.0))
                     .cursor_pointer()
                     .hover(move |s| s.bg(theme.nav_hover_bg))
                     .child(icon("x", IconSize::Xs, theme.label_muted))

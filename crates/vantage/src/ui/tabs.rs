@@ -5,7 +5,7 @@ use gpui::{div, prelude::*, px, rgba, ElementId, IntoElement, SharedString, Stat
 use crate::theme::Theme;
 
 use super::text::Txt;
-use super::tokens::RADIUS_MD;
+use super::tokens::{HIT_TARGET_MIN, RADIUS_MD};
 
 /// Underline tab used inside detail panels.
 pub fn tab(
@@ -18,12 +18,16 @@ pub fn tab(
     let text = if active {
         theme.text_app
     } else {
-        theme.label_muted
+        theme.text_meta
     };
     let hover_text = theme.text_soft;
 
     div()
         .id(id)
+        .flex()
+        .items_center()
+        .h(px(HIT_TARGET_MIN))
+        .pt(px(6.0))
         .pb(px(10.0))
         .border_b_2()
         .border_color(if active {
@@ -67,8 +71,11 @@ pub fn choice_button(
 
     div()
         .id(SharedString::from(id))
+        .flex()
+        .items_center()
+        .justify_center()
+        .h(px(HIT_TARGET_MIN))
         .px(px(10.0))
-        .py(px(6.0))
         .rounded(px(RADIUS_MD))
         .border_1()
         .border_color(border)

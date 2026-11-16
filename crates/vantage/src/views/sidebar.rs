@@ -4,7 +4,7 @@
 use gpui::{div, prelude::*, px, Context, Div, IntoElement, MouseButton, Styled, Window};
 
 use crate::app::{FieldId, VantageApp};
-use crate::ui::{icon, IconSize};
+use crate::ui::{hit_target, icon, label_tooltip, IconSize, HIT_TARGET_MIN};
 use crate::ui::{FieldVariant, Txt};
 
 const SIDEBAR_COLLAPSED_WIDTH: f32 = 56.0;
@@ -58,8 +58,7 @@ impl VantageApp {
         }
 
         div().flex().flex_col().items_center().py(px(12.0)).child(
-            crate::ui::icon_button(&theme, "panel-left")
-                .id("sidebar-expand")
+            crate::ui::icon_button(&theme, "panel-left", "sidebar-expand", "Expand sidebar")
                 .on_click(cx.listener(|this, _e, _w, cx| this.toggle_sidebar(cx))),
         )
     }
@@ -84,7 +83,11 @@ impl VantageApp {
                         .id("new-group-toggle")
                         .flex()
                         .items_center()
+                        .justify_center()
                         .gap(px(4.0))
+                        .h(px(HIT_TARGET_MIN))
+                        .px(px(4.0))
+                        .rounded(px(4.0))
                         .cursor_pointer()
                         .whitespace_nowrap()
                         .flex_shrink_0()
@@ -123,9 +126,12 @@ impl VantageApp {
                     .child(
                         div()
                             .id("new-group-submit")
+                            .flex()
+                            .items_center()
+                            .justify_center()
                             .flex_shrink_0()
+                            .h(px(HIT_TARGET_MIN))
                             .px(px(10.0))
-                            .py(px(6.0))
                             .rounded(px(6.0))
                             .bg(theme_local.primary_bg)
                             .cursor_pointer()
@@ -271,14 +277,19 @@ impl VantageApp {
                             "group-remove-{group_remove_id}"
                         )))
                         .absolute()
-                        .right(px(8.0))
-                        .top(px(6.0))
-                        .p(px(4.0))
-                        .rounded(px(4.0))
+                        .right(px(4.0))
+                        .top(px(2.0))
+                        .flex()
+                        .items_center()
+                        .justify_center()
+                        .w(px(hit_target(20.0)))
+                        .h(px(hit_target(20.0)))
+                        .rounded(px(6.0))
                         .opacity(0.0)
                         .cursor_pointer()
                         .group_hover("group/item", |s| s.opacity(1.0))
                         .hover(|s| s.fg(theme.status_red))
+                        .tooltip(label_tooltip(theme, "Remove group"))
                         .on_mouse_down(
                             MouseButton::Left,
                             cx.listener(move |this, _e, _w, cx| {

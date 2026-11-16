@@ -106,14 +106,8 @@ fn badge(theme: &Theme, kind: StatusKind) -> Div {
         .gap(px(4.0))
         .flex_shrink_0()
         .whitespace_nowrap()
-        .child(icon(kind.icon(), IconSize::Xxs, color))
-        .child(
-            div()
-                .text_size(px(11.0))
-                .medium()
-                .fg(color)
-                .child(kind.label()),
-        )
+        .child(icon(kind.icon(), IconSize::Xs, color))
+        .child(div().xs().medium().fg(color).child(kind.label()))
 }
 
 #[cfg(test)]

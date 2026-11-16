@@ -5,6 +5,8 @@ Current documentation:
 - [README](../README.md) — what Vantage is, how to build and run it, and the current feature set.
 - [CONTRIBUTING](../CONTRIBUTING.md) — development setup, tests and release builds.
 - [ARCHITECTURE](ARCHITECTURE.md) — workspace layout, data flow and module map.
+- [ACCESSIBILITY](ACCESSIBILITY.md) — contrast, text sizes, hit targets, labels and
+  the current GPUI accessibility limits.
 - [crates/vantage/README](../crates/vantage/README.md) — the desktop app crate in detail.
 
 ## Archive
