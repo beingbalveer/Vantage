@@ -5,6 +5,7 @@ Current documentation:
 - [README](../README.md) — what Vantage is, how to build and run it, and the current feature set.
 - [CONTRIBUTING](../CONTRIBUTING.md) — development setup, tests and release builds.
 - [ARCHITECTURE](ARCHITECTURE.md) — workspace layout, data flow and module map.
+- [PERFORMANCE](PERFORMANCE.md) — benchmark harness, baseline metrics and regression budgets.
 - [crates/vantage/README](../crates/vantage/README.md) — the desktop app crate in detail.
 
 ## Archive
