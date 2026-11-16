@@ -18,6 +18,7 @@ use std::path::{Path, PathBuf};
 use anyhow::{anyhow, Context, Result};
 use tokio::runtime::Runtime;
 use vantage_core::git::ops;
+pub use vantage_core::git::refs::BranchDeleteOutcome;
 use vantage_core::git::refs::{
     checkout_branch, create_branch, delete_branch, has_upstream, is_commit_on_remote,
     merge_into_current, rename_branch, sync_fetch, sync_pull, sync_push, PullStrategy,
@@ -230,12 +231,18 @@ impl Backend {
     }
 
     /// Delete a branch. Unmerged work needs `force`, which the UI only asks for
-    /// after git refuses.
-    pub fn delete_branch(&self, repo_id: &str, name: &str, force: bool) -> Result<()> {
+    /// after git refused the ordinary `-d`; the outcome says whether that
+    /// refusal happened so the caller can ask for the second confirmation.
+    pub fn delete_branch(
+        &self,
+        repo_id: &str,
+        name: &str,
+        force: bool,
+    ) -> Result<BranchDeleteOutcome> {
         let repo_path = self.known_path(repo_id)?;
-        self.runtime
-            .block_on(delete_branch(&self.runner, &repo_path, name, force))?;
-        Ok(())
+        Ok(self
+            .runtime
+            .block_on(delete_branch(&self.runner, &repo_path, name, force))?)
     }
 
     /// Create a fresh repository under `parent` and register it.

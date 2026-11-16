@@ -64,6 +64,7 @@ pub fn map_repo(
         ahead_count: status.ahead as i32,
         behind_count: status.behind as i32,
         has_upstream: status.upstream.is_some(),
+        is_detached: status.detached_sha.is_some(),
         last_activity_label,
         last_activity_minutes,
         uncommitted_files,
@@ -461,6 +462,7 @@ mod tests {
             "a work tree with no origin must not offer fetch/pull/push"
         );
         assert!(!clean.has_upstream);
+        assert!(!clean.is_detached);
         assert!(!clean.local_path.is_empty());
         assert!(
             clean
@@ -510,6 +512,18 @@ mod tests {
         let published = map_repo(&rt, &runner, &entry, &status, "Ungrouped".to_string());
         assert!(published.has_remote);
         assert!(published.has_upstream, "push -u sets the upstream");
+
+        // A detached HEAD has no branch to publish, so the row must carry the
+        // guard the Push button and backend both read.
+        git(&dir, &["checkout", "-q", "--detach", "HEAD"]);
+        let status = rt.block_on(query_repo_status(&runner, &entry.id, &dir, None, None));
+        let detached = map_repo(&rt, &runner, &entry, &status, "Ungrouped".to_string());
+        assert!(detached.is_detached);
+        assert_eq!(detached.current_branch, DETACHED);
+        assert_eq!(
+            detached.push_blocked_reason(),
+            Some("HEAD is detached. Check out a branch before pushing.")
+        );
 
         std::fs::remove_dir_all(&remote).ok();
         std::fs::remove_dir_all(&dir).ok();

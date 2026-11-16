@@ -236,6 +236,20 @@ impl PullStrategy {
             Self::Rebase => "--rebase",
         }
     }
+
+    /// The complete `git pull` invocation for this strategy.
+    ///
+    /// A merge pull can create a merge commit, and git would open an editor
+    /// for its message when `GIT_MERGE_AUTOEDIT` is set (or when a terminal is
+    /// attached). `--no-edit` keeps the background job from blocking on that
+    /// editor; fast-forward and rebase pulls are unchanged.
+    pub fn pull_args(self) -> &'static [&'static str] {
+        match self {
+            Self::FastForward => &["pull", "--ff-only"],
+            Self::Merge => &["pull", "--no-rebase", "--no-edit"],
+            Self::Rebase => &["pull", "--rebase"],
+        }
+    }
 }
 
 pub async fn sync_pull(
@@ -262,7 +276,7 @@ pub async fn sync_pull(
     }
 
     let out = runner
-        .run_write(repo_path, &["pull", strategy.flag()], 120)
+        .run_write(repo_path, strategy.pull_args(), 120)
         .await?;
     if !out.success() {
         let stderr = out.stderr.clone();
@@ -320,6 +334,15 @@ pub async fn sync_push(
         .run_read(repo_path, &["rev-parse", "--abbrev-ref", "HEAD"])
         .await?;
     let current_branch = head_out.stdout_string().trim().to_string();
+
+    // Detached HEAD has no branch to publish. Never run `push -u origin HEAD`:
+    // it would either fail or create a remote branch literally named HEAD.
+    if current_branch.is_empty() || current_branch == "HEAD" {
+        return Err(AppError::new(
+            "DetachedHead",
+            "HEAD is detached, so there is no branch to push. Check out a branch first.",
+        ));
+    }
 
     if let Some(tb) = target_branch {
         if current_branch != tb {
@@ -511,15 +534,35 @@ pub async fn rename_branch(
     Ok(())
 }
 
+/// What a branch delete did.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum BranchDeleteOutcome {
+    Deleted,
+    /// `git branch -d` refused because the branch has commits that are not
+    /// merged into HEAD or its upstream. The branch is untouched; callers must
+    /// ask for an explicit second confirmation before retrying with `force`.
+    NotMerged,
+}
+
+/// Whether git refused `branch -d` because the branch is not fully merged.
+fn branch_delete_refused_as_unmerged(stderr: &str) -> bool {
+    stderr.to_ascii_lowercase().contains("not fully merged")
+}
+
 /// Delete a branch. `force` maps to `-D` (loses unmerged commits) and is the
 /// caller's responsibility to gate behind an explicit confirmation. Deleting
 /// the currently checked-out branch is always refused.
+///
+/// A normal call first runs `git branch -d`. When git refuses because the
+/// branch has unmerged commits this returns [`BranchDeleteOutcome::NotMerged`]
+/// instead of an error, so the UI can explain the consequence and require a
+/// second confirmation before trying again with `force`.
 pub async fn delete_branch(
     runner: &GitRunner,
     repo_path: &Path,
     name: &str,
     force: bool,
-) -> Result<(), AppError> {
+) -> Result<BranchDeleteOutcome, AppError> {
     let branch = name.trim();
     if branch.is_empty() {
         return Err(AppError::new("Validation", "Branch name cannot be empty."));
@@ -544,10 +587,20 @@ pub async fn delete_branch(
     let out = runner
         .run_write(repo_path, &["branch", flag, branch], 20)
         .await?;
-    if !out.success() {
-        return Err(AppError::other(out.stderr.trim().to_string()).with_stderr(out.stderr));
+    if out.success() {
+        return Ok(BranchDeleteOutcome::Deleted);
     }
-    Ok(())
+
+    // Git's wording is stable but localised builds can vary it, so confirm
+    // with the same merge precondition `-d` uses before offering `-D`.
+    if !force
+        && branch_delete_refused_as_unmerged(&out.stderr)
+        && !is_branch_merged(runner, repo_path, branch).await?
+    {
+        return Ok(BranchDeleteOutcome::NotMerged);
+    }
+
+    Err(AppError::other(out.stderr.trim().to_string()).with_stderr(out.stderr))
 }
 
 /// Whether `name` is already merged into HEAD or into its own upstream, which
@@ -833,6 +886,32 @@ mod tests {
     }
 
     #[test]
+    fn merge_pull_never_waits_for_an_editor() {
+        assert_eq!(
+            PullStrategy::Merge.pull_args(),
+            ["pull", "--no-rebase", "--no-edit"],
+            "a merge pull must not open an editor for its merge commit"
+        );
+        // The strategies that cannot create a merge commit keep their exact
+        // previous invocation.
+        assert_eq!(PullStrategy::FastForward.pull_args(), ["pull", "--ff-only"]);
+        assert_eq!(PullStrategy::Rebase.pull_args(), ["pull", "--rebase"]);
+    }
+
+    #[test]
+    fn unmerged_branch_refusal_is_recognised() {
+        assert!(branch_delete_refused_as_unmerged(
+            "error: the branch 'feature' is not fully merged"
+        ));
+        assert!(branch_delete_refused_as_unmerged(
+            "error: The branch 'feature' is not fully merged."
+        ));
+        assert!(!branch_delete_refused_as_unmerged(
+            "error: branch 'feature' not found"
+        ));
+    }
+
+    #[test]
     fn pull_strategy_persists_as_camel_case() {
         // Settings store this verbatim; a rename here would silently reset
         // every saved preference to the default.
@@ -1103,6 +1182,112 @@ mod tests {
         assert!(
             chrono::DateTime::parse_from_rfc3339(updated).is_ok(),
             "branch date must be ISO-8601, got {updated}"
+        );
+    }
+
+    #[tokio::test]
+    async fn delete_branch_removes_a_merged_branch_without_force() {
+        let runner = GitRunner::new();
+        let repo = TempTestRepo::new(&runner).await;
+        repo.commit(&runner, "a.txt", "one\n", "first").await;
+        runner
+            .run_write(&repo.path, &["branch", "feature"], 10)
+            .await
+            .unwrap();
+
+        assert!(is_branch_merged(&runner, &repo.path, "feature")
+            .await
+            .unwrap());
+        let outcome = delete_branch(&runner, &repo.path, "feature", false)
+            .await
+            .unwrap();
+        assert_eq!(outcome, BranchDeleteOutcome::Deleted);
+        assert!(
+            !list_branches(&runner, &repo.path)
+                .await
+                .unwrap()
+                .iter()
+                .any(|branch| branch.name == "feature"),
+            "the merged branch should be gone"
+        );
+    }
+
+    #[tokio::test]
+    async fn delete_branch_offers_force_only_for_unmerged_work() {
+        let runner = GitRunner::new();
+        let repo = TempTestRepo::new(&runner).await;
+        let default = runner
+            .run_read(&repo.path, &["symbolic-ref", "--short", "HEAD"])
+            .await
+            .unwrap()
+            .stdout_string()
+            .trim()
+            .to_string();
+        repo.commit(&runner, "a.txt", "one\n", "first").await;
+
+        runner
+            .run_write(&repo.path, &["checkout", "-b", "feature"], 10)
+            .await
+            .unwrap();
+        repo.commit(&runner, "b.txt", "two\n", "unmerged work")
+            .await;
+        runner
+            .run_write(&repo.path, &["checkout", &default], 10)
+            .await
+            .unwrap();
+
+        assert!(
+            !is_branch_merged(&runner, &repo.path, "feature")
+                .await
+                .unwrap(),
+            "feature carries a commit outside the default branch"
+        );
+
+        // The first delete is the normal `-d`: git refuses, the branch is kept
+        // and the caller is told why so it can ask again explicitly.
+        let outcome = delete_branch(&runner, &repo.path, "feature", false)
+            .await
+            .unwrap();
+        assert_eq!(outcome, BranchDeleteOutcome::NotMerged);
+        assert!(
+            list_branches(&runner, &repo.path)
+                .await
+                .unwrap()
+                .iter()
+                .any(|branch| branch.name == "feature"),
+            "a refused delete must not remove the branch"
+        );
+
+        // Only the confirmed retry uses `-D`.
+        let outcome = delete_branch(&runner, &repo.path, "feature", true)
+            .await
+            .unwrap();
+        assert_eq!(outcome, BranchDeleteOutcome::Deleted);
+        assert!(!list_branches(&runner, &repo.path)
+            .await
+            .unwrap()
+            .iter()
+            .any(|branch| branch.name == "feature"));
+    }
+
+    #[tokio::test]
+    async fn sync_push_refuses_a_detached_head() {
+        let runner = GitRunner::new();
+        let repo = TempTestRepo::new(&runner).await;
+        repo.commit(&runner, "a.txt", "one\n", "first").await;
+        runner
+            .run_write(&repo.path, &["checkout", "--detach", "HEAD"], 10)
+            .await
+            .unwrap();
+
+        let error = sync_push(&runner, &repo.path, true, None)
+            .await
+            .expect_err("a detached HEAD has no branch to publish");
+        assert_eq!(error.code, "DetachedHead");
+        assert!(
+            error.message.contains("Check out a branch first"),
+            "the error must tell the user how to recover: {}",
+            error.message
         );
     }
 }

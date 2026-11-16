@@ -1619,7 +1619,10 @@ impl VantageApp {
         let running = self.repo_op(&repo.id);
         let busy = running.is_some();
         let can_pull = !busy && repo.has_remote && repo.has_upstream && repo.behind_count > 0;
-        let can_push = !busy && repo.has_remote && (repo.ahead_count > 0 || !repo.has_upstream);
+        let can_push = !busy
+            && repo.push_blocked_reason().is_none()
+            && repo.has_remote
+            && (repo.ahead_count > 0 || !repo.has_upstream);
         let can_fetch = !busy && repo.has_remote;
         let ahead = repo.ahead_count;
         let behind = repo.behind_count;
