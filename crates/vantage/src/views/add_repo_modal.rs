@@ -330,10 +330,7 @@ impl VantageApp {
     }
 
     pub fn modal_group_options(&self) -> Vec<String> {
-        let mut options: Vec<String> = self.groups.clone();
-        if options.is_empty() {
-            options.push("Ungrouped".to_string());
-        }
+        let mut options = crate::app::group_choices(&self.groups);
         options.push("__new__".to_string());
         options
     }
@@ -386,5 +383,41 @@ mod tests {
             !cx.update(|_window, cx| app.read(cx).is_add_modal_open),
             "a click outside the dialog should dismiss it"
         );
+    }
+
+    #[gpui::test]
+    fn add_modal_offers_ungrouped_and_defaults_to_it(cx: &mut TestAppContext) {
+        let app = cx.new(VantageApp::new);
+        app.update(cx, |app, cx| {
+            app.groups = vec!["SE".to_string()];
+            app.active_group = "All".to_string();
+            app.open_add_modal(cx);
+
+            assert_eq!(app.modal_group_choice, "Ungrouped");
+            assert_eq!(
+                app.modal_group_options(),
+                vec![
+                    "SE".to_string(),
+                    "Ungrouped".to_string(),
+                    "__new__".to_string()
+                ],
+                "the selector must offer Ungrouped even when the state omits it"
+            );
+        });
+    }
+
+    #[gpui::test]
+    fn add_modal_defaults_to_the_group_being_viewed(cx: &mut TestAppContext) {
+        let app = cx.new(VantageApp::new);
+        app.update(cx, |app, cx| {
+            app.groups = vec!["SE".to_string()];
+            app.active_group = "SE".to_string();
+            app.open_add_modal(cx);
+
+            assert_eq!(
+                app.modal_group_choice, "SE",
+                "adding while a group is selected should use that group"
+            );
+        });
     }
 }
