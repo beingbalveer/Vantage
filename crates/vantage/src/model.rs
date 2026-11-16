@@ -87,6 +87,15 @@ pub struct BranchInfo {
     pub name: String,
     pub is_current: bool,
     pub is_default: bool,
+    /// The remote-tracking branch this branch pushes to and pulls from.
+    ///
+    /// `None` is a real answer: a local-only branch has nothing to compare
+    /// against, so its row must not show invented ahead/behind counts.
+    pub upstream: Option<String>,
+    /// Commits on this branch that the upstream does not have.
+    pub ahead: Option<u32>,
+    /// Commits on the upstream that this branch does not have.
+    pub behind: Option<u32>,
     /// How long ago the branch last moved, for the row's timestamp.
     pub last_commit_time: String,
 }
