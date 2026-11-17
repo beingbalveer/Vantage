@@ -693,11 +693,40 @@ impl VantageApp {
                     self.watcher = Some(watcher);
                     self.poll_working_trees(cx);
                 }
-                Err(_) => return,
+                Err(error) => {
+                    self.show_toast(
+                        format!(
+                            "File watching is unavailable, so external Git changes may \
+                             not refresh: {error}"
+                        ),
+                        cx,
+                    );
+                    return;
+                }
             }
         }
-        if let Some(watcher) = self.watcher.as_mut() {
-            watcher.set_roots(roots);
+
+        let errors = match self.watcher.as_mut() {
+            Some(watcher) => {
+                watcher.set_roots(roots);
+                watcher.registration_errors().to_vec()
+            }
+            None => Vec::new(),
+        };
+        if let Some(first) = errors.first() {
+            let more = errors.len().saturating_sub(1);
+            let suffix = if more > 0 {
+                format!(" (+{more} more)")
+            } else {
+                String::new()
+            };
+            self.show_toast(
+                format!(
+                    "Could not watch every repository, so external Git changes may not \
+                     refresh: {first}{suffix}"
+                ),
+                cx,
+            );
         }
     }
 

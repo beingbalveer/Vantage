@@ -6306,6 +6306,7 @@ dependencies = [
  "objc2-app-kit",
  "serde",
  "serde_json",
+ "tempfile",
  "tokio",
  "vantage-core",
 ]
