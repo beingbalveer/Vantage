@@ -157,19 +157,26 @@ notarize_ready() {
     [ -n "${APPLE_ID:-}" ] && [ -n "${APPLE_TEAM_ID:-}" ] && [ -n "${APPLE_APP_PASSWORD:-}" ]
 }
 
+# Submit $1 to notarytool, then staple and validate $2. The two paths are
+# deliberately separate: notarytool accepts a zip, but stapler only supports
+# .app bundles, DMGs and flat packages — never a zip archive.
 notarize() {
-    step "notarizing $1"
-    xcrun notarytool submit "$1" \
+    submission="$1"
+    staple_target="$2"
+    step "notarizing $submission"
+    xcrun notarytool submit "$submission" \
         --apple-id "$APPLE_ID" \
         --team-id "$APPLE_TEAM_ID" \
         --password "$APPLE_APP_PASSWORD" \
         --wait
-    xcrun stapler staple "$1"
-    xcrun stapler validate "$1"
+    step "stapling $staple_target"
+    xcrun stapler staple "$staple_target"
+    xcrun stapler validate "$staple_target"
 }
 
-# The app is submitted as a zip so the ticket can be stapled to the bundle; the
-# zip is rebuilt afterwards so it carries the stapled bundle.
+# The app is submitted as a zip, but stapler does not support zip archives, so
+# the ticket is stapled to the .app bundle inside it. The zip is rebuilt
+# afterwards so the distributed archive carries the stapled bundle.
 zip_app() {
     ditto -c -k --sequesterRsrc --keepParent \
         "$DIST/$APP_NAME.app" "$DIST/Vantage_${version}_universal.app.zip"
@@ -177,7 +184,7 @@ zip_app() {
 
 if notarize_ready && [ -n "${APPLE_SIGNING_IDENTITY:-}" ]; then
     zip_app
-    notarize "$DIST/Vantage_${version}_universal.app.zip"
+    notarize "$DIST/Vantage_${version}_universal.app.zip" "$DIST/$APP_NAME.app"
 else
     step "notarytool credentials unset: skipping notarization (local build)"
 fi
@@ -197,7 +204,9 @@ hdiutil create \
 rm -rf "$DIST/dmg"
 
 if notarize_ready && [ -n "${APPLE_SIGNING_IDENTITY:-}" ]; then
-    notarize "$DIST/$dmg"
+    # A DMG is a stapleable format, so the submitted and stapled file is the
+    # same path.
+    notarize "$DIST/$dmg" "$DIST/$dmg"
 fi
 
 # ---- checksums + cask ------------------------------------------------------
