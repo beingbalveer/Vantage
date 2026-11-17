@@ -400,6 +400,11 @@ pub struct VantageApp {
     pub scan_errors: Vec<String>,
     watcher: Option<crate::watcher::RepoWatcher>,
     scan_seq: u64,
+    /// Monotonic identity for commit, comparison and stash loads. Every load
+    /// carries the value it was started with, so a result that arrives after a
+    /// newer load replaced it is discarded instead of populating the wrong
+    /// view.
+    load_seq: u64,
     modal_path_focus: FocusHandle,
     modal_custom_group_focus: FocusHandle,
 }
@@ -541,6 +546,7 @@ impl VantageApp {
             scan_errors: Vec::new(),
             watcher: None,
             scan_seq: 0,
+            load_seq: 0,
             modal_path_focus: cx.focus_handle(),
             modal_custom_group_focus: cx.focus_handle(),
         }
@@ -1948,6 +1954,18 @@ impl VantageApp {
         }
     }
 
+    /// Start a new asynchronous load and return the identity its result must
+    /// carry back. The sequence makes two loads for the same target distinct,
+    /// so an older response cannot satisfy a newer request.
+    fn begin_load(&mut self, repo_id: String, kind: LoadKind) -> LoadRequest {
+        self.load_seq = self.load_seq.wrapping_add(1);
+        LoadRequest {
+            generation: self.load_seq,
+            repo_id,
+            kind,
+        }
+    }
+
     /// Open one commit: the header shows immediately, files stream in from git.
     pub fn open_commit_view(
         &mut self,
@@ -1956,35 +1974,35 @@ impl VantageApp {
         cx: &mut Context<Self>,
     ) {
         self.context_menu = None;
-        self.commit_view = Some(CommitView {
-            repo_id: repo.id.clone(),
-            sha: commit.sha.clone(),
-            subject: commit.message.clone(),
-            author: commit.author.clone(),
-            author_email: commit.author_email.clone(),
-            time: commit.relative_time.clone(),
-            files: Vec::new(),
-            selected: 0,
-            loading: true,
-            comparing: false,
-        });
+        let request = self.begin_load(
+            repo.id.clone(),
+            LoadKind::Commit {
+                sha: commit.sha.clone(),
+            },
+        );
+        self.commit_view = Some(CommitView::commit(request.clone(), repo, commit));
 
         let Some(backend) = self.backend.clone() else {
+            apply_commit_result(
+                self.commit_view.as_mut(),
+                &request,
+                Err("vantage-core engine unavailable".to_string()),
+            );
+            cx.notify();
             return;
         };
-        let repo_id = repo.id.clone();
+        let repo_id = request.repo_id.clone();
         let sha = commit.sha.clone();
         cx.spawn(async move |this, cx| {
             let files = cx
                 .background_executor()
                 .spawn(async move { backend.commit_files(&repo_id, &sha) })
                 .await;
+            let files = files.map_err(|error| format!("{error:#}"));
             this.update(cx, |app, cx| {
-                if let Some(view) = app.commit_view.as_mut() {
-                    view.files = files.unwrap_or_default();
-                    view.loading = false;
+                if apply_commit_result(app.commit_view.as_mut(), &request, files) {
+                    cx.notify();
                 }
-                cx.notify();
             })
             .ok();
         })
@@ -1992,6 +2010,8 @@ impl VantageApp {
         cx.notify();
     }
 
+    /// Close the commit or comparison view. Any load still running for it is
+    /// invalidated with the view, so a late result cannot reopen it.
     pub fn close_commit_view(&mut self, cx: &mut Context<Self>) {
         self.commit_view = None;
         self.commit_wide = false;
@@ -2215,25 +2235,32 @@ impl VantageApp {
         cx.notify();
     }
 
-    /// Open the stash list for a repository.
+    /// Open the stash list for a repository. The dialog opens immediately in a
+    /// loading state, so closing it before git answers cannot bring it back.
     pub fn open_stash_modal(&mut self, repo_id: &str, cx: &mut Context<Self>) {
         self.context_menu = None;
+        let request = self.begin_load(repo_id.to_string(), LoadKind::Stashes);
+        self.stash_modal = Some(StashModal::loading(request.clone(), repo_id));
         let Some(backend) = self.backend.clone() else {
+            apply_stash_result(
+                self.stash_modal.as_mut(),
+                &request,
+                Err("vantage-core engine unavailable".to_string()),
+            );
+            cx.notify();
             return;
         };
-        let id = repo_id.to_string();
-        let load_id = id.clone();
+        let load_id = request.repo_id.clone();
         cx.spawn(async move |this, cx| {
             let entries = cx
                 .background_executor()
                 .spawn(async move { backend.stashes(&load_id) })
                 .await;
+            let entries = entries.map_err(|error| format!("{error:#}"));
             this.update(cx, |app, cx| {
-                app.stash_modal = Some(StashModal {
-                    repo_id: id,
-                    entries: entries.unwrap_or_default(),
-                });
-                cx.notify();
+                if apply_stash_result(app.stash_modal.as_mut(), &request, entries) {
+                    cx.notify();
+                }
             })
             .ok();
         })
@@ -2371,21 +2398,23 @@ impl VantageApp {
             return;
         };
         let base = repo.current_branch.clone();
+        let request = self.begin_load(
+            repo.id.clone(),
+            LoadKind::Compare {
+                base: base.clone(),
+                other: other.to_string(),
+            },
+        );
         self.inspector_tab = InspectorTab::Commits;
-        self.commit_view = Some(CommitView {
-            repo_id: repo.id.clone(),
-            sha: format!("{base}\u{2026}{other}"),
-            subject: format!("Changes from {base} to {other}"),
-            author: String::new(),
-            author_email: String::new(),
-            time: String::new(),
-            files: Vec::new(),
-            selected: 0,
-            loading: true,
-            comparing: true,
-        });
+        self.commit_view = Some(CommitView::comparison(request.clone(), &repo, &base, other));
 
         let Some(backend) = self.backend.clone() else {
+            apply_commit_result(
+                self.commit_view.as_mut(),
+                &request,
+                Err("vantage-core engine unavailable".to_string()),
+            );
+            cx.notify();
             return;
         };
         let id = repo.id.clone();
@@ -2395,12 +2424,11 @@ impl VantageApp {
                 .background_executor()
                 .spawn(async move { backend.compare(&id, &base, &other) })
                 .await;
+            let files = files.map_err(|error| format!("{error:#}"));
             this.update(cx, |app, cx| {
-                if let Some(view) = app.commit_view.as_mut() {
-                    view.files = files.unwrap_or_default();
-                    view.loading = false;
+                if apply_commit_result(app.commit_view.as_mut(), &request, files) {
+                    cx.notify();
                 }
-                cx.notify();
             })
             .ok();
         })
@@ -2855,7 +2883,23 @@ impl VantageApp {
         };
 
         let mut list = div().flex().flex_col().gap(px(2.0)).w_full();
-        if modal.entries.is_empty() {
+        if modal.loading {
+            list = list.child(
+                div()
+                    .py(px(10.0))
+                    .xs()
+                    .fg(theme.label_muted)
+                    .child("Loading stashes…"),
+            );
+        } else if let Some(error) = &modal.error {
+            list = list.child(
+                div()
+                    .py(px(10.0))
+                    .xs()
+                    .fg(theme.status_red)
+                    .child(format!("Could not load stashes: {error}")),
+            );
+        } else if modal.entries.is_empty() {
             list = list.child(
                 div()
                     .py(px(10.0))
@@ -4440,11 +4484,76 @@ impl Render for VantageApp {
     }
 }
 
+/// Identity of an asynchronous commit, comparison or stash load.
+///
+/// `generation` makes even a reload of the same target distinct, `repo_id`
+/// pins the load to one repository and `kind` names the exact target.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct LoadRequest {
+    pub generation: u64,
+    pub repo_id: String,
+    pub kind: LoadKind,
+}
+
+/// What a [`LoadRequest`] is loading.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum LoadKind {
+    Commit { sha: String },
+    Compare { base: String, other: String },
+    Stashes,
+}
+
 /// The stash list, opened as a dialog.
 #[derive(Clone, Debug)]
 pub struct StashModal {
     pub repo_id: String,
     pub entries: Vec<vantage_core::state::StashEntry>,
+    pub loading: bool,
+    pub error: Option<String>,
+    /// The load this dialog is waiting on; a result for any other request is
+    /// discarded.
+    pub request: LoadRequest,
+}
+
+impl StashModal {
+    fn loading(request: LoadRequest, repo_id: &str) -> Self {
+        Self {
+            repo_id: repo_id.to_string(),
+            entries: Vec::new(),
+            loading: true,
+            error: None,
+            request,
+        }
+    }
+}
+
+/// Apply a finished stash load only while the dialog still waits on it.
+///
+/// Returns whether the result was applied. A dialog that was closed (or
+/// replaced by a newer request) ignores the result instead of reopening.
+fn apply_stash_result(
+    modal: Option<&mut StashModal>,
+    request: &LoadRequest,
+    result: Result<Vec<vantage_core::state::StashEntry>, String>,
+) -> bool {
+    let Some(modal) = modal else {
+        return false;
+    };
+    if modal.request != *request {
+        return false;
+    }
+    modal.loading = false;
+    match result {
+        Ok(entries) => {
+            modal.entries = entries;
+            modal.error = None;
+        }
+        Err(error) => {
+            modal.entries.clear();
+            modal.error = Some(error);
+        }
+    }
+    true
 }
 
 /// A destructive action waiting for confirmation.
@@ -4479,6 +4588,79 @@ pub struct CommitView {
     pub loading: bool,
     /// True when this is a branch comparison rather than one commit.
     pub comparing: bool,
+    /// The load this view is waiting on; a result for any other request is
+    /// discarded.
+    pub request: LoadRequest,
+    /// Git's message when the load failed, shown instead of an empty diff.
+    pub error: Option<String>,
+}
+
+impl CommitView {
+    fn commit(request: LoadRequest, repo: &Repository, commit: &crate::model::CommitEntry) -> Self {
+        Self {
+            repo_id: repo.id.clone(),
+            sha: commit.sha.clone(),
+            subject: commit.message.clone(),
+            author: commit.author.clone(),
+            author_email: commit.author_email.clone(),
+            time: commit.relative_time.clone(),
+            files: Vec::new(),
+            selected: 0,
+            loading: true,
+            comparing: false,
+            request,
+            error: None,
+        }
+    }
+
+    fn comparison(request: LoadRequest, repo: &Repository, base: &str, other: &str) -> Self {
+        Self {
+            repo_id: repo.id.clone(),
+            sha: format!("{base}\u{2026}{other}"),
+            subject: format!("Changes from {base} to {other}"),
+            author: String::new(),
+            author_email: String::new(),
+            time: String::new(),
+            files: Vec::new(),
+            selected: 0,
+            loading: true,
+            comparing: true,
+            request,
+            error: None,
+        }
+    }
+}
+
+/// Apply a finished commit or comparison load only while the view still waits
+/// on it.
+///
+/// Returns whether the result was applied. A view that was closed (or replaced
+/// by a newer request) ignores the result, so A's files can never land under
+/// B's header.
+fn apply_commit_result(
+    view: Option<&mut CommitView>,
+    request: &LoadRequest,
+    result: Result<Vec<crate::model::CommitFile>, String>,
+) -> bool {
+    let Some(view) = view else {
+        return false;
+    };
+    if view.request != *request {
+        return false;
+    }
+    view.loading = false;
+    match result {
+        Ok(files) => {
+            view.files = files;
+            view.selected = 0;
+            view.error = None;
+        }
+        Err(error) => {
+            view.files.clear();
+            view.error = Some(error);
+        }
+    }
+    true
 }
 
 /// An in-progress branch action, answered by the inline row in the Branches tab.
