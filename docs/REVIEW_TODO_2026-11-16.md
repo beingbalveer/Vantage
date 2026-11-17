@@ -1,9 +1,8 @@
 # Vantage review — engineering TODO
 
 Source: full project review on 2026-11-16 (code, UI, performance, features, ease of use).
-Status: all 38 tickets are implemented on branches. 34 projects are integrated into `main`
-(safety, security, correctness, docs, tests, performance, UX and refactors); the remaining four
-feature branches (`P1-01`, `P2-03`, `P2-08`, `P2-13`) are awaiting review. See
+Status: all 38 tickets are integrated into `main` (safety, security, correctness, docs, tests,
+performance, UX, refactors and the four feature workflows). See
 [`REVIEW_BRANCH_SUMMARY.md`](REVIEW_BRANCH_SUMMARY.md) for the integrated set, the left-out
 branches, commits, verification and conflict notes. Check a box only when the acceptance criteria
 and its tests are in place on that ticket branch.
