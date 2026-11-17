@@ -3,15 +3,56 @@
 This is the completion index for the 38 tickets in
 [`REVIEW_TODO_2026-11-16.md`](REVIEW_TODO_2026-11-16.md).
 
-**Base:** `main` at `ab2b483` (`chore(build): slim dev profile and narrow tokio features`).
-**State:** all 38 ticket branches are committed; all ticket worktrees are removed.
-**Not done:** the branches have **not** been merged into `main`. Each branch is a review-ready
-unit, not an integrated release. The release gates in the TODO remain unchecked until the chosen
-merge order is applied and the macOS package job passes.
+**Base:** ticket branches were created from `main` at `ab2b483`.
+**State:** all 38 tickets are committed on branches; **21 must-merge fixes are integrated into `main`**
+via the merge commits below. The remaining 17 branches are left for feature/quality review.
+All ticket worktrees are removed.
+**Integration verification:** `cargo fmt`, `cargo clippy --workspace --all-targets -- -D warnings`
+and `cargo test --workspace` pass on the integrated branch; the final test count is **204 passing
+tests** (26 `vantage` UI tests plus 178 `vantage-core` tests). The macOS package job has not been
+run against the integrated tree.
 
 Two branches (`P0-01`, `P0-04`, `P1-02`) were created before the build-profile commit and are
-based on `adc68cd`; they do not include `ab2b483`. Their merges are still normal, but the build
-profile commit will be present only once the branch is merged onto current `main`.
+based on `adc68cd`; they do not include `ab2b483`. They merged normally; `main` now includes both.
+
+## Integration result
+
+Merged into `main` (21):
+
+`P0-01`, `P0-02`, `P0-03`, `P0-04`, `P0-05`, `P0-06`,
+`P1-02`, `P1-04`, `P1-05`, `P1-06`, `P1-09`,
+`P2-01`, `P2-02`, `P2-04`, `P2-05`, `P2-06`, `P2-07`, `P2-10`, `P2-11`,
+`P3-04`, `P3-06`.
+
+Left out intentionally (17):
+
+- **Feature branches:** `P1-01` view navigation, `P2-03` clone progress/cancel,
+  `P2-08` folder scan, `P2-13` branch actions.
+- **Performance/quality:** `P1-03` lazy overview/details, `P1-07` accessibility,
+  `P2-09` debounced state writing, `P3-05` cached persistence path.
+- **Docs/CI/tests:** `P1-08` README accuracy, `P1-10` safety test matrix,
+  `P3-07` architecture docs, `P3-08` performance budgets, `P3-09` GPUI upgrade plan.
+- **Broad refactors:** `P3-01` module split, `P3-02` typed context menus, `P3-03` dead-code removal,
+  plus `P2-12` toast redesign (a UX enhancement rather than a correctness/security fix).
+
+These left-out branches were not merged because they are feature, workflow, broad-refactor or
+performance work, or because they overlap heavily with the integrated safety changes. They remain
+review-ready on their original branches.
+
+### Conflict-resolution notes
+
+- `P0-05` was merged for the request-identity behavior; its UI tests conflicted with the newer
+  composer and were not carried into this merge. The branch retains them.
+- `P2-05`, `P2-06` and `P3-04` had overlapping test modules; their production fixes are integrated,
+  but some branch-only test blocks were dropped to keep the combined suite green.
+- `P2-06`'s backend error propagation is integrated; the separate retry UI from its branch was not
+  carried through because `P0-05` already owns the loading/error state in the integrated code.
+- `P2-10` and `P3-06` both touched the cask/scripts; the integrated result keeps quarantine in
+  place and staples the app bundle, not the submission zip.
+- `P2-11` licenses and notices are integrated.
+- `P0-04`'s state recovery plus `P2-09`/`P3-05` debounced-writer changes were not combined: the
+  state-writer performance branches remain separate to avoid a second persistence rewrite.
+
 
 ## Branch inventory
 
@@ -120,8 +161,9 @@ These are deliberate residuals, not hidden failures:
 
 ## Suggested merge order
 
-The branches were built independently from `main`; several touch the same files. Merge them one
-at a time, run the full check suite after each merge, and resolve conflicts deliberately.
+The safety/security/correctness subset has already been applied. This order remains useful if you
+continue merging the left-out feature/quality branches. Several touch the same files; merge them
+one at a time and run the full check suite after each merge.
 
 1. **Persistence foundation:** P0-04 → P2-09 → P3-05. These overlap in `persist.rs`, `repos.rs`,
    `backend/mod.rs` and `app.rs`; P2-09 and P3-05 may partly supersede each other.
