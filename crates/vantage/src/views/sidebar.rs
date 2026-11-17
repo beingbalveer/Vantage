@@ -1,10 +1,11 @@
-//! Left sidebar — groups and the Settings entry. Toggle from the app header
-//! or `Mod+B`; a collapsed sidebar keeps only an expand control and the footer.
+//! Left sidebar — primary views, groups and the Settings entry. Toggle from the
+//! app header or `Mod+B`; a collapsed sidebar keeps the view icons, an expand
+//! control and the footer.
 
-use gpui::{div, prelude::*, px, Context, Div, IntoElement, MouseButton, Styled, Window};
+use gpui::{div, prelude::*, px, rgba, Context, Div, IntoElement, MouseButton, Styled, Window};
 
 use crate::app::{FieldId, VantageApp};
-use crate::ui::{hit_target, icon, label_tooltip, IconSize, HIT_TARGET_MIN};
+use crate::ui::{hit_target, icon, label_tooltip, IconSize, TextTooltip, HIT_TARGET_MIN};
 use crate::ui::{FieldVariant, Txt};
 
 const SIDEBAR_COLLAPSED_WIDTH: f32 = 56.0;
@@ -54,13 +55,182 @@ impl VantageApp {
                 .flex_col()
                 .px(px(12.0))
                 .py(px(20.0))
-                .child(self.render_groups_block(window, cx));
+                .child(self.render_primary_nav(cx))
+                .child(
+                    div()
+                        .mt(px(18.0))
+                        .pt(px(16.0))
+                        .border_t_1()
+                        .border_color(theme.divider)
+                        .child(self.render_groups_block(window, cx)),
+                );
         }
 
-        div().flex().flex_col().items_center().py(px(12.0)).child(
-            crate::ui::icon_button(&theme, "panel-left", "sidebar-expand", "Expand sidebar")
-                .on_click(cx.listener(|this, _e, _w, cx| this.toggle_sidebar(cx))),
-        )
+        // The rail keeps every destination visible as an icon with its count,
+        // so collapsing the sidebar never hides navigation behind the menu.
+        div()
+            .flex()
+            .flex_col()
+            .items_center()
+            .py(px(12.0))
+            .gap(px(4.0))
+            .child(
+                crate::ui::icon_button(&theme, "panel-left", "sidebar-expand", "Expand sidebar")
+                    .on_click(cx.listener(|this, _e, _w, cx| this.toggle_sidebar(cx))),
+            )
+            .child(self.render_collapsed_nav(cx))
+    }
+
+    /// The three main destinations with live counts, above the group list.
+    fn render_primary_nav(&mut self, cx: &mut Context<Self>) -> Div {
+        let theme = self.theme;
+        let items = self.nav_items();
+
+        let block = div().flex().flex_col().child(
+            div()
+                .px(px(10.0))
+                .pb(px(8.0))
+                .xs()
+                .medium()
+                .fg(theme.label_muted)
+                .child("Views"),
+        );
+        let mut list = div().flex().flex_col().gap(px(4.0));
+
+        for item in items {
+            let section = item.section;
+            let active = item.active;
+            let icon_color = if active {
+                theme.nav_active_text
+            } else {
+                theme.icon_idle
+            };
+
+            list = list.child(
+                div()
+                    .id(gpui::SharedString::from(format!(
+                        "nav-section-{}",
+                        section.key()
+                    )))
+                    .flex()
+                    .items_center()
+                    .justify_between()
+                    .w_full()
+                    .px(px(10.0))
+                    .py(px(8.0))
+                    .rounded(px(8.0))
+                    .cursor_pointer()
+                    .bg(if active {
+                        theme.nav_active_bg
+                    } else {
+                        theme.panel
+                    })
+                    .sm()
+                    .fg(if active {
+                        theme.nav_active_text
+                    } else {
+                        theme.nav_idle_text
+                    })
+                    // Weight plus background, so the active view is not
+                    // signalled by colour alone.
+                    .when(active, |d| d.medium())
+                    .when(!active, move |d| {
+                        d.hover(move |s| s.bg(theme.nav_hover_bg).fg(theme.nav_hover_text))
+                    })
+                    .on_click(cx.listener(move |this, _e, _w, cx| {
+                        this.select_section(section, cx);
+                    }))
+                    .child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .gap(px(10.0))
+                            .min_w(px(0.0))
+                            .child(icon(section.icon(), IconSize::Sm, icon_color))
+                            .child(div().truncate().child(section.label())),
+                    )
+                    .child(
+                        div()
+                            .flex_shrink_0()
+                            .font_family(crate::theme::FONT_MONO)
+                            .text_size(px(crate::theme::TEXT_XS))
+                            .line_height(crate::theme::LH_XS)
+                            .fg(if active {
+                                theme.nav_active_text
+                            } else {
+                                theme.label_muted
+                            })
+                            .when(active, |d| d.medium())
+                            .child(item.count.to_string()),
+                    ),
+            );
+        }
+
+        block.child(list)
+    }
+
+    /// Icon-only destinations for the collapsed 56px rail.
+    fn render_collapsed_nav(&mut self, cx: &mut Context<Self>) -> Div {
+        let theme = self.theme;
+        let items = self.nav_items();
+        let mut rail = div().flex().flex_col().items_center().gap(px(4.0));
+
+        for item in items {
+            let section = item.section;
+            let active = item.active;
+            let tooltip = format!("{} · {}", section.label(), item.count);
+
+            rail = rail.child(
+                div()
+                    .id(gpui::SharedString::from(format!(
+                        "nav-rail-{}",
+                        section.key()
+                    )))
+                    .flex()
+                    .flex_col()
+                    .items_center()
+                    .justify_center()
+                    .gap(px(1.0))
+                    .w(px(44.0))
+                    .h(px(46.0))
+                    .rounded(px(8.0))
+                    .border_1()
+                    .border_color(rgba(0x00000000))
+                    .cursor_pointer()
+                    .when(active, |d| {
+                        d.bg(theme.nav_active_bg).border_color(theme.border_strong)
+                    })
+                    .when(!active, move |d| d.hover(move |s| s.bg(theme.nav_hover_bg)))
+                    .tooltip(move |_window, cx| {
+                        cx.new(|_| TextTooltip::new(theme, tooltip.clone())).into()
+                    })
+                    .on_click(cx.listener(move |this, _e, _w, cx| {
+                        this.select_section(section, cx);
+                    }))
+                    .child(icon(
+                        section.icon(),
+                        IconSize::Sm,
+                        if active {
+                            theme.nav_active_text
+                        } else {
+                            theme.icon_idle
+                        },
+                    ))
+                    .child(
+                        div()
+                            .mono_xs()
+                            .fg(if active {
+                                theme.nav_active_text
+                            } else {
+                                theme.label_muted
+                            })
+                            .when(active, |d| d.medium())
+                            .child(item.count.to_string()),
+                    ),
+            );
+        }
+
+        rail
     }
 
     fn render_groups_block(

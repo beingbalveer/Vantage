@@ -2715,6 +2715,11 @@ impl VantageApp {
         );
     }
 
+    /// Destinations for the sidebar, with counts from the current rows.
+    pub fn nav_items(&self) -> [crate::model::NavItem; 3] {
+        crate::model::nav_items(&self.repos, self.active_section)
+    }
+
     /// Counts for the summary strip above the repository list.
     pub fn repo_summary(&self) -> RepoSummary {
         let mut summary = RepoSummary {
