@@ -358,12 +358,8 @@ impl VantageApp {
     ) -> impl IntoElement {
         let theme = self.theme;
         let repo_id = repo.id.clone();
-        let groups = self.groups.clone();
         let current = repo.workspace.clone();
-        let mut options = groups.clone();
-        if !options.contains(&current) {
-            options.push(current.clone());
-        }
+        let options = crate::app::group_choices_including(&self.groups, &current);
 
         let mut wrapper = div()
             .relative()

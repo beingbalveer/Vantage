@@ -824,17 +824,7 @@ impl VantageApp {
             return false;
         };
         let known = backend.repo_ids();
-        for repo in &self.repos {
-            if !known.contains(&repo.id) {
-                continue;
-            }
-            if repo.workspace == "Ungrouped" {
-                self.assignments.remove(&repo.id);
-            } else {
-                self.assignments
-                    .insert(repo.id.clone(), repo.workspace.clone());
-            }
-        }
+        sync_assignments(&self.repos, &known, &mut self.assignments);
         let result = backend.set_groups(&self.groups, &self.assignments);
         if let Some(warning) = backend.take_state_warning() {
             self.state_warning = Some(warning);
@@ -997,14 +987,7 @@ impl VantageApp {
 
     pub fn open_add_modal(&mut self, cx: &mut Context<Self>) {
         self.is_add_modal_open = true;
-        self.modal_group_choice = if self.active_group != "All" {
-            self.active_group.clone()
-        } else {
-            self.groups
-                .first()
-                .cloned()
-                .unwrap_or_else(|| "Ungrouped".to_string())
-        };
+        self.modal_group_choice = default_group_for_new_repo(&self.active_group);
         self.modal_path.clear();
         self.modal_custom_group.clear();
         self.modal_error = None;
@@ -1600,9 +1583,7 @@ impl VantageApp {
     }
 
     pub fn move_repo_group(&mut self, repo_id: &str, group: String, cx: &mut Context<Self>) {
-        if !self.groups.contains(&group) {
-            self.groups.push(group.clone());
-        }
+        add_group_if_missing(&mut self.groups, &group);
         let mut moved = None;
         for repo in &mut self.repos {
             if repo.id == repo_id {
@@ -3823,7 +3804,7 @@ impl VantageApp {
                         let resolved_group = match existing_group {
                             Some(existing) => existing,
                             None => {
-                                app.groups.push(resolved_group.clone());
+                                add_group_if_missing(&mut app.groups, &resolved_group);
                                 resolved_group.clone()
                             }
                         };
@@ -5231,6 +5212,73 @@ pub struct UndoOffer {
     pub just_now: bool,
     /// Local commits that never reached the remote, for the strip's count.
     pub unpushed: u32,
+}
+
+/// The implicit bucket for repositories with no group assignment. It is
+/// always offered by group selectors, but only stored as a group when it
+/// already exists in the configured list.
+pub(crate) const UNGROUPED_GROUP: &str = "Ungrouped";
+
+/// Options for a group selector: every configured group plus "Ungrouped",
+/// which must be reachable even when an older state never stored it.
+pub(crate) fn group_choices(groups: &[String]) -> Vec<String> {
+    let mut choices = groups.to_vec();
+    if !choices.iter().any(|group| group == UNGROUPED_GROUP) {
+        choices.push(UNGROUPED_GROUP.to_string());
+    }
+    choices
+}
+
+/// Group choices that also keep the repository's current group selectable,
+/// even when it is missing from the configured list.
+pub(crate) fn group_choices_including(groups: &[String], current: &str) -> Vec<String> {
+    let mut choices = group_choices(groups);
+    if !choices.iter().any(|group| group == current) {
+        choices.push(current.to_string());
+    }
+    choices
+}
+
+/// Group a newly added repository starts in. While the user is filtering a
+/// specific group, adding into it is the expected default; from "All" there
+/// is no such context, so a new repository stays Ungrouped instead of
+/// silently joining the first group in the list.
+fn default_group_for_new_repo(active_group: &str) -> String {
+    if active_group == "All" {
+        UNGROUPED_GROUP.to_string()
+    } else {
+        active_group.to_string()
+    }
+}
+
+/// Add a user-created group to the configured list. "Ungrouped" is derived
+/// from a missing assignment, so a move to it must not create a stored group.
+fn add_group_if_missing(groups: &mut Vec<String>, group: &str) {
+    if group == UNGROUPED_GROUP {
+        return;
+    }
+    if !groups.iter().any(|existing| existing == group) {
+        groups.push(group.to_string());
+    }
+}
+
+/// Recompute persisted assignments from the rows the engine knows about.
+/// "Ungrouped" means no assignment, so it is removed rather than written.
+fn sync_assignments(
+    repos: &[Repository],
+    known: &HashSet<String>,
+    assignments: &mut std::collections::BTreeMap<String, String>,
+) {
+    for repo in repos {
+        if !known.contains(&repo.id) {
+            continue;
+        }
+        if repo.workspace == UNGROUPED_GROUP {
+            assignments.remove(&repo.id);
+        } else {
+            assignments.insert(repo.id.clone(), repo.workspace.clone());
+        }
+    }
 }
 
 /// Sort key for "attention first": a conflict, then unpushed work, then
