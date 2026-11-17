@@ -2,7 +2,7 @@
 
 use gpui::{deferred, div, prelude::*, px, Context, Div, IntoElement, Styled, Window};
 
-use crate::app::{branch_row_actions, DetailsState, InspectorTab, RepoOp, VantageApp};
+use crate::app::{DetailsState, InspectorTab, RepoOp, VantageApp};
 use crate::theme::Theme;
 use crate::ui::{
     accent_button, accent_button_with, checkbox, disabled_button, label_tooltip, secondary_button,
@@ -1659,13 +1659,6 @@ impl VantageApp {
                                             .fg(theme.text_app)
                                             .whitespace_nowrap()
                                             .child(message),
-                                    )
-                                    .child(
-                                        div()
-                                            .flex_shrink_0()
-                                            .mono_xs()
-                                            .fg(theme.label_muted)
-                                            .child(short_sha.clone()),
                                     ),
                             )
                             .child(
@@ -1692,7 +1685,14 @@ impl VantageApp {
                                                 self.avatar_for(&commit.author_email),
                                                 16.0,
                                             ))
-                                            .child(div().truncate().child(commit.author.clone())),
+                                            .child(div().truncate().child(commit.author.clone()))
+                                            .child(
+                                                div()
+                                                    .mono_xs()
+                                                    .flex_shrink_0()
+                                                    .fg(theme.label_muted)
+                                                    .child(short_sha.clone()),
+                                            ),
                                     )
                                     .child({
                                         // The badge exists only on commits the
@@ -1861,41 +1861,6 @@ impl VantageApp {
             let menu_is_current = branch.is_current;
             let menu_is_default = branch.is_default;
 
-            let mut actions = div()
-                .flex()
-                .items_center()
-                .flex_wrap()
-                .gap(px(4.0))
-                .w_full();
-            for action in branch_row_actions(&repo.id, branch) {
-                let label = action.label();
-                let destructive = action.is_destructive();
-                let action_id = format!("branch-action-{}-{label}", branch.name);
-                let click_action = action.clone();
-                actions = actions.child(
-                    div()
-                        .id(gpui::SharedString::from(action_id))
-                        .px(px(6.0))
-                        .py(px(3.0))
-                        .rounded(px(4.0))
-                        .cursor_pointer()
-                        .text_size(px(11.0))
-                        .line_height(px(15.0))
-                        .medium()
-                        .whitespace_nowrap()
-                        .fg(if destructive {
-                            theme.status_red
-                        } else {
-                            theme.accent_text
-                        })
-                        .hover(move |s| s.bg(theme.nav_hover_bg))
-                        .on_click(cx.listener(move |this, _e, _w, cx| {
-                            this.perform_branch_action(click_action.clone(), cx);
-                        }))
-                        .child(label),
-                );
-            }
-
             list = list.child(
                 div()
                     .id(gpui::SharedString::from(format!(
@@ -1968,8 +1933,7 @@ impl VantageApp {
                             )
                             .child(right),
                     )
-                    .child(branch_tracking(&theme, branch))
-                    .child(actions),
+                    .child(branch_tracking(&theme, branch)),
             );
         }
 
