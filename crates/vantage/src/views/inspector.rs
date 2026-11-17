@@ -10,6 +10,12 @@ use crate::ui::{
 };
 use crate::ui::{icon, IconSize};
 
+/// The commit bar belongs to the Changes tab. A clean tree normally hides it,
+/// but amend must stay reachable because it can rewrite the message alone.
+fn shows_commit_bar(tab: InspectorTab, amending: bool, changed_files: usize) -> bool {
+    tab == InspectorTab::Changes && (amending || changed_files > 0)
+}
+
 impl VantageApp {
     pub fn render_inspector(
         &mut self,
@@ -78,7 +84,7 @@ impl VantageApp {
                 |panel| panel.child(self.render_undo_strip(&repo, cx)),
             )
             .when(
-                tab == InspectorTab::Changes && !repo.uncommitted_files.is_empty(),
+                shows_commit_bar(tab, self.composer().amending, repo.uncommitted_files.len()),
                 |panel| panel.child(self.render_commit_bar(&repo, window, cx)),
             );
 
@@ -1354,6 +1360,7 @@ impl VantageApp {
             let menu_repo = repo.id.clone();
             let menu_short = commit.sha.clone();
             let menu_subject = commit.message.clone();
+            let menu_body = commit.body.clone();
             let can_amend = index == 0 && repo.commit_is_local_only(0);
             list = list.child(
                 div()
@@ -1372,6 +1379,7 @@ impl VantageApp {
                                 &menu_repo,
                                 &menu_short,
                                 &menu_subject,
+                                &menu_body,
                                 can_amend,
                                 f32::from(event.position.x),
                                 f32::from(event.position.y),
@@ -1804,7 +1812,8 @@ fn preview_row(theme: &Theme, line: &crate::model::PreviewLine) -> Div {
 
 #[cfg(test)]
 mod tests {
-    use super::split_path;
+    use super::{shows_commit_bar, split_path};
+    use crate::app::InspectorTab;
 
     #[test]
     fn split_path_keeps_the_file_name() {
@@ -1816,5 +1825,13 @@ mod tests {
             split_path("README.md"),
             (String::new(), "README.md".to_string())
         );
+    }
+
+    #[test]
+    fn the_commit_bar_stays_visible_for_a_clean_tree_amend() {
+        assert!(shows_commit_bar(InspectorTab::Changes, true, 0));
+        assert!(shows_commit_bar(InspectorTab::Changes, false, 1));
+        assert!(!shows_commit_bar(InspectorTab::Changes, false, 0));
+        assert!(!shows_commit_bar(InspectorTab::Commits, true, 0));
     }
 }

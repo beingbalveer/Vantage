@@ -152,18 +152,25 @@ pub fn commits(
 
     page.into_iter()
         .take(COMMIT_LIMIT as usize)
-        .map(|commit| CommitEntry {
-            sha: short_sha(&commit.sha, &commit.short),
-            message: commit.subject,
-            author: if commit.author_name.trim().is_empty() {
-                commit.author_email.clone()
-            } else {
-                commit.author_name
-            },
-            author_email: commit.author_email,
-            relative_time: relative_iso_label(now, &commit.date),
-        })
+        .map(|commit| commit_entry(commit, now))
         .collect()
+}
+
+/// Map the engine's commit summary to the row/composer model, keeping the body
+/// so amend can restore the full original message.
+fn commit_entry(commit: vantage_core::state::CommitSummary, now: i64) -> CommitEntry {
+    CommitEntry {
+        sha: short_sha(&commit.sha, &commit.short),
+        message: commit.subject,
+        body: commit.body,
+        author: if commit.author_name.trim().is_empty() {
+            commit.author_email.clone()
+        } else {
+            commit.author_name
+        },
+        author_email: commit.author_email,
+        relative_time: relative_iso_label(now, &commit.date),
+    }
 }
 
 fn short_sha(sha: &str, short: &str) -> String {
@@ -916,6 +923,31 @@ fn relative_iso_label(now: i64, stamp: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn commit_entries_keep_the_body_for_amend() {
+        let entry = commit_entry(
+            vantage_core::state::CommitSummary {
+                sha: "0123456789abcdef".to_string(),
+                short: "0123456".to_string(),
+                author_name: "QA".to_string(),
+                author_email: "qa@example.com".to_string(),
+                date: "2026-11-16T10:00:00Z".to_string(),
+                subject: "subject line".to_string(),
+                body: "First body line.\n\nSecond paragraph.".to_string(),
+                parents: Vec::new(),
+                files_changed: 1,
+                additions: 2,
+                deletions: 0,
+                flags: Vec::new(),
+                is_new: false,
+            },
+            0,
+        );
+
+        assert_eq!(entry.message, "subject line");
+        assert_eq!(entry.body, "First body line.\n\nSecond paragraph.");
+    }
 
     #[test]
     fn relative_labels_follow_the_dashboard_scale() {

@@ -484,13 +484,23 @@ impl Backend {
 
     /// Rewrite the tip commit: its message, plus any paths given (they are
     /// staged first, so the same ticked-file rule as a normal commit applies).
-    pub fn amend(&self, repo_id: &str, paths: &[String], summary: &str) -> Result<String> {
+    ///
+    /// `body` follows the engine's amend semantics: `None` keeps HEAD's body,
+    /// `Some("")` clears it, and `Some(text)` replaces it.
+    pub fn amend(
+        &self,
+        repo_id: &str,
+        paths: &[String],
+        summary: &str,
+        body: Option<&str>,
+    ) -> Result<String> {
         let repo_path = self.known_path(repo_id)?;
         let summary = summary.to_string();
+        let body = body.map(str::to_string);
         let paths = paths.to_vec();
         let amended = self.runtime.block_on(async {
             ops::stage_paths(&self.runner, &repo_path, &paths).await?;
-            ops::amend_commit(&self.runner, &repo_path, &paths, &summary, None).await
+            ops::amend_commit(&self.runner, &repo_path, &paths, &summary, body.as_deref()).await
         })?;
         Ok(amended.short)
     }

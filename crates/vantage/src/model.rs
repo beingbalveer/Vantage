@@ -95,6 +95,8 @@ pub struct BranchInfo {
 pub struct CommitEntry {
     pub sha: String,
     pub message: String,
+    /// The rest of the commit message, used to pre-fill an amend.
+    pub body: String,
     pub author: String,
     /// The author's email, used to look up their GitHub photo for the row icon.
     pub author_email: String,
