@@ -12,8 +12,10 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::model::{CommitIdentity, PreviewKind, PreviewLine};
 
+use vantage_core::git::runner::GitOutput;
+use vantage_core::git::stash;
 use vantage_core::git::{diff, log, refs, status};
-use vantage_core::GitRunner;
+use vantage_core::{AppError, GitRunner};
 
 use crate::model::{BranchInfo, ChangedFile, CommitEntry, FileChangeStatus};
 
@@ -706,24 +708,42 @@ fn untracked_preview(repo_path: &Path, relative: &str) -> (Vec<PreviewLine>, boo
 
 // ---------------- Compare + ignored ----------------
 
+/// A read that ran but exited unsuccessfully, with Git's own explanation.
+///
+/// The runner returns `Ok` for any command git actually started, including a
+/// non-zero exit, so callers must turn a failed status into a visible error
+/// instead of the empty output looking like "nothing changed".
+fn failed_read(action: &str, output: &GitOutput) -> AppError {
+    let stderr = output.stderr.trim();
+    let message = if stderr.is_empty() {
+        format!("git {action} exited with {}.", output.status)
+    } else {
+        stderr.to_string()
+    };
+    AppError::other(message).with_stderr(output.stderr.clone())
+}
+
 /// Files between two branches, with the same preview shape a commit uses.
+///
+/// An unknown branch or invalid range is returned as an error carrying Git's
+/// message, never as an empty file list.
 pub fn compare_branches(
     rt: &tokio::runtime::Runtime,
     runner: &GitRunner,
     path: &Path,
     base: &str,
     head: &str,
-) -> Vec<crate::model::CommitFile> {
+) -> Result<Vec<crate::model::CommitFile>, AppError> {
     let range = format!("{base}...{head}");
     let patch = rt.block_on(async {
         runner
             .run_read(path, &["diff", "--no-color", "--no-ext-diff", "-M", &range])
             .await
-    });
-    let patch = match patch {
-        Ok(out) if out.success() => out.stdout_string(),
-        _ => return Vec::new(),
-    };
+    })?;
+    if !patch.success() {
+        return Err(failed_read("diff", &patch));
+    }
+    let patch = patch.stdout_string();
 
     let counts = rt.block_on(async {
         runner
@@ -763,14 +783,26 @@ pub fn compare_branches(
         })
         .collect();
     files.sort_by(|a, b| a.path.cmp(&b.path));
-    files
+    Ok(files)
 }
 
 // ---------------- Stashes ----------------
 
+/// The stash list shown by the stash dialog.
+///
+/// A failed read stays an error so the dialog can show Git's message and offer
+/// a retry; an empty repository stash list is a successful empty vector.
+pub fn stash_entries(
+    rt: &tokio::runtime::Runtime,
+    runner: &GitRunner,
+    path: &Path,
+) -> Result<Vec<vantage_core::state::StashEntry>, AppError> {
+    rt.block_on(stash::list_stashes(runner, path))
+}
+
 /// How many stashes the repository keeps; the menu labels use the count.
 pub fn stash_count(rt: &tokio::runtime::Runtime, runner: &GitRunner, path: &Path) -> usize {
-    rt.block_on(vantage_core::git::stash::list_stashes(runner, path))
+    rt.block_on(stash::list_stashes(runner, path))
         .map(|entries| entries.len())
         .unwrap_or(0)
 }
@@ -780,13 +812,14 @@ pub fn stash_count(rt: &tokio::runtime::Runtime, runner: &GitRunner, path: &Path
 /// The files a commit touched, each with its own patch lines and counts.
 ///
 /// `git show` gives the patch with the same shape as a working-tree diff, so it
-/// reuses the parser the Changes tab already relies on.
+/// reuses the parser the Changes tab already relies on. A missing commit or
+/// other Git failure is an error carrying Git's message.
 pub fn commit_files(
     rt: &tokio::runtime::Runtime,
     runner: &GitRunner,
     path: &Path,
     sha: &str,
-) -> Vec<crate::model::CommitFile> {
+) -> Result<Vec<crate::model::CommitFile>, AppError> {
     let patch = rt.block_on(async {
         runner
             .run_read(
@@ -801,11 +834,11 @@ pub fn commit_files(
                 ],
             )
             .await
-    });
-    let patch = match patch {
-        Ok(out) if out.success() => out.stdout_string(),
-        _ => return Vec::new(),
-    };
+    })?;
+    if !patch.success() {
+        return Err(failed_read("show", &patch));
+    }
+    let patch = patch.stdout_string();
 
     let counts = rt.block_on(async {
         runner
@@ -845,7 +878,7 @@ pub fn commit_files(
         })
         .collect();
     files.sort_by(|a, b| a.path.cmp(&b.path));
-    files
+    Ok(files)
 }
 
 // ---------------- Commit identity ----------------

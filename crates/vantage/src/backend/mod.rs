@@ -25,7 +25,7 @@ use vantage_core::git::refs::{
     list_branches, merge_into_current, rename_branch, sync_fetch, sync_pull, sync_push,
     PullStrategy,
 };
-use vantage_core::git::stash::{list_stashes, stash_drop, stash_pop, stash_push};
+use vantage_core::git::stash::{stash_drop, stash_pop, stash_push};
 use vantage_core::git::status::query_repo_status;
 use vantage_core::persist::{PersistedState, StateBackup, StatePersistence};
 use vantage_core::{repos, GitRunner, RepoEntry};
@@ -407,9 +407,11 @@ impl Backend {
     /// Every stash the repository keeps, newest first.
     pub fn stashes(&self, repo_id: &str) -> Result<Vec<vantage_core::state::StashEntry>> {
         let repo_path = self.known_path(repo_id)?;
-        Ok(self
-            .runtime
-            .block_on(list_stashes(&self.runner, &repo_path))?)
+        Ok(details::stash_entries(
+            &self.runtime,
+            &self.runner,
+            &repo_path,
+        )?)
     }
 
     pub fn stash_drop(&self, repo_id: &str, index: u32) -> Result<()> {
@@ -433,7 +435,7 @@ impl Backend {
             &repo_path,
             base,
             head,
-        ))
+        )?)
     }
 
     /// Merge `target` into the checked-out branch. Returns whether git stopped
@@ -499,7 +501,7 @@ impl Backend {
             &self.runner,
             &repo_path,
             sha,
-        ))
+        )?)
     }
 
     /// Rewrite the tip commit: its message, plus any paths given (they are
