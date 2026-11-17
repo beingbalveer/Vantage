@@ -4,35 +4,34 @@ This is the completion index for the 38 tickets in
 [`REVIEW_TODO_2026-11-16.md`](REVIEW_TODO_2026-11-16.md).
 
 **Base:** ticket branches were created from `main` at `ab2b483`.
-**State:** all 38 tickets are committed on branches; **26 fixes and low-risk docs/tests/performance
-changes are integrated into `main`** via the merge commits below. The remaining 12 branches are
-feature or broad-refactor work left for separate review. All ticket worktrees are removed.
+**State:** all 38 tickets are committed on branches; **34 projects are integrated into `main`**
+(safety, security, correctness, docs, tests, performance, UX and refactors). The remaining four
+branches are user-facing features left for separate review. All ticket worktrees are removed.
 **Integration verification:** `cargo fmt`, `cargo clippy --workspace --all-targets -- -D warnings`
-and `cargo test --workspace` pass on `main`; the final test count is **334 passing
-tests** (130 `vantage` tests plus 204 `vantage-core` tests), including 5 cross-crate safety
-integration tests. The macOS package job has not been run against the integrated tree.
+and `cargo test --workspace` pass on `main`; the final test count is **368 passing
+tests** (171 `vantage` tests, 192 `vantage-core` tests and 5 cross-crate safety integration
+tests). The macOS package job has not been run against the integrated tree.
 
 Two branches (`P0-01`, `P0-04`, `P1-02`) were created before the build-profile commit and are
 based on `adc68cd`; they do not include `ab2b483`. They merged normally; `main` now includes both.
 
 ## Integration result
 
-Merged into `main` (26):
+Merged into `main` (34):
 
-`P0-01`, `P0-02`, `P0-03`, `P0-04`, `P0-05`, `P0-06`,
-`P1-02`, `P1-04`, `P1-05`, `P1-06`, `P1-09`, `P1-10`,
-`P2-01`, `P2-02`, `P2-04`, `P2-05`, `P2-06`, `P2-07`, `P2-10`, `P2-11`,
-`P3-04`, `P3-05`, `P3-06`, `P3-07`, `P3-08`, `P3-09`.
+`P0-01`–`P0-06`, `P1-02`–`P1-10` (except `P1-01`), `P2-01`, `P2-02`, `P2-04`–`P2-07`,
+`P2-09`–`P2-12`, `P3-01`–`P3-09` (except `P3-01`'s dialog/commit-view module split,
+which was dropped to preserve newer integrated behavior).
 
-Left out intentionally (12):
+Left out intentionally (4 feature branches):
 
-- **Feature branches:** `P1-01` view navigation, `P2-03` clone progress/cancel,
-  `P2-08` folder scan, `P2-13` branch actions.
-- **Performance/quality:** `P1-03` lazy overview/details, `P1-07` accessibility,
-  `P2-09` debounced state writing.
-- **Docs:** `P1-08` README accuracy.
-- **Broad refactors / UX:** `P3-01` module split, `P3-02` typed context menus,
-  `P3-03` dead-code removal, plus `P2-12` toast redesign.
+- `P1-01` visible view navigation.
+- `P2-03` clone progress and cancellation.
+- `P2-08` folder scan for adding repositories.
+- `P2-13` branch actions menu and ahead/behind counts.
+
+These four add user-facing workflows rather than fixing or hardening existing behavior; they
+remain review-ready on their original branches.
 
 These left-out branches were not merged because they are feature, workflow, broad-refactor or
 performance work, or because they overlap heavily with the integrated safety changes. They remain
@@ -162,21 +161,17 @@ These are deliberate residuals, not hidden failures:
 
 ## Suggested merge order
 
-The safety/security/correctness subset and the low-risk docs/tests/performance branches have
-already been applied. This order remains useful for the 12 left-out branches. Several touch the
-same files; merge them one at a time and run the full check suite after each merge.
+Only the four feature branches remain. This order keeps their overlapping `app.rs` and inspector
+changes manageable; merge one at a time and run the full check suite after each merge.
 
-1. **Persistence:** P2-09. It overlaps `P0-04`/`P3-05` in `persist.rs`, `repos.rs`,
-   `backend/mod.rs` and `app.rs`; re-check it against the integrated persistence path.
-2. **Branch and scan features:** P1-03 → P2-13 → P2-08. They restructure backend details and add
-   fields used by branch actions and the folder scan.
-3. **UI foundation:** P1-01 → P1-07. Both touch layout/sidebar/navigation and will conflict in
-   `app.rs`, `views/`, and `theme.rs`.
-4. **Feature/UX work:** P2-03 → P2-12. Clone progress/cancel and the toast redesign are independent
-   of the integrated safety fixes but touch `app.rs`.
-5. **Docs:** P1-08. Root `README.md` also changed in `P2-10`, so re-read before merging.
-6. **Refactors last:** P3-01 and P3-03 after the behavior branches; P3-02 touches the same `app.rs`
-   menu block. Refresh [`SAFETY_TEST_MATRIX.md`](SAFETY_TEST_MATRIX.md) after any UI merge.
+1. **Navigation first:** P1-01 touches the sidebar, top bar and `app.rs` selection surface; merge
+   it before the branch and scan actions that add rows to the same menus.
+2. **Branch actions:** P2-13 adds the branch menu and ahead/behind counts on top of the integrated
+   typed context-menu dispatch.
+3. **Clone workflow:** P2-03 adds progress/cancel to the clone dialog. It is independent of the
+   list/scan work and touches `app.rs` and the add-repository modal.
+4. **Folder scan last:** P2-08 reuses the add-repository flow and the scan scheduler; merge it
+   after the other three so its dialog and scan changes have the final shape.
 
 ## Review commands
 
@@ -187,5 +182,5 @@ git switch fix/p0-01-composer-state
 CARGO_INCREMENTAL=0 CARGO_BUILD_JOBS=2 cargo test --workspace
 ```
 
-`main` now contains the build-profile commit, the review documents, and the 26 integrated ticket
-branches. The remaining 12 branches are unmerged by design. No worktrees remain.
+`main` now contains the build-profile commit, the review documents, and 34 integrated projects.
+The four feature branches listed above are unmerged by design. No worktrees remain.
