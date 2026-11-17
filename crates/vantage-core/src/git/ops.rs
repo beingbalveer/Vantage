@@ -377,6 +377,176 @@ async fn commit_using_temp_index(
     latest_head_summary(runner, repo_path).await
 }
 
+fn remove_temp_index(path: &Path) {
+    let _ = fs::remove_file(path);
+    let mut lock = path.as_os_str().to_owned();
+    lock.push(".lock");
+    let _ = fs::remove_file(PathBuf::from(lock));
+}
+
+async fn run_update_index_remove(
+    runner: &GitRunner,
+    repo_path: &Path,
+    temp_index: &str,
+    paths: &[&str],
+) -> Result<(), AppError> {
+    let mut args = vec!["update-index", "--force-remove", "--"];
+    args.extend_from_slice(paths);
+    let out = runner
+        .run_env(
+            Some(repo_path),
+            &args,
+            20,
+            true,
+            &[("GIT_INDEX_FILE", temp_index)],
+        )
+        .await?;
+    if out.success() {
+        Ok(())
+    } else {
+        Err(AppError::other(out.stderr))
+    }
+}
+
+/// Create a root commit from an index that contains exactly `paths`.
+///
+/// The real index is copied first so selected paths keep their exact staged
+/// content (line-level staging included); every unselected entry is removed
+/// from the copy. Selected paths without staged content are added from the
+/// working tree. The temporary index is then committed with `git commit`, so
+/// `pre-commit`, `commit-msg`, signing and the other commit hooks run exactly
+/// as they do for a commit with an existing HEAD.
+#[allow(clippy::too_many_arguments)]
+async fn commit_root_using_temp_index(
+    runner: &GitRunner,
+    repo_path: &Path,
+    git_dir: &Path,
+    temp_index: &Path,
+    paths: &[String],
+    summary: &str,
+    body: Option<&str>,
+    trailer_block: Option<&str>,
+    author_args: &[String],
+) -> Result<(), AppError> {
+    let temp_index_str = temp_index.to_string_lossy().to_string();
+    let selected: std::collections::HashSet<&str> = paths.iter().map(String::as_str).collect();
+
+    // Paths recorded in the real index and paths with staged content. An
+    // intent-to-add entry is in the index but has no staged content, so it must
+    // be committed from the working tree rather than as an empty blob.
+    let indexed_out = runner
+        .run_read(repo_path, &["ls-files", "-z", "--stage"])
+        .await?;
+    let mut indexed_paths = Vec::new();
+    for entry in indexed_out.stdout.split(|&b| b == 0) {
+        if entry.is_empty() {
+            continue;
+        }
+        if let Some(tab) = entry.iter().position(|&b| b == b'\t') {
+            indexed_paths.push(String::from_utf8_lossy(&entry[tab + 1..]).to_string());
+        }
+    }
+    let staged_out = runner
+        .run_read(repo_path, &["diff", "--cached", "--name-only", "-z"])
+        .await?;
+    let staged_paths: std::collections::HashSet<String> = staged_out
+        .stdout
+        .split(|&b| b == 0)
+        .filter(|p| !p.is_empty())
+        .map(|p| String::from_utf8_lossy(p).to_string())
+        .collect();
+    let indexed_set: std::collections::HashSet<&str> =
+        indexed_paths.iter().map(String::as_str).collect();
+
+    let real_index = git_dir.join("index");
+    if real_index.exists() {
+        fs::copy(&real_index, temp_index).map_err(AppError::io)?;
+    }
+
+    // Drop everything the user did not select, plus selected intent-to-add
+    // entries that have no staged content to preserve.
+    let remove_paths: Vec<&str> = indexed_paths
+        .iter()
+        .map(String::as_str)
+        .filter(|p| !selected.contains(*p) || !staged_paths.contains(*p))
+        .collect();
+    let mut chunk: Vec<&str> = Vec::new();
+    let mut chunk_bytes = 0usize;
+    for path in remove_paths {
+        if !chunk.is_empty() && chunk_bytes + path.len() > 32 * 1024 {
+            run_update_index_remove(runner, repo_path, &temp_index_str, &chunk).await?;
+            chunk.clear();
+            chunk_bytes = 0;
+        }
+        chunk.push(path);
+        chunk_bytes += path.len() + 1;
+    }
+    if !chunk.is_empty() {
+        run_update_index_remove(runner, repo_path, &temp_index_str, &chunk).await?;
+    }
+
+    // Selected paths that have no staged content are committed as they are in
+    // the working tree (untracked files, intent-to-add entries, directories).
+    let add_paths: Vec<&str> = paths
+        .iter()
+        .map(String::as_str)
+        .filter(|p| !indexed_set.contains(*p) || !staged_paths.contains(*p))
+        .collect();
+    if !add_paths.is_empty() {
+        let mut add_args = vec!["add", "--"];
+        add_args.extend(add_paths);
+        let out = runner
+            .run_env(
+                Some(repo_path),
+                &add_args,
+                30,
+                true,
+                &[
+                    ("GIT_INDEX_FILE", &temp_index_str),
+                    ("GIT_LITERAL_PATHSPECS", "1"),
+                ],
+            )
+            .await?;
+        if !out.success() {
+            return Err(AppError::other(out.stderr));
+        }
+    }
+
+    // No pathspecs: the tree is exactly the temporary index we built, and
+    // `git commit` runs the configured hooks and signing for the root commit.
+    let mut commit_args: Vec<&str> = author_args.iter().map(String::as_str).collect();
+    commit_args.extend_from_slice(&["commit", "-m", summary]);
+    let body_str;
+    if let Some(b) = body {
+        if !b.trim().is_empty() {
+            body_str = b.to_string();
+            commit_args.push("-m");
+            commit_args.push(&body_str);
+        }
+    }
+    let trailer_str;
+    if let Some(t) = trailer_block {
+        trailer_str = t.to_string();
+        commit_args.push("-m");
+        commit_args.push(&trailer_str);
+    }
+
+    let out = runner
+        .run_env(
+            Some(repo_path),
+            &commit_args,
+            60,
+            true,
+            &[("GIT_INDEX_FILE", &temp_index_str)],
+        )
+        .await?;
+    if !out.success() {
+        return Err(AppError::other(out.stderr));
+    }
+
+    Ok(())
+}
+
 /// Commit with the repository's configured identity.
 pub async fn commit(
     runner: &GitRunner,
@@ -612,98 +782,35 @@ pub async fn commit_with_author(
             }
         }
     } else {
-        // Initial / root commit (unborn branch) — safe temporary index transaction (R04)
+        // Initial / root commit (unborn branch). Commit a temporary index that
+        // contains exactly the selected paths so `git commit` runs the user's
+        // hooks and signing configuration, like any other commit (R04).
         let git_dir = get_real_git_dir(runner, repo_path).await?;
-        let temp_index_name = format!("index_temp_{}", uuid::Uuid::new_v4().simple());
-        let temp_index_path = git_dir.join(&temp_index_name);
-        let temp_index_str = temp_index_path.to_string_lossy().to_string();
+        let temp_index = git_dir.join(format!("vantage-index-{}", uuid::Uuid::new_v4().simple()));
 
-        let mut add_args = vec!["add", "--"];
+        let root_result = commit_root_using_temp_index(
+            runner,
+            repo_path,
+            &git_dir,
+            &temp_index,
+            paths,
+            summary,
+            body,
+            trailer_block.as_deref(),
+            &author_args,
+        )
+        .await;
+        remove_temp_index(&temp_index);
+        root_result?;
+
+        // Reconcile the real index with the new HEAD for the selected paths
+        // only: they now look committed, while unselected staged entries and
+        // any unstaged working-tree lines are left untouched.
+        let mut reset_args = vec!["reset", "-q", "HEAD", "--"];
         for p in paths {
-            add_args.push(p);
+            reset_args.push(p.as_str());
         }
-
-        // Stage into the temporary index file only
-        let add_out = runner
-            .run_env(
-                Some(repo_path),
-                &add_args,
-                20,
-                true,
-                &[
-                    ("GIT_INDEX_FILE", &temp_index_str),
-                    ("GIT_LITERAL_PATHSPECS", "1"),
-                ],
-            )
-            .await?;
-
-        if !add_out.success() {
-            let _ = fs::remove_file(&temp_index_path);
-            return Err(AppError::other(add_out.stderr));
-        }
-
-        // Write tree from the temporary index
-        let write_tree_out = runner
-            .run_env(
-                Some(repo_path),
-                &["write-tree"],
-                20,
-                true,
-                &[("GIT_INDEX_FILE", &temp_index_str)],
-            )
-            .await?;
-
-        let _ = fs::remove_file(&temp_index_path);
-
-        if !write_tree_out.success() {
-            return Err(AppError::other(write_tree_out.stderr));
-        }
-
-        let tree_sha = write_tree_out.stdout_string().trim().to_string();
-
-        // Commit tree directly
-        let mut commit_tree_args: Vec<&str> = author_args.iter().map(String::as_str).collect();
-        commit_tree_args.extend_from_slice(&["commit-tree", tree_sha.as_str(), "-m", summary]);
-        let body_str;
-        if let Some(b) = body {
-            if !b.trim().is_empty() {
-                body_str = b.to_string();
-                commit_tree_args.push("-m");
-                commit_tree_args.push(&body_str);
-            }
-        }
-        let trailer_str;
-        if let Some(t) = &trailer_block {
-            trailer_str = t.clone();
-            commit_tree_args.push("-m");
-            commit_tree_args.push(&trailer_str);
-        }
-
-        let commit_tree_out = runner.run_write(repo_path, &commit_tree_args, 30).await?;
-
-        if !commit_tree_out.success() {
-            return Err(AppError::other(commit_tree_out.stderr));
-        }
-
-        let commit_sha = commit_tree_out.stdout_string().trim().to_string();
-
-        // Point HEAD at the new commit
-        let update_ref_out = runner
-            .run_write(repo_path, &["update-ref", "HEAD", &commit_sha], 20)
-            .await?;
-
-        if !update_ref_out.success() {
-            return Err(AppError::other(update_ref_out.stderr));
-        }
-
-        // Now mark the committed paths staged/clean in the primary index without touching unselected files
-        let mut primary_add_args = vec!["add", "--"];
-        for p in paths {
-            primary_add_args.push(p);
-        }
-        let _ = runner
-            .run_write_literal(repo_path, &primary_add_args, 20)
-            .await;
+        let _ = runner.run_write_literal(repo_path, &reset_args, 30).await;
     }
 
     // Return latest commit summary
@@ -2305,6 +2412,12 @@ mod tests {
                 .run_write(&path, &["config", "commit.gpgsign", "false"], 10)
                 .await
                 .unwrap();
+            // Keep hook tests hermetic when the machine sets a global
+            // `core.hooksPath` for its own repositories.
+            runner
+                .run_write(&path, &["config", "core.hooksPath", ".git/hooks"], 10)
+                .await
+                .unwrap();
 
             Self { path }
         }
@@ -2314,6 +2427,28 @@ mod tests {
         fn drop(&mut self) {
             let _ = fs::remove_dir_all(&self.path);
         }
+    }
+
+    #[cfg(unix)]
+    fn write_hook(repo_path: &Path, name: &str, body: &str) {
+        use std::os::unix::fs::PermissionsExt;
+
+        let hooks = repo_path.join(".git").join("hooks");
+        fs::create_dir_all(&hooks).unwrap();
+        let path = hooks.join(name);
+        fs::write(&path, format!("#!/bin/sh\n{body}\n")).unwrap();
+        let mut perms = fs::metadata(&path).unwrap().permissions();
+        perms.set_mode(0o755);
+        fs::set_permissions(&path, perms).unwrap();
+    }
+
+    fn temp_index_leftovers(repo_path: &Path) -> Vec<String> {
+        fs::read_dir(repo_path.join(".git"))
+            .unwrap()
+            .filter_map(|entry| entry.ok())
+            .map(|entry| entry.file_name().to_string_lossy().to_string())
+            .filter(|name| name.starts_with("vantage-index-"))
+            .collect()
     }
 
     #[tokio::test]
@@ -2372,6 +2507,320 @@ mod tests {
         assert!(
             status_str.contains("A  secret.txt"),
             "secret.txt must still be staged in index"
+        );
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn test_root_commit_uses_staged_content_and_keeps_unstaged_lines() {
+        let runner = GitRunner::new();
+        let repo = TempTestRepo::new(&runner).await;
+
+        let f = repo.path.join("f.txt");
+        fs::write(&f, "one\n").unwrap();
+        runner
+            .run_write(&repo.path, &["add", "f.txt"], 10)
+            .await
+            .unwrap();
+        // Stage "one", then add an unstaged line on top.
+        fs::write(&f, "one\ntwo\n").unwrap();
+
+        commit(
+            &runner,
+            &repo.path,
+            &["f.txt".to_string()],
+            "root commit from staged content",
+            None,
+            &[],
+        )
+        .await
+        .expect("root commit from staged content must succeed");
+
+        let committed = runner
+            .run_read(&repo.path, &["show", "HEAD:f.txt"])
+            .await
+            .unwrap()
+            .stdout;
+        assert_eq!(
+            committed, b"one\n",
+            "the root commit must use the staged content"
+        );
+        assert_eq!(
+            fs::read_to_string(&f).unwrap(),
+            "one\ntwo\n",
+            "unstaged working-tree content must stay in place"
+        );
+
+        let status = runner
+            .run_read(&repo.path, &["status", "--porcelain"])
+            .await
+            .unwrap()
+            .stdout_string();
+        assert!(
+            status.contains(" M f.txt"),
+            "only the unstaged line should remain changed: {status}"
+        );
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn test_root_commit_runs_hooks_and_commits_only_selected_paths() {
+        let runner = GitRunner::new();
+        let repo = TempTestRepo::new(&runner).await;
+
+        write_hook(
+            &repo.path,
+            "pre-commit",
+            "echo pre-commit >> \"$PWD/hook.log\"\n\
+             git diff --cached --name-only > \"$PWD/hook-index.txt\"",
+        );
+        write_hook(
+            &repo.path,
+            "commit-msg",
+            "echo commit-msg >> \"$PWD/hook.log\"",
+        );
+
+        // An unselected file is already staged; only chosen.txt is selected.
+        fs::write(repo.path.join("secret.txt"), "secret credentials").unwrap();
+        runner
+            .run_write(&repo.path, &["add", "secret.txt"], 10)
+            .await
+            .unwrap();
+        fs::write(repo.path.join("chosen.txt"), "public content").unwrap();
+
+        let summary = commit(
+            &runner,
+            &repo.path,
+            &["chosen.txt".to_string()],
+            "root commit with hooks",
+            None,
+            &[],
+        )
+        .await
+        .expect("root commit with hooks must succeed");
+        assert_eq!(summary.subject, "root commit with hooks");
+
+        let hook_log = fs::read_to_string(repo.path.join("hook.log")).unwrap();
+        assert!(hook_log.contains("pre-commit"), "hook log: {hook_log}");
+        assert!(hook_log.contains("commit-msg"), "hook log: {hook_log}");
+
+        // The hooks must have seen the temporary index, which contains only
+        // the selected path even though secret.txt is staged in the real index.
+        let hook_index = fs::read_to_string(repo.path.join("hook-index.txt")).unwrap();
+        assert_eq!(hook_index.trim(), "chosen.txt");
+
+        let show = runner
+            .run_read(&repo.path, &["show", "--name-only", "--format=", "HEAD"])
+            .await
+            .unwrap()
+            .stdout_string();
+        assert!(show.contains("chosen.txt"), "HEAD: {show}");
+        assert!(!show.contains("secret.txt"), "HEAD: {show}");
+
+        let status = runner
+            .run_read(&repo.path, &["status", "--porcelain"])
+            .await
+            .unwrap()
+            .stdout_string();
+        assert!(
+            status.contains("A  secret.txt"),
+            "unselected staged file must be preserved: {status}"
+        );
+        assert!(
+            !status.lines().any(|line| line.ends_with("chosen.txt")),
+            "selected path must look committed: {status}"
+        );
+        assert!(
+            temp_index_leftovers(&repo.path).is_empty(),
+            "temporary index must be cleaned up"
+        );
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn test_root_commit_failing_hook_aborts_without_commit() {
+        let runner = GitRunner::new();
+        let repo = TempTestRepo::new(&runner).await;
+
+        write_hook(
+            &repo.path,
+            "pre-commit",
+            "echo 'blocked by pre-commit' >&2\nexit 1",
+        );
+
+        fs::write(repo.path.join("chosen.txt"), "public content").unwrap();
+        runner
+            .run_write(&repo.path, &["add", "chosen.txt"], 10)
+            .await
+            .unwrap();
+
+        let err = commit(
+            &runner,
+            &repo.path,
+            &["chosen.txt".to_string()],
+            "root commit rejected by hook",
+            None,
+            &[],
+        )
+        .await
+        .expect_err("a failing pre-commit hook must abort the root commit");
+        assert!(
+            err.message.contains("blocked by pre-commit"),
+            "error must carry the hook output: {}",
+            err.message
+        );
+
+        let head = runner
+            .run_read(&repo.path, &["rev-parse", "--verify", "HEAD"])
+            .await
+            .unwrap();
+        assert!(
+            !head.success(),
+            "a rejected root commit must leave HEAD unborn"
+        );
+
+        let status = runner
+            .run_read(&repo.path, &["status", "--porcelain"])
+            .await
+            .unwrap()
+            .stdout_string();
+        assert!(
+            status.contains("A  chosen.txt"),
+            "the real index must be untouched after a rejected commit: {status}"
+        );
+        assert!(
+            temp_index_leftovers(&repo.path).is_empty(),
+            "temporary index must be cleaned up after a rejected commit"
+        );
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn test_root_commit_uses_configured_commit_signing() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let runner = GitRunner::new();
+        let repo = TempTestRepo::new(&runner).await;
+
+        // A disposable signing program keeps the test independent of the
+        // machine's GPG installation while still exercising `commit.gpgsign`.
+        let fake_gpg = repo.path.join("fake-gpg");
+        fs::write(
+            &fake_gpg,
+            "#!/bin/sh\n\
+             printf '[GNUPG:] SIG_CREATED D 1 10 00 0 FAKEKEY\\n' >&2\n\
+             printf -- '-----BEGIN PGP SIGNATURE-----\\n\\nZmFrZQ==\\n-----END PGP SIGNATURE-----\\n'\n",
+        )
+        .unwrap();
+        let mut perms = fs::metadata(&fake_gpg).unwrap().permissions();
+        perms.set_mode(0o755);
+        fs::set_permissions(&fake_gpg, perms).unwrap();
+
+        runner
+            .run_write(
+                &repo.path,
+                &["config", "gpg.program", fake_gpg.to_str().unwrap()],
+                10,
+            )
+            .await
+            .unwrap();
+        runner
+            .run_write(&repo.path, &["config", "user.signingkey", "FAKEKEY"], 10)
+            .await
+            .unwrap();
+        runner
+            .run_write(&repo.path, &["config", "commit.gpgsign", "true"], 10)
+            .await
+            .unwrap();
+
+        fs::write(repo.path.join("signed.txt"), "signed content").unwrap();
+
+        commit(
+            &runner,
+            &repo.path,
+            &["signed.txt".to_string()],
+            "signed root commit",
+            None,
+            &[],
+        )
+        .await
+        .expect("signed root commit must succeed");
+
+        let raw = runner
+            .run_read(&repo.path, &["cat-file", "commit", "HEAD"])
+            .await
+            .unwrap()
+            .stdout_string();
+        assert!(
+            raw.contains("gpgsig -----BEGIN PGP SIGNATURE-----"),
+            "root commit must use commit.gpgsign: {raw}"
+        );
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn test_commit_with_existing_history_runs_hooks_and_preserves_selection() {
+        let runner = GitRunner::new();
+        let repo = TempTestRepo::new(&runner).await;
+
+        fs::write(repo.path.join("init.txt"), "initial").unwrap();
+        runner
+            .run_write(&repo.path, &["add", "init.txt"], 10)
+            .await
+            .unwrap();
+        runner
+            .run_write(&repo.path, &["commit", "-m", "init"], 10)
+            .await
+            .unwrap();
+
+        write_hook(
+            &repo.path,
+            "pre-commit",
+            "echo pre-commit >> \"$PWD/hook.log\"",
+        );
+
+        fs::write(repo.path.join("other_staged.txt"), "pre-staged content").unwrap();
+        runner
+            .run_write(&repo.path, &["add", "other_staged.txt"], 10)
+            .await
+            .unwrap();
+        fs::write(repo.path.join("chosen.txt"), "selected content").unwrap();
+
+        let summary = commit(
+            &runner,
+            &repo.path,
+            &["chosen.txt".to_string()],
+            "normal commit with hooks",
+            None,
+            &[],
+        )
+        .await
+        .expect("normal commit with hooks must succeed");
+        assert_eq!(summary.subject, "normal commit with hooks");
+
+        let hook_log = fs::read_to_string(repo.path.join("hook.log")).unwrap();
+        assert!(hook_log.contains("pre-commit"), "hook log: {hook_log}");
+
+        let show = runner
+            .run_read(&repo.path, &["show", "--name-only", "--format=", "HEAD"])
+            .await
+            .unwrap()
+            .stdout_string();
+        assert!(show.contains("chosen.txt"), "HEAD: {show}");
+        assert!(!show.contains("other_staged.txt"), "HEAD: {show}");
+
+        let status = runner
+            .run_read(&repo.path, &["status", "--porcelain"])
+            .await
+            .unwrap()
+            .stdout_string();
+        assert!(
+            status.contains("A  other_staged.txt"),
+            "unselected staged file must be preserved: {status}"
+        );
+        assert!(
+            temp_index_leftovers(&repo.path).is_empty(),
+            "normal commits must not leave a temporary index behind"
         );
     }
 
