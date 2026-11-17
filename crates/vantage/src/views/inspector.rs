@@ -1,6 +1,6 @@
 //! Right repository detail pane — half of the content area, changes / branches / commits.
 
-use gpui::{deferred, div, prelude::*, px, relative, Context, Div, IntoElement, Styled, Window};
+use gpui::{deferred, div, prelude::*, px, Context, Div, IntoElement, Styled, Window};
 
 use crate::app::{InspectorTab, RepoOp, VantageApp};
 use crate::theme::Theme;
@@ -25,8 +25,9 @@ impl VantageApp {
         if !self.settings.right_panel_open {
             return None;
         }
+        let layout = self.dashboard_layout(window);
         let Some(repo) = self.selected_repo().cloned() else {
-            return Some(self.render_empty_detail_panel(cx));
+            return Some(self.render_empty_detail_panel(layout.inspector_width, cx));
         };
         let tab = self.inspector_tab;
         let expanded = self.expanded_file.clone();
@@ -35,17 +36,18 @@ impl VantageApp {
         let theme = self.theme;
 
         let panel = div()
+            .debug_selector(|| "repository-detail".to_string())
             .id("repository-detail")
             .flex()
             .flex_col()
-            .w(relative(self.panel_fraction()))
-            .min_w(px(420.0))
+            .w(px(layout.inspector_width))
+            .min_w(px(crate::layout::INSPECTOR_MIN_WIDTH))
             .h_full()
             .flex_shrink_0()
             .bg(theme.panel)
             .border_l_1()
             .border_color(theme.divider)
-            .child(self.render_inspector_header(&repo, copied, cx))
+            .child(self.render_inspector_header(&repo, copied, layout.compact_inspector(), cx))
             .child(self.render_inspector_tabs(&repo, menu_open, cx))
             .child({
                 // A commit view owns its own scrolling: the file list and the
@@ -91,14 +93,14 @@ impl VantageApp {
         Some(panel.into_any_element())
     }
 
-    fn render_empty_detail_panel(&self, cx: &mut Context<Self>) -> gpui::AnyElement {
+    fn render_empty_detail_panel(&self, width: f32, cx: &mut Context<Self>) -> gpui::AnyElement {
         let theme = self.theme;
         div()
             .id("repository-detail-empty")
             .flex()
             .flex_col()
-            .w(relative(self.settings.right_panel_fraction))
-            .min_w(px(420.0))
+            .w(px(width))
+            .min_w(px(crate::layout::INSPECTOR_MIN_WIDTH))
             .h_full()
             .flex_shrink_0()
             .bg(theme.panel)
@@ -156,108 +158,184 @@ impl VantageApp {
         &self,
         repo: &crate::model::Repository,
         copied: bool,
+        compact: bool,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
         let theme = self.theme;
         let path = repo.local_path.clone();
 
-        div()
-            .debug_selector(|| "inspector-header".to_string())
+        let title = div()
             .flex()
             .items_center()
-            .justify_between()
-            .gap(px(12.0))
+            .gap(px(10.0))
+            .flex_1()
+            .min_w(px(0.0))
+            .child(
+                div()
+                    .flex_1()
+                    .min_w(px(0.0))
+                    .display_lg()
+                    .font_weight(crate::theme::W_MEDIUM)
+                    .fg(theme.text_app)
+                    .truncate()
+                    .child(repo.name.clone()),
+            );
+
+        // The branch gives way first; the path keeps a minimum column so it
+        // stays identifiable even beside a long branch name.
+        let branch = div()
+            .flex()
+            .items_center()
+            .gap(px(5.0))
+            .flex_shrink()
+            .min_w(px(0.0))
+            .child(icon("git-branch", IconSize::Xxs, theme.text_dim))
+            .child(
+                div()
+                    .min_w(px(0.0))
+                    .text_size(px(10.0))
+                    .line_height(px(14.0))
+                    .font_family(crate::theme::FONT_MONO)
+                    .fg(theme.label_muted)
+                    .truncate()
+                    .child(repo.current_branch.clone()),
+            );
+
+        let path_for_click = path.clone();
+        let path_link = div()
+            .debug_selector(|| "copy-path".to_string())
+            .id("copy-path")
+            .flex()
+            .items_center()
+            .gap(px(4.0))
+            .flex_1()
+            .min_w(px(96.0))
+            .cursor_pointer()
+            .text_size(px(10.0))
+            .line_height(px(14.0))
+            .font_family(crate::theme::FONT_MONO)
+            .fg(theme.text_dim)
+            .hover(move |s| s.fg(theme.text_app))
+            .on_click(cx.listener(move |this, _e, _w, cx| {
+                this.copy_local_path(path_for_click.clone(), cx);
+            }))
+            .child(div().flex_1().min_w(px(0.0)).truncate().child(path.clone()))
+            .child(icon(
+                if copied { "check" } else { "copy" },
+                IconSize::Xs,
+                if copied {
+                    theme.status_green
+                } else {
+                    theme.icon_idle
+                },
+            ));
+
+        let meta = div()
+            .debug_selector(|| "inspector-path".to_string())
+            .flex()
+            .items_center()
+            .gap(px(8.0))
+            .w_full()
+            .min_w(px(0.0))
+            .xs()
+            .fg(theme.label_muted)
+            .child(branch)
+            .child(div().flex_shrink_0().child("·"))
+            .child(path_link);
+
+        let menu = div()
+            .debug_selector(|| "repo-menu".to_string())
+            .id("repo-menu")
+            .flex()
+            .items_center()
+            .justify_center()
+            .w(px(30.0))
+            .h(px(30.0))
+            .flex_shrink_0()
+            .rounded(px(8.0))
+            .cursor_pointer()
+            .hover(move |s| s.bg(theme.nav_hover_bg))
+            .child(icon("more-horizontal", IconSize::Sm, theme.icon_idle))
+            .on_mouse_down(
+                gpui::MouseButton::Left,
+                cx.listener({
+                    let menu_repo = repo.id.clone();
+                    let menu_name = repo.name.clone();
+                    let uncommitted = repo.uncommitted_files.len();
+                    let stashes = repo.stash_count;
+                    move |this, event: &gpui::MouseDownEvent, _w, cx| {
+                        this.open_repo_menu(
+                            &menu_repo,
+                            &menu_name,
+                            uncommitted,
+                            stashes,
+                            false,
+                            f32::from(event.position.x),
+                            f32::from(event.position.y),
+                            cx,
+                        );
+                    }
+                }),
+            );
+
+        let close = crate::ui::icon_button(&theme, "x")
+            .debug_selector(|| "close-inspector".to_string())
+            .id("close-inspector")
+            .on_click(cx.listener(|this, _e, _w, cx| this.close_right_panel(cx)));
+        let actions = self.render_action_buttons(repo, compact, cx);
+
+        let header = div()
+            .debug_selector(|| "inspector-header".to_string())
+            .flex()
+            .flex_col()
             .px(px(16.0))
             .py(px(10.0))
             .border_b_1()
-            .border_color(theme.divider)
+            .border_color(theme.divider);
+
+        if compact {
+            // Two rows: identity above (with the menu and close always in the
+            // corner), path and compact git actions below. Nothing can paint
+            // under the action buttons because they own their own column.
+            return header
+                .gap(px(8.0))
+                .child(
+                    div()
+                        .flex()
+                        .items_center()
+                        .gap(px(8.0))
+                        .w_full()
+                        .min_w(px(0.0))
+                        .child(title)
+                        .child(menu)
+                        .child(close),
+                )
+                .child(
+                    div()
+                        .debug_selector(|| "inspector-actions".to_string())
+                        .flex()
+                        .items_center()
+                        .gap(px(8.0))
+                        .w_full()
+                        .min_w(px(0.0))
+                        .child(meta.flex_1())
+                        .child(actions),
+                );
+        }
+
+        header
+            .flex_row()
+            .items_center()
+            .justify_between()
+            .gap(px(12.0))
             .child(
                 div()
                     .flex()
                     .flex_col()
                     .flex_1()
                     .min_w(px(0.0))
-                    .overflow_hidden()
-                    .child(
-                        div().flex().items_center().gap(px(10.0)).child(
-                            div()
-                                .flex_1()
-                                .min_w(px(0.0))
-                                .display_lg()
-                                .font_weight(crate::theme::W_MEDIUM)
-                                .fg(theme.text_app)
-                                .truncate()
-                                .child(repo.name.clone()),
-                        ),
-                    )
-                    .child(
-                        div()
-                            .mt(px(4.0))
-                            .flex()
-                            .items_center()
-                            .gap(px(8.0))
-                            .w_full()
-                            .min_w(px(0.0))
-                            .overflow_hidden()
-                            .xs()
-                            .fg(theme.label_muted)
-                            .child(
-                                div()
-                                    .flex()
-                                    .items_center()
-                                    .gap(px(5.0))
-                                    .flex_shrink()
-                                    .min_w(px(0.0))
-                                    .child(icon("git-branch", IconSize::Xxs, theme.text_dim))
-                                    .child(
-                                        div()
-                                            .min_w(px(0.0))
-                                            .max_w(px(160.0))
-                                            .truncate()
-                                            .text_size(px(10.0))
-                                            .line_height(px(14.0))
-                                            .font_family(crate::theme::FONT_MONO)
-                                            .fg(theme.label_muted)
-                                            .child(repo.current_branch.clone()),
-                                    ),
-                            )
-                            .child(div().flex_shrink_0().child("·"))
-                            .child(
-                                div()
-                                    .id("copy-path")
-                                    .debug_selector(|| "inspector-path".to_string())
-                                    .flex()
-                                    .items_center()
-                                    .gap(px(4.0))
-                                    .flex_1()
-                                    .min_w(px(0.0))
-                                    .cursor_pointer()
-                                    .text_size(px(10.0))
-                                    .line_height(px(14.0))
-                                    .font_family(crate::theme::FONT_MONO)
-                                    .fg(theme.text_dim)
-                                    .hover(move |s| s.fg(theme.text_app))
-                                    .on_click(cx.listener(move |this, _e, _w, cx| {
-                                        this.copy_local_path(path.clone(), cx);
-                                    }))
-                                    .child(
-                                        div()
-                                            .flex_1()
-                                            .min_w(px(0.0))
-                                            .truncate()
-                                            .child(repo.local_path.clone()),
-                                    )
-                                    .child(icon(
-                                        if copied { "check" } else { "copy" },
-                                        IconSize::Xs,
-                                        if copied {
-                                            theme.status_green
-                                        } else {
-                                            theme.icon_idle
-                                        },
-                                    )),
-                            ),
-                    ),
+                    .child(title)
+                    .child(div().mt(px(4.0)).w_full().min_w(px(0.0)).child(meta)),
             )
             .child(
                 div()
@@ -266,46 +344,9 @@ impl VantageApp {
                     .items_center()
                     .gap(px(2.0))
                     .flex_shrink_0()
-                    .child(
-                        div()
-                            .id("repo-menu")
-                            .flex()
-                            .items_center()
-                            .justify_center()
-                            .w(px(30.0))
-                            .h(px(30.0))
-                            .rounded(px(8.0))
-                            .cursor_pointer()
-                            .hover(move |s| s.bg(theme.nav_hover_bg))
-                            .child(icon("more-horizontal", IconSize::Sm, theme.icon_idle))
-                            .on_mouse_down(
-                                gpui::MouseButton::Left,
-                                cx.listener({
-                                    let menu_repo = repo.id.clone();
-                                    let menu_name = repo.name.clone();
-                                    let uncommitted = repo.uncommitted_files.len();
-                                    let stashes = repo.stash_count;
-                                    move |this, event: &gpui::MouseDownEvent, _w, cx| {
-                                        this.open_repo_menu(
-                                            &menu_repo,
-                                            &menu_name,
-                                            uncommitted,
-                                            stashes,
-                                            false,
-                                            f32::from(event.position.x),
-                                            f32::from(event.position.y),
-                                            cx,
-                                        );
-                                    }
-                                }),
-                            ),
-                    )
-                    .child(self.render_action_buttons(repo, cx))
-                    .child(
-                        crate::ui::icon_button(&theme, "x")
-                            .id("close-inspector")
-                            .on_click(cx.listener(|this, _e, _w, cx| this.close_right_panel(cx))),
-                    ),
+                    .child(menu)
+                    .child(actions)
+                    .child(close),
             )
     }
 
@@ -1349,9 +1390,7 @@ impl VantageApp {
             return self.render_commit_detail(view, cx);
         }
 
-        let sidebar_width = if self.sidebar_collapsed { 56.0 } else { 256.0 };
-        let content_width = f32::from(window.viewport_size().width) - sidebar_width;
-        let panel_width = (content_width * self.settings.right_panel_fraction).max(420.0);
+        let panel_width = self.dashboard_layout(window).inspector_width;
         let message_width =
             (px(panel_width) - px(24.0 * 2.0 + 16.0 * 2.0 + 16.0 + 12.0)).max(px(40.0));
         let unpushed = repo.ahead_count.max(0) as usize;
@@ -1659,9 +1698,14 @@ impl VantageApp {
     }
 
     /// The git actions for the repository, sized for the header band.
+    ///
+    /// In the compact header the buttons keep their icon and count but drop
+    /// the words, so the path column beside them keeps enough room to identify
+    /// the repository. The tooltip still spells out the action.
     fn render_action_buttons(
         &self,
         repo: &crate::model::Repository,
+        compact: bool,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
         let theme = self.theme;
@@ -1674,17 +1718,40 @@ impl VantageApp {
         let behind = repo.behind_count;
         // The buttons name what they would move: commits waiting locally for a
         // push, and commits on the remote waiting for a pull.
-        let push_label = if ahead > 0 {
+        let push_label = if compact {
+            if ahead > 0 {
+                ahead.to_string()
+            } else {
+                String::new()
+            }
+        } else if ahead > 0 {
             format!("Push {ahead}")
         } else {
             "Push".to_string()
         };
-        let pull_label = if behind > 0 {
+        let pull_label = if compact {
+            if behind > 0 {
+                behind.to_string()
+            } else {
+                String::new()
+            }
+        } else if behind > 0 {
             format!("Pull {behind}")
         } else {
             "Pull".to_string()
         };
+        let push_tip = if ahead > 0 {
+            format!("Push {ahead} commits to origin")
+        } else {
+            "Push to origin".to_string()
+        };
+        let pull_tip = if behind > 0 {
+            format!("Pull {behind} commits from origin")
+        } else {
+            "Pull from origin".to_string()
+        };
         let fetch_id = repo.id.clone();
+        let gap = if compact { 4.0 } else { 8.0 };
 
         let spinner_leading = |theme: &Theme, kind: RepoOp, id: &str| {
             spinner(
@@ -1696,28 +1763,46 @@ impl VantageApp {
             .into_any_element()
         };
 
+        let progress_label = |kind: RepoOp| {
+            if compact {
+                String::new()
+            } else {
+                kind.in_progress_label().to_string()
+            }
+        };
+
         div()
             .flex()
             .items_center()
-            .gap(px(8.0))
+            .gap(px(gap))
             .flex_shrink_0()
             .child(
                 div()
                     .flex()
                     .items_center()
-                    .gap(px(8.0))
+                    .gap(px(gap))
                     .flex_shrink_0()
                     .child(if running == Some(RepoOp::Pull) {
                         secondary_button_with(
                             &theme,
-                            RepoOp::Pull.in_progress_label(),
+                            progress_label(RepoOp::Pull),
                             Some(spinner_leading(&theme, RepoOp::Pull, &repo.id)),
                         )
+                        .debug_selector(|| "pull-selected".to_string())
                         .id("pull-selected")
+                        .tooltip(move |_window, cx| {
+                            cx.new(|_| crate::ui::TextTooltip::new(theme, "Pulling…"))
+                                .into()
+                        })
                         .into_any_element()
                     } else {
                         secondary_button(&theme, pull_label, Some("arrow-down"))
+                            .debug_selector(|| "pull-selected".to_string())
                             .id("pull-selected")
+                            .tooltip(move |_window, cx| {
+                                cx.new(|_| crate::ui::TextTooltip::new(theme, pull_tip.clone()))
+                                    .into()
+                            })
                             .when(!can_pull, |d| d.opacity(0.5))
                             .when(can_pull, |d| {
                                 d.on_click(cx.listener(|this, _e, _w, cx| this.pull_selected(cx)))
@@ -1727,14 +1812,24 @@ impl VantageApp {
                     .child(if running == Some(RepoOp::Push) {
                         secondary_button_with(
                             &theme,
-                            RepoOp::Push.in_progress_label(),
+                            progress_label(RepoOp::Push),
                             Some(spinner_leading(&theme, RepoOp::Push, &repo.id)),
                         )
+                        .debug_selector(|| "push-selected".to_string())
                         .id("push-selected")
+                        .tooltip(move |_window, cx| {
+                            cx.new(|_| crate::ui::TextTooltip::new(theme, "Pushing…"))
+                                .into()
+                        })
                         .into_any_element()
                     } else {
                         secondary_button(&theme, push_label, Some("arrow-up"))
+                            .debug_selector(|| "push-selected".to_string())
                             .id("push-selected")
+                            .tooltip(move |_window, cx| {
+                                cx.new(|_| crate::ui::TextTooltip::new(theme, push_tip.clone()))
+                                    .into()
+                            })
                             .when(!can_push, |d| d.opacity(0.5))
                             .when(can_push, |d| {
                                 d.on_click(cx.listener(|this, _e, _w, cx| this.push_selected(cx)))
@@ -1744,26 +1839,44 @@ impl VantageApp {
                     .child(if running == Some(RepoOp::Fetch) {
                         secondary_button_with(
                             &theme,
-                            RepoOp::Fetch.in_progress_label(),
+                            progress_label(RepoOp::Fetch),
                             Some(spinner_leading(&theme, RepoOp::Fetch, &repo.id)),
                         )
+                        .debug_selector(|| "fetch-origin".to_string())
                         .id("fetch-origin")
+                        .tooltip(move |_window, cx| {
+                            cx.new(|_| crate::ui::TextTooltip::new(theme, "Fetching…"))
+                                .into()
+                        })
                         .into_any_element()
                     } else {
-                        secondary_button(&theme, "Fetch Origin", Some("refresh-cw"))
-                            .id("fetch-origin")
-                            .when(!can_fetch, |d| d.opacity(0.5))
-                            .when(can_fetch, |d| {
-                                d.on_click(cx.listener(move |this, _e, _w, cx| {
-                                    let Some(repo) =
-                                        this.repos.iter().find(|r| r.id == fetch_id).cloned()
-                                    else {
-                                        return;
-                                    };
-                                    this.fetch_repo(&repo, cx);
-                                }))
-                            })
-                            .into_any_element()
+                        secondary_button(
+                            &theme,
+                            if compact {
+                                String::new()
+                            } else {
+                                "Fetch Origin".to_string()
+                            },
+                            Some("refresh-cw"),
+                        )
+                        .debug_selector(|| "fetch-origin".to_string())
+                        .id("fetch-origin")
+                        .tooltip(move |_window, cx| {
+                            cx.new(|_| crate::ui::TextTooltip::new(theme, "Fetch origin"))
+                                .into()
+                        })
+                        .when(!can_fetch, |d| d.opacity(0.5))
+                        .when(can_fetch, |d| {
+                            d.on_click(cx.listener(move |this, _e, _w, cx| {
+                                let Some(repo) =
+                                    this.repos.iter().find(|r| r.id == fetch_id).cloned()
+                                else {
+                                    return;
+                                };
+                                this.fetch_repo(&repo, cx);
+                            }))
+                        })
+                        .into_any_element()
                     }),
             )
     }
@@ -1931,9 +2044,15 @@ mod tests {
                 .debug_bounds("inspector-actions")
                 .expect("inspector action bounds");
             assert!(
-                path.left() >= header.left() && path.right() <= actions.left(),
-                "path {path:?} must stay between the header edge and actions {actions:?}"
+                path.left() >= header.left() && path.right() <= header.right(),
+                "path {path:?} must stay inside the header {header:?}"
             );
+            if actions.left() > path.left() + px(1.0) {
+                assert!(
+                    path.right() <= actions.left(),
+                    "path {path:?} must stay left of the action cluster {actions:?}"
+                );
+            }
             assert!(
                 actions.right() <= header.right(),
                 "actions {actions:?} must stay inside the header {header:?}"
