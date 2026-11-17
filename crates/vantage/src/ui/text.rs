@@ -3,8 +3,8 @@
 use gpui::{div, px, Div, ParentElement, Pixels, Rgba, SharedString, Styled};
 
 use crate::theme::{
-    Theme, FONT_DISPLAY, FONT_MONO, FONT_SANS, LH_BASE, LH_LG, LH_SM, LH_XS, TEXT_BASE, TEXT_LG,
-    TEXT_SM, TEXT_XS, W_MEDIUM, W_SEMIBOLD,
+    TextArea, Theme, FONT_DISPLAY, FONT_MONO, FONT_SANS, LH_BASE, LH_LG, LH_SM, LH_XS, TEXT_BASE,
+    TEXT_LG, TEXT_SM, TEXT_XS, W_MEDIUM, W_SEMIBOLD,
 };
 
 pub trait Txt: Styled + Sized {
@@ -13,33 +13,55 @@ pub trait Txt: Styled + Sized {
             .text_size(px(size))
             .line_height(line_height)
     }
+    fn scaled_fam(
+        self,
+        family: &'static str,
+        size: f32,
+        line_height: Pixels,
+        area: TextArea,
+    ) -> Self {
+        let sizes = crate::theme::font_sizes();
+        self.fam(
+            family,
+            sizes.size(size, area),
+            sizes.line(line_height, area),
+        )
+    }
     /// text-xs
     fn xs(self) -> Self {
-        self.fam(FONT_SANS, TEXT_XS, LH_XS)
+        self.scaled_fam(FONT_SANS, TEXT_XS, LH_XS, TextArea::Interface)
     }
     /// text-sm
     fn sm(self) -> Self {
-        self.fam(FONT_SANS, TEXT_SM, LH_SM)
+        self.scaled_fam(FONT_SANS, TEXT_SM, LH_SM, TextArea::Interface)
     }
     /// font-display text-base
     fn display_base(self) -> Self {
-        self.fam(FONT_DISPLAY, TEXT_BASE, LH_BASE)
+        self.scaled_fam(FONT_DISPLAY, TEXT_BASE, LH_BASE, TextArea::Interface)
     }
     /// font-display text-lg
     fn display_lg(self) -> Self {
-        self.fam(FONT_DISPLAY, TEXT_LG, LH_LG)
+        self.scaled_fam(FONT_DISPLAY, TEXT_LG, LH_LG, TextArea::Interface)
     }
     /// font-display text-sm
     fn display_sm(self) -> Self {
-        self.fam(FONT_DISPLAY, TEXT_SM, LH_SM)
+        self.scaled_fam(FONT_DISPLAY, TEXT_SM, LH_SM, TextArea::Interface)
     }
     /// font-display text-xs
     fn display_xs(self) -> Self {
-        self.fam(FONT_DISPLAY, TEXT_XS, LH_XS)
+        self.scaled_fam(FONT_DISPLAY, TEXT_XS, LH_XS, TextArea::Interface)
     }
     /// font-mono text-xs
     fn mono_xs(self) -> Self {
-        self.fam(FONT_MONO, TEXT_XS, LH_XS)
+        self.scaled_fam(FONT_MONO, TEXT_XS, LH_XS, TextArea::Code)
+    }
+    /// Commit-history text on the interface font.
+    fn commit_xs(self) -> Self {
+        self.scaled_fam(FONT_SANS, TEXT_XS, LH_XS, TextArea::Commit)
+    }
+    /// Commit-history text on the monospace font.
+    fn commit_mono_xs(self) -> Self {
+        self.scaled_fam(FONT_MONO, TEXT_XS, LH_XS, TextArea::Commit)
     }
     /// font-mono text-[11px]
     fn medium(self) -> Self {

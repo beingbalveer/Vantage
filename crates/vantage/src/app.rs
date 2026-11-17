@@ -958,6 +958,7 @@ impl VantageApp {
             .as_ref()
             .map(|backend| backend.ui_settings())
             .unwrap_or_default();
+        crate::theme::set_font_sizes(settings.font_sizes());
         let quit_subscription = cx.on_app_quit(|app, _cx| {
             app.flush_state();
             async {}
@@ -2112,6 +2113,32 @@ impl VantageApp {
         };
     }
 
+    /// Install the current interface, commit-list and code text sizes.
+    pub fn apply_font_sizes(&mut self) {
+        crate::theme::set_font_sizes(self.settings.font_sizes());
+    }
+
+    pub fn set_interface_font_size(&mut self, size: f32, cx: &mut Context<Self>) {
+        self.settings.interface_font_size = size;
+        self.apply_font_sizes();
+        self.save_settings(cx);
+        cx.notify();
+    }
+
+    pub fn set_commit_font_size(&mut self, size: f32, cx: &mut Context<Self>) {
+        self.settings.commit_font_size = size;
+        self.apply_font_sizes();
+        self.save_settings(cx);
+        cx.notify();
+    }
+
+    pub fn set_code_font_size(&mut self, size: f32, cx: &mut Context<Self>) {
+        self.settings.code_font_size = size;
+        self.apply_font_sizes();
+        self.save_settings(cx);
+        cx.notify();
+    }
+
     pub fn on_appearance_changed(&mut self, window: &Window, cx: &mut Context<Self>) {
         self.apply_theme(window.appearance());
         cx.notify();
@@ -2193,6 +2220,7 @@ impl VantageApp {
             .set(self.settings.editor_command.clone());
         self.settings_reset_confirm = false;
         self.apply_theme(appearance);
+        self.apply_font_sizes();
         if self.save_settings(cx) {
             self.show_toast("Preferences reset", cx);
         }
@@ -6174,7 +6202,10 @@ impl Render for VantageApp {
             .bg(theme.bg_app)
             .fg(theme.text_app)
             .font_family(crate::theme::FONT_SANS)
-            .text_size(px(crate::theme::TEXT_SM))
+            .text_size(crate::theme::scaled_px(
+                crate::theme::TEXT_SM,
+                crate::theme::TextArea::Interface,
+            ))
             .line_height(crate::theme::LH_SM)
             .child(self.render_top_bar(window, cx));
         if let Some(notice) = self.render_state_recovery(cx) {

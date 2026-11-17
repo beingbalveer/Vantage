@@ -208,6 +208,12 @@ pub struct UiSettings {
     /// content area (sidebar excluded).
     pub right_panel_open: bool,
     pub right_panel_fraction: f32,
+    /// Size of regular interface text in points. Line heights scale with it.
+    pub interface_font_size: f32,
+    /// Size of commit-history row text in points.
+    pub commit_font_size: f32,
+    /// Size of monospace code and diff text in points.
+    pub code_font_size: f32,
 }
 
 impl Default for UiSettings {
@@ -228,6 +234,9 @@ impl Default for UiSettings {
             window_bounds: None,
             right_panel_open: false,
             right_panel_fraction: 0.67,
+            interface_font_size: crate::theme::DEFAULT_INTERFACE_TEXT_SIZE,
+            commit_font_size: crate::theme::DEFAULT_COMMIT_TEXT_SIZE,
+            code_font_size: crate::theme::DEFAULT_CODE_TEXT_SIZE,
         }
     }
 }
@@ -290,7 +299,40 @@ impl UiSettings {
             self.sidebar_width = 256.0;
         }
         self.sidebar_width = self.sidebar_width.clamp(200.0, 360.0);
+        self.interface_font_size = sane_font_size(
+            self.interface_font_size,
+            &[12.0, 13.0, 14.0, 15.0, 16.0],
+            crate::theme::DEFAULT_INTERFACE_TEXT_SIZE,
+        );
+        self.commit_font_size = sane_font_size(
+            self.commit_font_size,
+            &[11.0, 12.0, 13.0, 14.0, 16.0],
+            crate::theme::DEFAULT_COMMIT_TEXT_SIZE,
+        );
+        self.code_font_size = sane_font_size(
+            self.code_font_size,
+            &[11.0, 12.0, 13.0, 14.0, 16.0],
+            crate::theme::DEFAULT_CODE_TEXT_SIZE,
+        );
         self
+    }
+
+    /// The three font-size choices as the process-wide typography config.
+    pub fn font_sizes(&self) -> crate::theme::FontSizes {
+        crate::theme::FontSizes {
+            interface: self.interface_font_size,
+            commit: self.commit_font_size,
+            code: self.code_font_size,
+        }
+    }
+}
+
+/// Accept only a size the Appearance choices actually offer.
+fn sane_font_size(value: f32, choices: &[f32], default: f32) -> f32 {
+    if value.is_finite() && choices.iter().any(|choice| (choice - value).abs() < 0.01) {
+        value
+    } else {
+        default
     }
 }
 
@@ -328,6 +370,38 @@ mod tests {
         assert!(settings.remember_window);
         assert!(!settings.right_panel_open);
         assert_eq!(settings.right_panel_fraction, 0.67);
+        assert_eq!(
+            settings.interface_font_size,
+            crate::theme::DEFAULT_INTERFACE_TEXT_SIZE
+        );
+        assert_eq!(
+            settings.commit_font_size,
+            crate::theme::DEFAULT_COMMIT_TEXT_SIZE
+        );
+        assert_eq!(
+            settings.code_font_size,
+            crate::theme::DEFAULT_CODE_TEXT_SIZE
+        );
+    }
+
+    #[test]
+    fn unsupported_font_sizes_fall_back_to_defaults() {
+        let settings = UiSettings {
+            interface_font_size: 99.0,
+            commit_font_size: f32::NAN,
+            code_font_size: 14.0,
+            ..UiSettings::default()
+        }
+        .sanitized();
+        assert_eq!(
+            settings.interface_font_size,
+            crate::theme::DEFAULT_INTERFACE_TEXT_SIZE
+        );
+        assert_eq!(
+            settings.commit_font_size,
+            crate::theme::DEFAULT_COMMIT_TEXT_SIZE
+        );
+        assert_eq!(settings.code_font_size, 14.0);
     }
 
     #[test]
@@ -372,6 +446,9 @@ mod tests {
             editor_command: "code --wait".to_string(),
             remember_window: false,
             pull_strategy: PullStrategy::Rebase,
+            interface_font_size: 16.0,
+            commit_font_size: 13.0,
+            code_font_size: 14.0,
             ..UiSettings::default()
         };
         let value = serde_json::to_value(&settings).unwrap();
@@ -398,6 +475,9 @@ mod tests {
         assert_eq!(loaded.editor_command, "code --wait");
         assert!(!loaded.remember_window);
         assert_eq!(loaded.pull_strategy, PullStrategy::Rebase);
+        assert_eq!(loaded.interface_font_size, 16.0);
+        assert_eq!(loaded.commit_font_size, 13.0);
+        assert_eq!(loaded.code_font_size, 14.0);
     }
 
     #[test]

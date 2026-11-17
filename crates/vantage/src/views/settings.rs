@@ -322,13 +322,61 @@ impl VantageApp {
             );
         }
 
-        vec![setting_row(
+        let interface_sizes = font_size_choices(
             &theme,
-            "Theme",
-            "System follows the macOS appearance and updates live.",
-            choices,
-        )
-        .into_any_element()]
+            self.settings.interface_font_size,
+            &[12.0, 13.0, 14.0, 15.0, 16.0],
+            "settings-font-interface",
+            cx,
+            VantageApp::set_interface_font_size,
+        );
+        let commit_sizes = font_size_choices(
+            &theme,
+            self.settings.commit_font_size,
+            &[11.0, 12.0, 13.0, 14.0, 16.0],
+            "settings-font-commit",
+            cx,
+            VantageApp::set_commit_font_size,
+        );
+        let code_sizes = font_size_choices(
+            &theme,
+            self.settings.code_font_size,
+            &[11.0, 12.0, 13.0, 14.0, 16.0],
+            "settings-font-code",
+            cx,
+            VantageApp::set_code_font_size,
+        );
+
+        vec![
+            setting_row(
+                &theme,
+                "Theme",
+                "System follows the macOS appearance and updates live.",
+                choices,
+            )
+            .into_any_element(),
+            setting_row(
+                &theme,
+                "Interface text",
+                "Navigation, lists, buttons and labels. Larger sizes scale every interface tier.",
+                interface_sizes,
+            )
+            .into_any_element(),
+            setting_row(
+                &theme,
+                "Commit list",
+                "Commit subjects, authors and timestamps in the Commits tab.",
+                commit_sizes,
+            )
+            .into_any_element(),
+            setting_row(
+                &theme,
+                "Code & diff",
+                "Monospaced patches, diffs and file previews.",
+                code_sizes,
+            )
+            .into_any_element(),
+        ]
     }
 
     fn render_git_settings(
@@ -609,7 +657,10 @@ impl VantageApp {
                                 .min_w(px(0.0))
                                 .truncate()
                                 .font_family(FONT_MONO)
-                                .text_size(px(TEXT_SM))
+                                .text_size(crate::theme::scaled_px(
+                                    TEXT_SM,
+                                    crate::theme::TextArea::Interface,
+                                ))
                                 .line_height(LH_SM)
                                 .child(path),
                         )
@@ -759,6 +810,32 @@ impl VantageApp {
             ))
             .into_any_element()]
     }
+}
+
+/// A compact row of numeric font-size choices.
+fn font_size_choices(
+    theme: &Theme,
+    current: f32,
+    choices: &[f32],
+    id_prefix: &'static str,
+    cx: &mut Context<VantageApp>,
+    on_pick: impl Fn(&mut VantageApp, f32, &mut Context<VantageApp>) + Clone + 'static,
+) -> Div {
+    let mut row = div().flex().gap(px(4.0));
+    for (index, size) in choices.iter().copied().enumerate() {
+        let selected = (current - size).abs() < 0.01;
+        let on_pick = on_pick.clone();
+        row = row.child(
+            crate::ui::choice_button(
+                theme,
+                format!("{size:.0}"),
+                selected,
+                format!("{id_prefix}-{index}"),
+            )
+            .on_click(cx.listener(move |this, _e, _w, cx| on_pick(this, size, cx))),
+        );
+    }
+    row
 }
 
 fn setting_row(

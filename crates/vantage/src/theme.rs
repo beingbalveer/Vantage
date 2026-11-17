@@ -6,6 +6,7 @@
 //! maps to a class used in `src/App.tsx` / `src/components/*.tsx`.
 
 use gpui::{px, rgb, FontWeight, Pixels, Rgba};
+use std::sync::atomic::{AtomicU32, Ordering};
 
 pub const FONT_SANS: &str = "Public Sans";
 pub const FONT_DISPLAY: &str = "Plus Jakarta Sans";
@@ -58,6 +59,101 @@ pub const LH_XS: Pixels = px(16.0);
 pub const LH_SM: Pixels = px(20.0);
 pub const LH_BASE: Pixels = px(24.0);
 pub const LH_LG: Pixels = px(28.0);
+
+/// Default size of regular interface text (the `sm` scale).
+pub const DEFAULT_INTERFACE_TEXT_SIZE: f32 = TEXT_SM;
+/// Default size of text in the commit history list.
+pub const DEFAULT_COMMIT_TEXT_SIZE: f32 = TEXT_XS;
+/// Default size of monospace code and diff text.
+pub const DEFAULT_CODE_TEXT_SIZE: f32 = TEXT_XS;
+
+/// Which block of text a size belongs to.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TextArea {
+    Interface,
+    Commit,
+    Code,
+}
+
+/// User-selected font sizes for the three independently scaled text areas.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct FontSizes {
+    pub interface: f32,
+    pub commit: f32,
+    pub code: f32,
+}
+
+impl Default for FontSizes {
+    fn default() -> Self {
+        Self {
+            interface: DEFAULT_INTERFACE_TEXT_SIZE,
+            commit: DEFAULT_COMMIT_TEXT_SIZE,
+            code: DEFAULT_CODE_TEXT_SIZE,
+        }
+    }
+}
+
+impl FontSizes {
+    fn base(self, area: TextArea) -> f32 {
+        match area {
+            TextArea::Interface => DEFAULT_INTERFACE_TEXT_SIZE,
+            TextArea::Commit => DEFAULT_COMMIT_TEXT_SIZE,
+            TextArea::Code => DEFAULT_CODE_TEXT_SIZE,
+        }
+    }
+
+    fn chosen(self, area: TextArea) -> f32 {
+        match area {
+            TextArea::Interface => self.interface,
+            TextArea::Commit => self.commit,
+            TextArea::Code => self.code,
+        }
+    }
+
+    /// Scale `base` by the selected size for `area`.
+    pub fn size(self, base: f32, area: TextArea) -> f32 {
+        base * (self.chosen(area) / self.base(area))
+    }
+
+    /// Scale a line height by the same factor as the text in `area`.
+    pub fn line(self, base: Pixels, area: TextArea) -> Pixels {
+        px(f32::from(base) * (self.chosen(area) / self.base(area)))
+    }
+}
+
+fn milli(value: f32) -> u32 {
+    (value * 1000.0).round() as u32
+}
+
+static INTERFACE_TEXT_MILLI: AtomicU32 = AtomicU32::new(14_000);
+static COMMIT_TEXT_MILLI: AtomicU32 = AtomicU32::new(12_000);
+static CODE_TEXT_MILLI: AtomicU32 = AtomicU32::new(12_000);
+
+/// Install the user's typography choices for this process.
+pub fn set_font_sizes(sizes: FontSizes) {
+    INTERFACE_TEXT_MILLI.store(milli(sizes.interface), Ordering::Relaxed);
+    COMMIT_TEXT_MILLI.store(milli(sizes.commit), Ordering::Relaxed);
+    CODE_TEXT_MILLI.store(milli(sizes.code), Ordering::Relaxed);
+}
+
+/// The typography choices currently in effect.
+pub fn font_sizes() -> FontSizes {
+    FontSizes {
+        interface: INTERFACE_TEXT_MILLI.load(Ordering::Relaxed) as f32 / 1000.0,
+        commit: COMMIT_TEXT_MILLI.load(Ordering::Relaxed) as f32 / 1000.0,
+        code: CODE_TEXT_MILLI.load(Ordering::Relaxed) as f32 / 1000.0,
+    }
+}
+
+/// Scale a font size for one text area using the active settings.
+pub fn scale_size(base: f32, area: TextArea) -> f32 {
+    font_sizes().size(base, area)
+}
+
+/// A scaled size as `Pixels`, for direct `text_size` calls.
+pub fn scaled_px(base: f32, area: TextArea) -> Pixels {
+    px(scale_size(base, area))
+}
 
 /// Height of the merged app header. The macOS traffic lights are centered in
 /// this band, so changing it also means changing `traffic_light_position`.
@@ -425,5 +521,38 @@ mod tests {
                 "{appearance} text_dim is no longer below 4.5:1; do not use it for text"
             );
         }
+    }
+}
+
+#[cfg(test)]
+mod typography_tests {
+    use super::*;
+
+    #[test]
+    fn areas_scale_independently_and_preserve_line_ratios() {
+        let sizes = FontSizes {
+            interface: 16.0,
+            commit: 12.0,
+            code: 18.0,
+        };
+
+        assert!((sizes.size(TEXT_SM, TextArea::Interface) - 16.0).abs() < 0.01);
+        assert!((sizes.size(TEXT_XS, TextArea::Interface) - 13.714).abs() < 0.01);
+        assert!((sizes.size(TEXT_XS, TextArea::Commit) - 12.0).abs() < 0.01);
+        assert!((sizes.size(TEXT_XS, TextArea::Code) - 18.0).abs() < 0.01);
+
+        let interface_line = sizes.line(LH_SM, TextArea::Interface);
+        assert!((f32::from(interface_line) - 22.857).abs() < 0.01);
+        assert!((f32::from(sizes.line(LH_XS, TextArea::Commit)) - 16.0).abs() < 0.01);
+        assert!((f32::from(sizes.line(LH_XS, TextArea::Code)) - 24.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn defaults_leave_the_existing_scale_unchanged() {
+        let sizes = FontSizes::default();
+        assert!((sizes.size(TEXT_XS, TextArea::Interface) - TEXT_XS).abs() < 0.01);
+        assert!((sizes.size(TEXT_SM, TextArea::Interface) - TEXT_SM).abs() < 0.01);
+        assert!((sizes.size(TEXT_XS, TextArea::Code) - TEXT_XS).abs() < 0.01);
+        assert!((f32::from(sizes.line(LH_XS, TextArea::Commit)) - 16.0).abs() < 0.01);
     }
 }

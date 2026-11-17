@@ -208,7 +208,10 @@ impl VantageApp {
                                         .flex_shrink_0()
                                         .text_center()
                                         .font_family(FONT_MONO)
-                                        .text_size(px(TEXT_XS))
+                                        .text_size(crate::theme::scaled_px(
+                                            TEXT_XS,
+                                            crate::theme::TextArea::Interface,
+                                        ))
                                         .line_height(LH_XS)
                                         .semibold()
                                         .fg(color)
@@ -219,7 +222,10 @@ impl VantageApp {
                                         .flex_1()
                                         .min_w(px(0.0))
                                         .font_family(FONT_MONO)
-                                        .text_size(px(TEXT_XS))
+                                        .text_size(crate::theme::scaled_px(
+                                            TEXT_XS,
+                                            crate::theme::TextArea::Interface,
+                                        ))
                                         .line_height(LH_XS)
                                         .fg(theme.text_soft)
                                         .truncate()
@@ -243,7 +249,10 @@ impl VantageApp {
                                         .flex()
                                         .justify_end()
                                         .font_family(FONT_MONO)
-                                        .text_size(px(TEXT_XS))
+                                        .text_size(crate::theme::scaled_px(
+                                            TEXT_XS,
+                                            crate::theme::TextArea::Interface,
+                                        ))
                                         .line_height(LH_XS)
                                         .child(
                                             div()

@@ -73,7 +73,8 @@ Vantage watches each repository and re-reads only the working trees that changed
 
 - **General** — default view, repository sort, window memory, and the editor command used by
   **Open in Editor** (empty uses `VISUAL`, `EDITOR` or a common editor).
-- **Appearance** — System / Light / Dark, with System following macOS live.
+- **Appearance** — System / Light / Dark, with System following macOS live, plus separate text
+  sizes for the interface, commit list, and code/diff.
 - **Git** — pull strategy, auto-fetch interval, fetch on launch, default branch for empty repos.
 - **Data** — state-file location, reveal the state file, reset preferences.
 - **About** — version, build, Git, system and architecture diagnostics, plus copyable diagnostics and links.
@@ -82,7 +83,7 @@ Sidebar state is remembered automatically. Preferences are stored separately fro
 
 ### Light and dark
 
-The whole interface has first-class light and dark themes. The theme setting lives in **Settings → Appearance** and supports System, Light and Dark.
+The whole interface has first-class light and dark themes. The theme setting lives in **Settings → Appearance** and supports System, Light and Dark. The same section sets independent font sizes for interface text, the commit history, and code/diff text.
 
 ---
 
@@ -213,7 +214,7 @@ standard shortcuts.
 | Close the inspector or a dialog | Click outside a dialog, or press `Esc` in a focused field (Add Repository, branch prompt, amend or inspector) |
 | Submit a group or add-repository field | Press `Enter` in the field |
 
-The three views are currently reachable from the View menu and `Cmd+1/2/3`; the current build does not ship a sidebar view switcher. The menu bar provides the same actions under **Vantage**, **File**, **View**, **Window** and **Help**, including About, Services, Hide, Quit and the standard window commands.
+The three views are reachable from the sidebar, the View menu and `Cmd+1/2/3`. The menu bar provides the same actions under **Vantage**, **File**, **View**, **Window** and **Help**, including About, Services, Hide, Quit and the standard window commands.
 
 ---
 

@@ -48,7 +48,7 @@ pub fn tab(
 /// Segmented option chip used in Settings.
 pub fn choice_button(
     theme: &Theme,
-    label: &'static str,
+    label: impl Into<gpui::SharedString>,
     selected: bool,
     id: String,
 ) -> Stateful<gpui::Div> {
@@ -68,6 +68,7 @@ pub fn choice_button(
         theme.secondary_text
     };
     let hover = theme.secondary_bg_hover;
+    let label = label.into();
 
     div()
         .id(SharedString::from(id))

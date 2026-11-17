@@ -153,7 +153,10 @@ impl VantageApp {
                         div()
                             .flex_shrink_0()
                             .font_family(crate::theme::FONT_MONO)
-                            .text_size(px(crate::theme::TEXT_XS))
+                            .text_size(crate::theme::scaled_px(
+                                crate::theme::TEXT_XS,
+                                crate::theme::TextArea::Interface,
+                            ))
                             .line_height(crate::theme::LH_XS)
                             .fg(if active {
                                 theme.nav_active_text
@@ -362,7 +365,10 @@ impl VantageApp {
                 .child(
                     div()
                         .font_family(crate::theme::FONT_MONO)
-                        .text_size(px(crate::theme::TEXT_XS))
+                        .text_size(crate::theme::scaled_px(
+                            crate::theme::TEXT_XS,
+                            crate::theme::TextArea::Interface,
+                        ))
                         .line_height(crate::theme::LH_XS)
                         .fg(theme.label_muted)
                         .child(self.repos.len().to_string()),
@@ -428,7 +434,10 @@ impl VantageApp {
                     div()
                         .flex_shrink_0()
                         .font_family(crate::theme::FONT_MONO)
-                        .text_size(px(crate::theme::TEXT_XS))
+                        .text_size(crate::theme::scaled_px(
+                            crate::theme::TEXT_XS,
+                            crate::theme::TextArea::Interface,
+                        ))
                         .line_height(crate::theme::LH_XS)
                         .fg(theme.label_muted)
                         .group_hover("group/item", |s| s.opacity(0.0))

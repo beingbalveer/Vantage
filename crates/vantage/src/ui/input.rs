@@ -400,6 +400,9 @@ pub fn field(
         // keeps the field and the button beside it on one baseline.
         FieldVariant::Row => (px(10.0), px(0.0), LH_SM, TEXT_SM),
     };
+    let sizes = crate::theme::font_sizes();
+    let font_size = sizes.size(font_size, crate::theme::TextArea::Interface);
+    let line_height = sizes.line(line_height, crate::theme::TextArea::Interface);
     let left_pad = if variant == FieldVariant::Search {
         px(32.0)
     } else {

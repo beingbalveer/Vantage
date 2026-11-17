@@ -197,7 +197,10 @@ impl VantageApp {
             .child(
                 div()
                     .min_w(px(0.0))
-                    .text_size(px(10.0))
+                    .text_size(crate::theme::scaled_px(
+                        10.0,
+                        crate::theme::TextArea::Interface,
+                    ))
                     .line_height(px(14.0))
                     .font_family(crate::theme::FONT_MONO)
                     .fg(theme.label_muted)
@@ -215,7 +218,10 @@ impl VantageApp {
             .flex_1()
             .min_w(px(96.0))
             .cursor_pointer()
-            .text_size(px(10.0))
+            .text_size(crate::theme::scaled_px(
+                10.0,
+                crate::theme::TextArea::Interface,
+            ))
             .line_height(px(14.0))
             .font_family(crate::theme::FONT_MONO)
             .fg(theme.text_dim)
@@ -816,7 +822,10 @@ impl VantageApp {
                                 .gap(px(12.0))
                                 .flex_shrink_0()
                                 .font_family(crate::theme::FONT_MONO)
-                                .text_size(px(crate::theme::TEXT_XS))
+                                .text_size(crate::theme::scaled_px(
+                                    crate::theme::TEXT_XS,
+                                    crate::theme::TextArea::Interface,
+                                ))
                                 .line_height(crate::theme::LH_XS)
                                 .child(
                                     div()
@@ -1583,7 +1592,7 @@ impl VantageApp {
                 &commit.message,
                 crate::theme::FONT_SANS,
                 crate::theme::W_MEDIUM,
-                crate::theme::TEXT_XS,
+                crate::theme::scale_size(crate::theme::TEXT_XS, crate::theme::TextArea::Commit),
                 message_width,
             );
 
@@ -1654,7 +1663,7 @@ impl VantageApp {
                                         div()
                                             .flex_1()
                                             .min_w(px(0.0))
-                                            .xs()
+                                            .commit_xs()
                                             .medium()
                                             .fg(theme.text_app)
                                             .whitespace_nowrap()
@@ -1669,7 +1678,7 @@ impl VantageApp {
                                     .gap(px(12.0))
                                     .w_full()
                                     .min_w(px(0.0))
-                                    .xs()
+                                    .commit_xs()
                                     .fg(theme.text_meta)
                                     .child(
                                         div()
@@ -1688,7 +1697,7 @@ impl VantageApp {
                                             .child(div().truncate().child(commit.author.clone()))
                                             .child(
                                                 div()
-                                                    .mono_xs()
+                                                    .commit_mono_xs()
                                                     .flex_shrink_0()
                                                     .fg(theme.label_muted)
                                                     .child(short_sha.clone()),
@@ -1764,7 +1773,7 @@ impl VantageApp {
                         .child(icon("arrow-up", IconSize::Xs, theme.status_blue))
                         .child(
                             div()
-                                .xs()
+                                .commit_xs()
                                 .medium()
                                 .fg(theme.status_blue)
                                 .child(divider_label.clone()),
@@ -2264,7 +2273,10 @@ fn branch_count(icon_name: &'static str, word: &'static str, count: u32, color: 
         .child(icon(icon_name, IconSize::Xxs, color))
         .child(
             div()
-                .text_size(px(11.0))
+                .text_size(crate::theme::scaled_px(
+                    11.0,
+                    crate::theme::TextArea::Interface,
+                ))
                 .medium()
                 .fg(color)
                 .child(format!("{count} {word}")),

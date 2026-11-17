@@ -185,7 +185,16 @@ fn badge(theme: &Theme, kind: StatusKind, density: BadgeDensity) -> Div {
         .whitespace_nowrap()
         .child(icon(kind.icon(), IconSize::Xxs, color));
     if !label.is_empty() {
-        badge = badge.child(div().text_size(px(11.0)).medium().fg(color).child(label));
+        badge = badge.child(
+            div()
+                .text_size(crate::theme::scaled_px(
+                    11.0,
+                    crate::theme::TextArea::Interface,
+                ))
+                .medium()
+                .fg(color)
+                .child(label),
+        );
     }
     badge
 }

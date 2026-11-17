@@ -514,7 +514,10 @@ impl VantageApp {
                 .bg(theme.field_bg)
                 .cursor_pointer()
                 .font_family(FONT_SANS)
-                .text_size(px(TEXT_SM))
+                .text_size(crate::theme::scaled_px(
+                    TEXT_SM,
+                    crate::theme::TextArea::Interface,
+                ))
                 .line_height(LH_SM)
                 .fg(theme.field_text)
                 .on_click(cx.listener(|this, _e, _w, cx| {
