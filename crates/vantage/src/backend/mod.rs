@@ -21,7 +21,8 @@ use tokio::runtime::Runtime;
 use vantage_core::git::ops;
 use vantage_core::git::refs::{
     checkout_branch, create_branch, delete_branch, has_upstream, is_commit_on_remote,
-    merge_into_current, rename_branch, sync_fetch, sync_pull, sync_push, PullStrategy,
+    list_branches, merge_into_current, rename_branch, sync_fetch, sync_pull, sync_push,
+    PullStrategy,
 };
 use vantage_core::git::stash::{list_stashes, stash_drop, stash_pop, stash_push};
 use vantage_core::git::status::query_repo_status;
@@ -257,6 +258,18 @@ impl Backend {
         self.runtime
             .block_on(checkout_branch(&self.runner, &path, branch))?;
         Ok(())
+    }
+
+    /// Local branches, freshly read from git for one repository.
+    ///
+    /// Branch prompts use this to confirm the branch they were opened on is
+    /// still there before writing, and to surface git's own error when it is
+    /// not.
+    pub fn local_branches(&self, repo_id: &str) -> Result<Vec<vantage_core::state::BranchInfo>> {
+        let path = self.known_path(repo_id)?;
+        self.runtime
+            .block_on(list_branches(&self.runner, &path))
+            .map_err(Into::into)
     }
 
     /// Create `name` at `start_point` and check it out.
