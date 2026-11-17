@@ -3739,10 +3739,13 @@ impl VantageApp {
             return;
         };
         // One operation per repository at a time: `git` already serialises on
-        // the repo lock, so queueing a second one only delays the UI.
-        if self.busy_repos.insert(repo.id.clone(), op_kind).is_some() {
+        // the repo lock, so queueing a second one only delays the UI. Check
+        // before recording the new kind: a rejected operation must leave the
+        // running one alone, because its kind is what the spinner names.
+        if self.busy_repos.contains_key(&repo.id) {
             return;
         }
+        self.busy_repos.insert(repo.id.clone(), op_kind);
         cx.notify();
 
         let id = repo.id.clone();
