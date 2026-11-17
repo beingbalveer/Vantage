@@ -34,6 +34,15 @@ fn persistence() -> Result<&'static StatePersistence, AppError> {
         .map_err(Clone::clone)
 }
 
+/// Absolute path of the workspace state file.
+///
+/// The location comes from the process-wide handle that owns the writer thread,
+/// so callers that only need the path never construct a second
+/// [`StatePersistence`] (and leak another writer thread).
+pub fn state_path() -> Result<PathBuf, AppError> {
+    Ok(persistence()?.path().to_path_buf())
+}
+
 /// Load the persisted workspace state. Unreadable or corrupt state loads as
 /// defaults (the corrupt file is backed up by `StatePersistence::load`); the
 /// returned warning is only useful to a UI that shows startup notices.
@@ -50,12 +59,6 @@ pub fn load_state() -> (PersistedState, Option<String>) {
 /// Write the workspace state immediately (used after critical mutations).
 pub fn save_state(state: &PersistedState) -> Result<(), AppError> {
     persistence()?.save(state)
-}
-
-/// Absolute path of the shared state file, when its data directory could be
-/// opened.
-pub fn state_path() -> Option<PathBuf> {
-    persistence().ok().map(|state| state.path().to_path_buf())
 }
 
 /// Recoverable files sitting beside the shared state file, newest first.
@@ -484,6 +487,17 @@ mod tests {
             repos: entries,
             ..PersistedState::default()
         }
+    }
+
+    #[test]
+    fn state_path_is_stable_across_calls() {
+        let first = state_path().expect("state path");
+        let second = state_path().expect("state path");
+        assert_eq!(first, second);
+        assert_eq!(first.file_name(), Some(std::ffi::OsStr::new("state.json")));
+        // Both calls are served by the process-wide handle that owns the
+        // writer thread, not by a fresh handle each time.
+        assert_eq!(first.as_path(), persistence().unwrap().path());
     }
 
     #[tokio::test]
