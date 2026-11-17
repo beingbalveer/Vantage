@@ -265,8 +265,10 @@ fn main() {
                     window.on_window_should_close(cx, move |window, cx| {
                         let bounds = window.bounds();
                         let fullscreen = window.is_fullscreen();
-                        bounds_entity
-                            .update(cx, |app, cx| app.save_window_bounds(bounds, fullscreen, cx));
+                        bounds_entity.update(cx, |app, cx| {
+                            app.save_window_bounds(bounds, fullscreen, cx);
+                            app.flush_state();
+                        });
                         true
                     });
                 })
@@ -276,6 +278,7 @@ fn main() {
             entity.update(cx, |app, cx| {
                 app.start_scan(cx);
                 app.start_auto_fetch(cx);
+                app.watch_state_notices(cx);
             });
         }
         cx.activate(true);

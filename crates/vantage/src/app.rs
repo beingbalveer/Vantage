@@ -318,6 +318,10 @@ enum FocusTarget {
 pub struct VantageApp {
     pub theme: Theme,
     pub settings: UiSettings,
+    /// The settings last handed to the writer. A click that leaves preferences
+    /// unchanged (opening the panel that is already open, say) must not queue a
+    /// disk write at all.
+    last_saved_settings: UiSettings,
     pub is_settings_open: bool,
     pub settings_section: SettingsSection,
     pub settings_reset_confirm: bool,
@@ -459,6 +463,8 @@ pub struct VantageApp {
     pending_focus: Option<FocusTarget>,
     /// Set by dialog close paths; consumed by the next render.
     restore_focus: bool,
+    /// Flushes queued preference writes before the process exits.
+    _quit_subscription: gpui::Subscription,
 }
 
 impl VantageApp {
@@ -505,6 +511,10 @@ impl VantageApp {
             .as_ref()
             .map(|backend| backend.ui_settings())
             .unwrap_or_default();
+        let quit_subscription = cx.on_app_quit(|app, _cx| {
+            app.flush_state();
+            async {}
+        });
 
         Self {
             theme: if settings.theme == ThemeChoice::Dark {
@@ -513,6 +523,7 @@ impl VantageApp {
                 Theme::light()
             },
             settings: settings.clone(),
+            last_saved_settings: settings.clone(),
             is_settings_open: false,
             settings_section: SettingsSection::General,
             settings_reset_confirm: false,
@@ -608,6 +619,7 @@ impl VantageApp {
             last_main_focus: None,
             pending_focus: None,
             restore_focus: false,
+            _quit_subscription: quit_subscription,
         }
     }
 
@@ -1022,8 +1034,10 @@ impl VantageApp {
         // is dropped for the repository we are leaving.
         self.composers.switch_to(&id);
         self.selected_repo_id = Some(id);
-        self.settings.right_panel_open = true;
-        self.save_settings(cx);
+        if !self.settings.right_panel_open {
+            self.settings.right_panel_open = true;
+            self.save_settings(cx);
+        }
         if let Some(repo) = self.selected_repo().cloned() {
             self.ensure_avatars(&repo, cx);
         }
@@ -1401,16 +1415,63 @@ impl VantageApp {
     }
 
     pub fn save_settings(&mut self, cx: &mut Context<Self>) -> bool {
+        if self.settings == self.last_saved_settings {
+            return true;
+        }
         let Some(backend) = self.backend.clone() else {
             return false;
         };
         match backend.set_ui_settings(&self.settings) {
-            Ok(()) => true,
+            Ok(()) => {
+                self.last_saved_settings = self.settings.clone();
+                true
+            }
             Err(error) => {
                 self.show_toast(format!("Could not save settings: {error}"), cx);
                 false
             }
         }
+    }
+
+    /// Commit queued preference writes. Called on quit; a failure here has no
+    /// window left to toast in, so it goes to stderr as a last resort.
+    pub fn flush_state(&mut self) {
+        let Some(backend) = self.backend.clone() else {
+            return;
+        };
+        if let Err(error) = backend.flush_state() {
+            eprintln!("failed to save state while quitting: {error}");
+        }
+    }
+
+    /// Poll the writer for problems that happen after a debounced save
+    /// returned. Without this a read-only state directory would look like a
+    /// successful toggle until the next launch.
+    pub fn watch_state_notices(&mut self, cx: &mut Context<Self>) {
+        cx.spawn(async move |this, cx| loop {
+            cx.background_executor()
+                .timer(Duration::from_millis(900))
+                .await;
+
+            let notice = this.update(cx, |app, _| {
+                app.backend
+                    .as_ref()
+                    .and_then(|backend| backend.take_state_notice())
+            });
+            match notice {
+                Ok(Some(message)) => {
+                    if this
+                        .update(cx, |app, cx| app.show_toast(message, cx))
+                        .is_err()
+                    {
+                        break;
+                    }
+                }
+                Ok(None) => {}
+                Err(_) => break,
+            }
+        })
+        .detach();
     }
 
     pub fn save_window_bounds(
