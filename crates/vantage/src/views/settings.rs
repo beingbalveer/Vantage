@@ -710,6 +710,10 @@ impl VantageApp {
                 "License",
                 "https://github.com/beingbalveer/Vantage/blob/main/LICENSE",
             ),
+            (
+                "Third-party notices",
+                "https://github.com/beingbalveer/Vantage/blob/main/THIRD_PARTY_NOTICES.md",
+            ),
         ]
         .into_iter()
         .enumerate()
@@ -752,6 +756,10 @@ impl VantageApp {
                     )
                     .child(links),
             )
+            .child(div().xs().pt(px(2.0)).fg(theme.label_muted).child(
+                "Bundled fonts: Public Sans, Plus Jakarta Sans and JetBrains Mono \
+                         (SIL Open Font License 1.1).",
+            ))
             .into_any_element()]
     }
 }
