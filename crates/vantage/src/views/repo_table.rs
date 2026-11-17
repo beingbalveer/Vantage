@@ -343,18 +343,16 @@ impl VantageApp {
                         div()
                             .flex_1()
                             .min_w(px(0.0))
-                            .text_size(px(10.0))
-                            .line_height(px(14.0))
-                            .font_family(crate::theme::FONT_MONO)
-                            .fg(theme.label_muted)
+                            .mono_xs()
+                            .fg(theme.text_meta)
                             .truncate()
                             .child(row.branch.clone()),
                     )
                     .child(
                         div()
                             .flex_shrink_0()
-                            .text_size(px(11.0))
-                            .fg(theme.text_dim)
+                            .xs()
+                            .fg(theme.text_meta)
                             .whitespace_nowrap()
                             .child(row.activity.clone()),
                     ),
@@ -529,6 +527,7 @@ impl VantageApp {
                     .id("summary-clear")
                     .flex()
                     .items_center()
+                    .justify_center()
                     .gap(px(4.0))
                     .px(px(if compact { 3.0 } else { 6.0 }))
                     .py(px(if compact { 2.0 } else { 3.0 }))

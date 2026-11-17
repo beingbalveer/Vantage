@@ -67,8 +67,7 @@ impl VantageApp {
                             .child("Settings"),
                     )
                     .child(
-                        crate::ui::icon_button(&theme, "x")
-                            .id("settings-close")
+                        crate::ui::icon_button(&theme, "x", "settings-close", "Close settings")
                             .on_click(cx.listener(|this, _e, _w, cx| this.close_settings(cx))),
                     ),
             )
@@ -544,9 +543,7 @@ impl VantageApp {
                                         .fg(theme.text_body)
                                         .child(file_name),
                                 )
-                                .child(
-                                    div().x11().fg(theme.label_muted).child(backup.kind.label()),
-                                ),
+                                .child(div().xs().fg(theme.label_muted).child(backup.kind.label())),
                         )
                         .child(
                             secondary_button(&theme, "Reveal", Some("external-link"))

@@ -1,10 +1,10 @@
 //! Typography helpers. These cascade to children like CSS text classes.
 
-use gpui::{px, Pixels, Rgba, Styled};
+use gpui::{div, px, Div, ParentElement, Pixels, Rgba, SharedString, Styled};
 
 use crate::theme::{
-    FONT_DISPLAY, FONT_MONO, FONT_SANS, LH_BASE, LH_LG, LH_SM, LH_XS, TEXT_BASE, TEXT_LG, TEXT_SM,
-    TEXT_XS, W_MEDIUM, W_SEMIBOLD,
+    Theme, FONT_DISPLAY, FONT_MONO, FONT_SANS, LH_BASE, LH_LG, LH_SM, LH_XS, TEXT_BASE, TEXT_LG,
+    TEXT_SM, TEXT_XS, W_MEDIUM, W_SEMIBOLD,
 };
 
 pub trait Txt: Styled + Sized {
@@ -20,10 +20,6 @@ pub trait Txt: Styled + Sized {
     /// text-sm
     fn sm(self) -> Self {
         self.fam(FONT_SANS, TEXT_SM, LH_SM)
-    }
-    /// text-[11px]
-    fn x11(self) -> Self {
-        self.fam(FONT_SANS, 11.0, px(16.0))
     }
     /// font-display text-base
     fn display_base(self) -> Self {
@@ -58,3 +54,23 @@ pub trait Txt: Styled + Sized {
 }
 
 impl<T: Styled> Txt for T {}
+
+/// A visible label directly above a form field.
+///
+/// GPUI 0.2.2 has no `for`/`aria-labelledby` association, so placement and
+/// contrast are the association. Keep this adjacent to the field it names.
+pub fn field_label(theme: &Theme, text: impl Into<SharedString>) -> Div {
+    div()
+        .mb(px(6.0))
+        .xs()
+        .medium()
+        .fg(theme.text_body)
+        .child(text.into())
+}
+
+/// A quiet line that explains what Enter and Escape will do in a dialog.
+///
+/// Only add one where the behaviour is actually wired up.
+pub fn keyboard_hint(theme: &Theme, text: impl Into<SharedString>) -> Div {
+    div().xs().fg(theme.text_meta).child(text.into())
+}

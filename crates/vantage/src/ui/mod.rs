@@ -6,6 +6,7 @@
 
 pub mod avatar;
 pub mod button;
+pub mod focus;
 pub mod icon;
 pub mod input;
 pub mod status;
@@ -24,7 +25,7 @@ pub use icon::{icon, icon_button, spinner};
 pub use input::{apply_field_key, field, FieldKey, FieldState, FieldVariant};
 pub use status::{status_badges, BadgeDensity};
 pub use tabs::{choice_button, tab};
-pub use text::Txt;
+pub use text::{field_label, keyboard_hint, Txt};
 pub use toggle::{checkbox, switch};
-pub use tokens::IconSize;
-pub use tooltip::{IdentityTooltip, TextTooltip};
+pub use tokens::{hit_target, IconSize, HIT_TARGET_MIN, HIT_TARGET_PRIMARY};
+pub use tooltip::{label_tooltip, IdentityTooltip, TextTooltip};

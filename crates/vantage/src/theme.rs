@@ -112,7 +112,13 @@ pub struct Theme {
     pub row_border: Rgba,    // divide-slate-200 / dark:divide-slate-800
     pub text_soft: Rgba,     // text-slate-800   / dark:text-slate-200
     pub text_body: Rgba,     // text-slate-600   / dark:text-slate-300
-    pub text_dim: Rgba,      // text-slate-400   / dark:text-slate-600
+    /// Useful secondary text — timestamps, branches, paths, counts. Chosen so
+    /// every pair stays at or above WCAG AA (4.5:1) on both the panel and the
+    /// app background. See the contrast tests at the bottom of this file.
+    pub text_meta: Rgba, // text-slate-600 / dark:text-slate-400
+    /// Decorative only: separators, disabled glyphs and the large empty-state
+    /// icon. It measures below 4.5:1 in both themes, so it must not carry text.
+    pub text_dim: Rgba, // text-slate-400 / dark:text-slate-600
 
     // Sync / status colours
     pub status_amber: Rgba, // text-amber-700   / dark:text-amber-400
@@ -144,6 +150,9 @@ pub struct Theme {
     pub error_border: Rgba, // border-red-200 / dark:border-red-900
     pub error_text: Rgba,   // text-red-700 / dark:text-red-400
     pub selection_handle: Rgba,
+    /// Visible keyboard-focus ring. Non-text UI needs 3:1; this pair is well
+    /// above that in both appearances.
+    pub focus_ring: Rgba,
 }
 
 impl Theme {
@@ -184,6 +193,7 @@ impl Theme {
             row_border: rgb(SLATE_200),
             text_soft: rgb(SLATE_800),
             text_body: rgb(SLATE_600),
+            text_meta: rgb(SLATE_600),
             text_dim: rgb(SLATE_400),
 
             status_amber: rgb(AMBER_700),
@@ -214,6 +224,7 @@ impl Theme {
             error_border: rgb(RED_200),
             error_text: rgb(RED_700),
             selection_handle: rgb(BLUE_600),
+            focus_ring: rgb(BLUE_600),
         }
     }
 
@@ -254,6 +265,7 @@ impl Theme {
             row_border: rgb(SLATE_800),
             text_soft: rgb(SLATE_200),
             text_body: rgb(SLATE_300),
+            text_meta: rgb(SLATE_400),
             text_dim: rgb(SLATE_600),
 
             status_amber: rgb(AMBER_400),
@@ -282,6 +294,136 @@ impl Theme {
             error_border: rgb(RED_900),
             error_text: rgb(RED_400),
             selection_handle: rgb(BLUE_400),
+            focus_ring: rgb(BLUE_400),
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// WCAG 2.1 relative luminance for an opaque colour.
+    fn luminance(color: Rgba) -> f64 {
+        fn channel(value: f32) -> f64 {
+            let value = f64::from(value);
+            if value <= 0.04045 {
+                value / 12.92
+            } else {
+                ((value + 0.055) / 1.055).powf(2.4)
+            }
+        }
+        0.2126 * channel(color.r) + 0.7152 * channel(color.g) + 0.0722 * channel(color.b)
+    }
+
+    fn contrast(a: Rgba, b: Rgba) -> f64 {
+        let (bright, dark) = {
+            let (a, b) = (luminance(a), luminance(b));
+            if a >= b {
+                (a, b)
+            } else {
+                (b, a)
+            }
+        };
+        (bright + 0.05) / (dark + 0.05)
+    }
+
+    fn assert_contrast(label: &str, foreground: Rgba, background: Rgba, minimum: f64) {
+        let ratio = contrast(foreground, background);
+        assert!(
+            ratio >= minimum,
+            "{label}: {ratio:.2}:1 is below the {minimum:.1}:1 minimum"
+        );
+    }
+
+    fn assert_text_contrast(label: &str, foreground: Rgba, background: Rgba) {
+        assert_contrast(label, foreground, background, 4.5);
+    }
+
+    #[test]
+    fn metadata_text_meets_wcag_aa_in_both_themes() {
+        for (appearance, theme) in [("light", Theme::light()), ("dark", Theme::dark())] {
+            for (surface, background) in [("panel", theme.panel), ("app", theme.bg_app)] {
+                assert_text_contrast(
+                    &format!("{appearance} text_meta on {surface}"),
+                    theme.text_meta,
+                    background,
+                );
+                assert_text_contrast(
+                    &format!("{appearance} text_body on {surface}"),
+                    theme.text_body,
+                    background,
+                );
+            }
+            assert_text_contrast(
+                &format!("{appearance} text_app on panel"),
+                theme.text_app,
+                theme.panel,
+            );
+            assert_text_contrast(
+                &format!("{appearance} text_soft on panel"),
+                theme.text_soft,
+                theme.panel,
+            );
+            assert_text_contrast(
+                &format!("{appearance} label_muted on panel"),
+                theme.label_muted,
+                theme.panel,
+            );
+        }
+    }
+
+    #[test]
+    fn status_and_accent_text_meet_wcag_aa_in_both_themes() {
+        for (appearance, theme) in [("light", Theme::light()), ("dark", Theme::dark())] {
+            for (name, color) in [
+                ("status_amber", theme.status_amber),
+                ("status_red", theme.status_red),
+                ("status_blue", theme.status_blue),
+                ("status_green", theme.status_green),
+                ("add_text", theme.add_text),
+                ("del_text", theme.del_text),
+                ("accent_text", theme.accent_text),
+                ("error_text", theme.error_text),
+            ] {
+                assert_text_contrast(&format!("{appearance} {name} on panel"), color, theme.panel);
+            }
+        }
+    }
+
+    #[test]
+    fn diff_text_meets_wcag_aa_in_both_themes() {
+        for (appearance, theme) in [("light", Theme::light()), ("dark", Theme::dark())] {
+            for (name, color) in [
+                ("diff_meta", theme.diff_meta),
+                ("diff_add", theme.diff_add),
+                ("diff_del", theme.diff_del),
+                ("diff_hunk", theme.diff_hunk),
+            ] {
+                assert_text_contrast(&format!("{appearance} {name}"), color, theme.diff_bg);
+            }
+        }
+    }
+
+    #[test]
+    fn focus_ring_meets_non_text_contrast() {
+        for (appearance, theme) in [("light", Theme::light()), ("dark", Theme::dark())] {
+            assert_contrast(
+                &format!("{appearance} focus_ring on panel"),
+                theme.focus_ring,
+                theme.panel,
+                3.0,
+            );
+        }
+    }
+
+    #[test]
+    fn dim_text_stays_decorative() {
+        for (appearance, theme) in [("light", Theme::light()), ("dark", Theme::dark())] {
+            assert!(
+                contrast(theme.text_dim, theme.panel) < 4.5,
+                "{appearance} text_dim is no longer below 4.5:1; do not use it for text"
+            );
         }
     }
 }

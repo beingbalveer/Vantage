@@ -5,8 +5,8 @@ use gpui::{deferred, div, prelude::*, px, Context, Div, IntoElement, Styled, Win
 use crate::app::{InspectorTab, RepoOp, VantageApp};
 use crate::theme::Theme;
 use crate::ui::{
-    accent_button, accent_button_with, checkbox, disabled_button, secondary_button,
-    secondary_button_with, spinner, Txt,
+    accent_button, accent_button_with, checkbox, disabled_button, label_tooltip, secondary_button,
+    secondary_button_with, spinner, Txt, HIT_TARGET_MIN,
 };
 use crate::ui::{icon, IconSize};
 
@@ -123,9 +123,13 @@ impl VantageApp {
                             .child("Repository Details"),
                     )
                     .child(
-                        crate::ui::icon_button(&theme, "x")
-                            .id("close-right-panel")
-                            .on_click(cx.listener(|this, _e, _w, cx| this.close_right_panel(cx))),
+                        crate::ui::icon_button(
+                            &theme,
+                            "x",
+                            "close-right-panel",
+                            "Close details panel",
+                        )
+                        .on_click(cx.listener(|this, _e, _w, cx| this.close_right_panel(cx))),
                     ),
             )
             .child(
@@ -278,9 +282,8 @@ impl VantageApp {
                 }),
             );
 
-        let close = crate::ui::icon_button(&theme, "x")
+        let close = crate::ui::icon_button(&theme, "x", "close-inspector", "Close details panel")
             .debug_selector(|| "close-inspector".to_string())
-            .id("close-inspector")
             .on_click(cx.listener(|this, _e, _w, cx| this.close_right_panel(cx)));
         let actions = self.render_action_buttons(repo, compact, cx);
 
@@ -371,13 +374,14 @@ impl VantageApp {
                     .id("group-dropdown")
                     .flex()
                     .items_center()
+                    .justify_center()
                     .gap(px(4.0))
-                    .px(px(6.0))
-                    .py(px(3.0))
+                    .h(px(HIT_TARGET_MIN))
+                    .px(px(8.0))
                     .rounded(px(5.0))
                     .cursor_pointer()
                     .xs()
-                    .fg(theme.label_muted)
+                    .fg(theme.text_meta)
                     .whitespace_nowrap()
                     .hover(move |s| s.bg(theme.nav_hover_bg).fg(theme.text_soft))
                     .on_click(cx.listener(|this, _e, _w, cx| {
@@ -385,13 +389,13 @@ impl VantageApp {
                         cx.notify();
                     }))
                     .child(current.clone())
-                    .child(icon("chevron-down", IconSize::Xs, theme.icon_idle)),
+                    .child(icon("chevron-down", IconSize::Xs, theme.label_muted)),
             );
 
         if menu_open {
             let mut menu = div()
                 .absolute()
-                .top(px(24.0))
+                .top(px(HIT_TARGET_MIN + 2.0))
                 .right(px(0.0))
                 .min_w(px(160.0))
                 .flex()
@@ -414,7 +418,7 @@ impl VantageApp {
                         .justify_between()
                         .gap(px(8.0))
                         .px(px(8.0))
-                        .py(px(6.0))
+                        .py(px(8.0))
                         .rounded(px(4.0))
                         .cursor_pointer()
                         .xs()
@@ -549,7 +553,7 @@ impl VantageApp {
                     .gap(px(10.0))
                     .w_full()
                     .px(px(14.0))
-                    .py(px(8.0))
+                    .py(px(4.0))
                     .bg(theme.table_head_bg)
                     .border_b_1()
                     .border_color(theme.row_border)
@@ -609,12 +613,15 @@ impl VantageApp {
                                 .child(
                                     div()
                                         .id("cancel-amend")
-                                        .px(px(2.0))
+                                        .flex()
+                                        .items_center()
+                                        .h(px(HIT_TARGET_MIN))
+                                        .px(px(8.0))
                                         .rounded(px(4.0))
                                         .cursor_pointer()
                                         .xs()
                                         .medium()
-                                        .fg(theme.label_muted)
+                                        .fg(theme.text_meta)
                                         .hover(move |s| s.fg(theme.status_red).underline())
                                         .child("Cancel")
                                         .on_click(cx.listener(|this, _e, _w, cx| {
@@ -629,13 +636,14 @@ impl VantageApp {
                             .flex()
                             .items_center()
                             .justify_center()
-                            .w(px(22.0))
-                            .h(px(22.0))
+                            .w(px(HIT_TARGET_MIN))
+                            .h(px(HIT_TARGET_MIN))
                             .rounded(px(5.0))
                             .flex_shrink_0()
                             .cursor_pointer()
                             .hover(move |s| s.bg(theme.nav_hover_bg))
-                            .child(icon("more-horizontal", IconSize::Xs, theme.icon_idle))
+                            .tooltip(label_tooltip(theme, "Changes actions"))
+                            .child(icon("more-horizontal", IconSize::Sm, theme.label_muted))
                             .on_mouse_down(
                                 gpui::MouseButton::Left,
                                 cx.listener({
@@ -685,7 +693,7 @@ impl VantageApp {
                         .justify_between()
                         .gap(px(12.0))
                         .px(px(14.0))
-                        .py(px(8.0))
+                        .py(px(4.0))
                         .xs()
                         .hover(move |s| s.bg(theme.row_hover_bg))
                         .on_mouse_down(
@@ -716,6 +724,14 @@ impl VantageApp {
                                             "stage-{}",
                                             file.path
                                         )))
+                                        .tooltip(label_tooltip(
+                                            theme,
+                                            if file.staged {
+                                                "Unstage file"
+                                            } else {
+                                                "Stage file"
+                                            },
+                                        ))
                                         .on_click(cx.listener(move |this, _e, _w, cx| {
                                             this.toggle_file_stage(&repo_id, &file_path, cx);
                                         })),
@@ -725,9 +741,7 @@ impl VantageApp {
                                         .w(px(16.0))
                                         .flex_shrink_0()
                                         .text_center()
-                                        .font_family(crate::theme::FONT_MONO)
-                                        .text_size(px(crate::theme::TEXT_XS))
-                                        .line_height(crate::theme::LH_XS)
+                                        .mono_xs()
                                         .semibold()
                                         .fg(status_color)
                                         .child(crate::model::file_status_code(file.status)),
@@ -747,6 +761,7 @@ impl VantageApp {
                                         .gap(px(6.0))
                                         .flex_1()
                                         .min_w(px(0.0))
+                                        .h(px(HIT_TARGET_MIN))
                                         .cursor_pointer()
                                         .hover(|s| s.underline())
                                         .on_click(cx.listener(move |this, _e, _w, cx| {
@@ -843,12 +858,10 @@ impl VantageApp {
                     .border_color(theme.divider)
                     .id(gpui::SharedString::from(format!("diff-{}", file.path)))
                     .overflow_x_scroll()
-                    .font_family(crate::theme::FONT_MONO)
-                    .text_size(px(11.0))
-                    .line_height(px(16.0));
+                    .mono_xs();
 
                 if file.diff_preview.is_empty() {
-                    diff = diff.child(div().px(px(12.0)).py(px(2.0)).fg(theme.text_dim).child(
+                    diff = diff.child(div().px(px(12.0)).py(px(2.0)).fg(theme.text_meta).child(
                         match file.status {
                             crate::model::FileChangeStatus::Untracked => {
                                 "New file — nothing to diff against yet."
@@ -1073,7 +1086,7 @@ impl VantageApp {
                     .flex_col()
                     .gap(px(2.0))
                     .min_w(px(0.0))
-                    .child(div().xs().fg(theme.label_muted).child(headline))
+                    .child(div().xs().fg(theme.text_meta).child(headline))
                     .child(
                         div()
                             .xs()
@@ -1096,9 +1109,10 @@ impl VantageApp {
             .id("commit-back")
             .flex()
             .items_center()
+            .justify_center()
             .gap(px(4.0))
-            .px(px(6.0))
-            .py(px(3.0))
+            .h(px(HIT_TARGET_MIN))
+            .px(px(8.0))
             .rounded(px(5.0))
             .cursor_pointer()
             .xs()
@@ -1133,7 +1147,7 @@ impl VantageApp {
             .child(
                 div()
                     .mono_xs()
-                    .fg(theme.label_muted)
+                    .fg(theme.text_meta)
                     .flex_shrink_0()
                     .child(view.sha.clone()),
             )
@@ -1149,7 +1163,7 @@ impl VantageApp {
                     div()
                         .flex_shrink_0()
                         .xs()
-                        .fg(theme.label_muted)
+                        .fg(theme.text_meta)
                         .whitespace_nowrap()
                         .child(view.time.clone()),
                 )
@@ -1162,8 +1176,7 @@ impl VantageApp {
                         .items_center()
                         .gap(px(8.0))
                         .flex_shrink_0()
-                        .font_family(crate::theme::FONT_MONO)
-                        .text_size(px(11.0))
+                        .mono_xs()
                         .child(
                             div()
                                 .fg(theme.add_text)
@@ -1182,13 +1195,14 @@ impl VantageApp {
                     .flex()
                     .items_center()
                     .justify_center()
-                    .w(px(22.0))
-                    .h(px(22.0))
+                    .w(px(HIT_TARGET_MIN))
+                    .h(px(HIT_TARGET_MIN))
                     .rounded(px(5.0))
                     .cursor_pointer()
                     .flex_shrink_0()
                     .hover(move |s| s.bg(theme.nav_hover_bg))
-                    .child(icon("panel-right", IconSize::Xs, theme.icon_idle))
+                    .tooltip(label_tooltip(theme, "Toggle wide commit view"))
+                    .child(icon("panel-right", IconSize::Sm, theme.label_muted))
                     .on_click(cx.listener(|this, _e, _w, cx| this.toggle_commit_wide(cx))),
             );
 
@@ -1235,7 +1249,7 @@ impl VantageApp {
                     .gap(px(8.0))
                     .w_full()
                     .px(px(10.0))
-                    .py(px(6.0))
+                    .py(px(8.0))
                     .cursor_pointer()
                     .when(selected, |d| d.bg(theme.accent_soft))
                     .when(!selected, |d| d.hover(move |s| s.bg(theme.row_hover_bg)))
@@ -1252,8 +1266,7 @@ impl VantageApp {
                             .w(px(12.0))
                             .flex_shrink_0()
                             .text_center()
-                            .font_family(crate::theme::FONT_MONO)
-                            .text_size(px(11.0))
+                            .mono_xs()
                             .semibold()
                             .fg(code_color)
                             .child(code),
@@ -1274,14 +1287,7 @@ impl VantageApp {
         // Diff for the selected file.
         let body = match view.files.get(view.selected) {
             Some(file) => {
-                let mut diff = div()
-                    .flex()
-                    .flex_col()
-                    .w_full()
-                    .py(px(4.0))
-                    .font_family(crate::theme::FONT_MONO)
-                    .text_size(px(11.0))
-                    .line_height(px(16.0));
+                let mut diff = div().flex().flex_col().w_full().py(px(4.0)).mono_xs();
                 for line in &file.lines {
                     diff = diff.child(preview_row(&theme, line));
                 }
@@ -1509,7 +1515,7 @@ impl VantageApp {
                                     .w_full()
                                     .min_w(px(0.0))
                                     .xs()
-                                    .fg(theme.label_muted)
+                                    .fg(theme.text_meta)
                                     .child(
                                         div()
                                             .flex()
@@ -1543,6 +1549,9 @@ impl VantageApp {
                                             // live.
                                             trailing = trailing.child(
                                                 div()
+                                                    .id(gpui::SharedString::from(format!(
+                                                        "local-only-{index}"
+                                                    )))
                                                     .flex()
                                                     .items_center()
                                                     .justify_center()
@@ -1553,6 +1562,10 @@ impl VantageApp {
                                                     .bg(crate::theme::alpha(
                                                         theme.label_muted,
                                                         0.16,
+                                                    ))
+                                                    .tooltip(label_tooltip(
+                                                        theme,
+                                                        "Not pushed to remote",
                                                     ))
                                                     .child(icon(
                                                         "arrow-up",
@@ -1628,7 +1641,7 @@ impl VantageApp {
                 .child(
                     div()
                         .xs()
-                        .fg(theme.label_muted)
+                        .fg(theme.text_meta)
                         .whitespace_nowrap()
                         .child(branch.last_commit_time.clone()),
                 );
@@ -1691,7 +1704,7 @@ impl VantageApp {
                                     d.child(
                                         div()
                                             .xs()
-                                            .fg(theme.label_muted)
+                                            .fg(theme.text_meta)
                                             .whitespace_nowrap()
                                             .child("\u{00b7} Default"),
                                     )

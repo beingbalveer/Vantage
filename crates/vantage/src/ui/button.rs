@@ -6,7 +6,7 @@ use crate::theme::Theme;
 
 use super::icon::icon;
 use super::text::Txt;
-use super::tokens::{IconSize, RADIUS_MD, ROW_CONTROL_HEIGHT};
+use super::tokens::{primary_hit_target, IconSize, HIT_TARGET_MIN, RADIUS_MD, ROW_CONTROL_HEIGHT};
 
 /// Solid call-to-action. The label takes anything that is an element, so a
 /// caller can put a count in it (`Commit 3 files`).
@@ -18,9 +18,10 @@ pub fn primary_button(
     let mut button = div()
         .flex()
         .items_center()
+        .justify_center()
         .gap(px(6.0))
-        .px(px(14.0))
-        .py(px(6.0))
+        .h(px(primary_hit_target(HIT_TARGET_MIN)))
+        .px(px(16.0))
         .rounded(px(RADIUS_MD))
         .bg(theme.primary_bg)
         .cursor_pointer()
@@ -59,9 +60,10 @@ pub fn secondary_button_with(
     let mut button = div()
         .flex()
         .items_center()
+        .justify_center()
         .gap(px(6.0))
+        .h(px(HIT_TARGET_MIN))
         .px(px(12.0))
-        .py(px(6.0))
         .rounded(px(RADIUS_MD))
         .border_1()
         .border_color(theme.secondary_border)

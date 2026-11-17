@@ -5,8 +5,8 @@ use gpui::{deferred, div, prelude::*, px, relative, Context, IntoElement, Styled
 
 use crate::app::{FieldId, VantageApp, MODAL_KEY_CONTEXT};
 use crate::theme::{FONT_SANS, LH_SM, TEXT_SM};
-use crate::ui::{icon, IconSize};
-use crate::ui::{secondary_button, FieldVariant, Txt};
+use crate::ui::{field_label, keyboard_hint, secondary_button, FieldVariant, Txt};
+use crate::ui::{icon, IconSize, HIT_TARGET_PRIMARY};
 
 impl VantageApp {
     pub fn render_add_repo_modal(
@@ -67,8 +67,7 @@ impl VantageApp {
                             .child("Add Local Repository"),
                     )
                     .child(
-                        crate::ui::icon_button(&theme, "x")
-                            .id("close-modal")
+                        crate::ui::icon_button(&theme, "x", "close-modal", "Close dialog")
                             .on_click(cx.listener(|this, _e, _w, cx| this.close_add_modal(cx))),
                     ),
             );
@@ -117,14 +116,14 @@ impl VantageApp {
                 .child(icon("check", IconSize::Xs, theme.status_green))
                 .child(
                     div()
-                        .x11()
+                        .xs()
                         .fg(theme.text_body)
                         .child(format!("Ready to add {name}")),
                 ),
             None => div()
-                .x11()
-                .fg(theme.text_dim)
-                .child("Vantage detects the Git repository in this folder."),
+                .xs()
+                .fg(theme.text_meta)
+                .child("Vantage reads the name and branch from this folder."),
         };
 
         form = form.child(
@@ -175,8 +174,11 @@ impl VantageApp {
         let submit_label = if busy { "Adding…" } else { "Add Repository" };
         let mut submit = div()
             .id("modal-submit")
+            .flex()
+            .items_center()
+            .justify_center()
+            .h(px(HIT_TARGET_PRIMARY))
             .px(px(16.0))
-            .py(px(8.0))
             .rounded(px(8.0))
             .bg(theme.primary_bg)
             .xs()
@@ -196,26 +198,37 @@ impl VantageApp {
             div()
                 .flex()
                 .items_center()
-                .justify_end()
-                .gap(px(10.0))
+                .justify_between()
+                .gap(px(12.0))
                 .pt(px(8.0))
+                .child(keyboard_hint(&theme, "Enter adds · Esc closes"))
                 .child(
                     div()
-                        .id("modal-cancel")
-                        .px(px(16.0))
-                        .py(px(8.0))
-                        .rounded(px(8.0))
-                        .border_1()
-                        .border_color(theme.secondary_border)
-                        .cursor_pointer()
-                        .xs()
-                        .medium()
-                        .fg(theme.secondary_text)
-                        .hover(move |s| s.bg(theme.secondary_bg_hover))
-                        .on_click(cx.listener(|this, _e, _w, cx| this.close_add_modal(cx)))
-                        .child("Cancel"),
-                )
-                .child(submit),
+                        .flex()
+                        .items_center()
+                        .justify_end()
+                        .gap(px(10.0))
+                        .child(
+                            div()
+                                .id("modal-cancel")
+                                .flex()
+                                .items_center()
+                                .justify_center()
+                                .h(px(HIT_TARGET_PRIMARY))
+                                .px(px(16.0))
+                                .rounded(px(8.0))
+                                .border_1()
+                                .border_color(theme.secondary_border)
+                                .cursor_pointer()
+                                .xs()
+                                .medium()
+                                .fg(theme.secondary_text)
+                                .hover(move |s| s.bg(theme.secondary_bg_hover))
+                                .on_click(cx.listener(|this, _e, _w, cx| this.close_add_modal(cx)))
+                                .child("Cancel"),
+                        )
+                        .child(submit),
+                ),
         );
 
         card = card.child(form);
@@ -310,7 +323,7 @@ impl VantageApp {
                         .justify_between()
                         .gap(px(8.0))
                         .px(px(8.0))
-                        .py(px(6.0))
+                        .py(px(8.0))
                         .rounded(px(4.0))
                         .cursor_pointer()
                         .xs()
@@ -343,15 +356,6 @@ impl VantageApp {
         options.push("__new__".to_string());
         options
     }
-}
-
-fn field_label(theme: &crate::theme::Theme, text: &'static str) -> impl IntoElement {
-    div()
-        .mb(px(6.0))
-        .xs()
-        .medium()
-        .fg(theme.secondary_text)
-        .child(text)
 }
 
 #[cfg(test)]
@@ -510,5 +514,30 @@ mod tests {
                 "adding while a group is selected should use that group"
             );
         });
+    }
+
+    #[gpui::test]
+    fn escape_from_the_path_field_closes_the_dialog(cx: &mut TestAppContext) {
+        use crate::app::FieldId;
+
+        let app = cx.new(VantageApp::new);
+        let (_root, cx) = cx.add_window_view(|_window, _cx| RootView::new(app.clone()));
+
+        cx.update(|window, cx| {
+            app.update(cx, |app, cx| app.open_add_modal(cx));
+            let focus = app.read(cx).field_focus(FieldId::ModalPath);
+            window.focus(&focus);
+            window.draw(cx).clear();
+        });
+        cx.run_until_parked();
+        cx.update(|window, cx| {
+            window.draw(cx).clear();
+        });
+
+        cx.simulate_keystrokes("escape");
+        assert!(
+            !cx.update(|_window, cx| app.read(cx).is_add_modal_open),
+            "Esc from the focused path field should close the dialog"
+        );
     }
 }

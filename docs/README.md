@@ -12,6 +12,8 @@ Current documentation:
 - [SAFETY_TEST_MATRIX](SAFETY_TEST_MATRIX.md) — P0/P1 branches, regression tests and coverage gaps.
 - [PERFORMANCE](PERFORMANCE.md) — benchmark harness, baseline metrics and regression budgets.
 - [GPUI upgrade plan](GPUI_UPGRADE_PLAN.md) — P3-09: version options, risks and the GPUI migration plan.
+- [ACCESSIBILITY](ACCESSIBILITY.md) — contrast, text sizes, hit targets, labels and
+  the current GPUI accessibility limits.
 - [crates/vantage/README](../crates/vantage/README.md) — the desktop app crate in detail.
 
 ## Archive

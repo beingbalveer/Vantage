@@ -1,4 +1,17 @@
 //! Single-line text input: state, key handling and chrome.
+//!
+//! This is a deliberately small custom editor painted from a plain string.
+//! GPUI 0.2.2 does not give a div-based field an IME session or glyph metrics,
+//! so the known limits are:
+//!
+//! - no IME composition (CJK, dead keys, emoji pickers);
+//! - no mouse caret placement — a click moves the caret to the end, and a
+//!   double-click selects the whole line;
+//! - no undo/redo history and no drag-to-select.
+//!
+//! Those are tracked as a larger input replacement, not something this module
+//! pretends to solve. Keyboard editing, selection, copy/cut/paste and a visible
+//! focus ring are implemented here.
 
 use gpui::{
     div, point, prelude::*, px, ClipboardItem, Div, ElementId, KeyDownEvent, ScrollHandle, Styled,
@@ -6,6 +19,7 @@ use gpui::{
 
 use crate::theme::{Theme, FONT_SANS, LH_SM, LH_XS, TEXT_SM, TEXT_XS};
 
+use super::focus::focus_ring;
 use super::icon::icon;
 use super::text::Txt;
 use super::tokens::{IconSize, ROW_CONTROL_HEIGHT};
@@ -380,8 +394,8 @@ pub fn field(
 ) -> Div {
     let (pad_x, pad_y, line_height, font_size) = match variant {
         FieldVariant::Form => (px(12.0), px(8.0), LH_SM, TEXT_SM),
-        FieldVariant::Small => (px(10.0), px(6.0), LH_XS, TEXT_XS),
-        FieldVariant::Search => (px(12.0), px(6.0), LH_XS, TEXT_XS),
+        FieldVariant::Small => (px(10.0), px(8.0), LH_XS, TEXT_XS),
+        FieldVariant::Search => (px(12.0), px(8.0), LH_XS, TEXT_XS),
         // No vertical padding: the height comes from the token below, which
         // keeps the field and the button beside it on one baseline.
         FieldVariant::Row => (px(10.0), px(0.0), LH_SM, TEXT_SM),
@@ -403,7 +417,7 @@ pub fn field(
         .rounded(px(8.0))
         .border_1()
         .border_color(if focused {
-            theme.accent
+            theme.focus_ring
         } else {
             theme.field_border
         })
@@ -413,6 +427,12 @@ pub fn field(
         .text_size(px(font_size))
         .line_height(line_height)
         .fg(theme.field_text);
+
+    // A spread-only ring makes keyboard focus visible without changing the
+    // control's size, so focusing cannot shift the row it sits in.
+    if focused {
+        root = root.shadow(focus_ring(theme));
+    }
 
     // A fixed height is set explicitly, so neither focus nor content can grow
     // the control and shift the row it lives in.
@@ -514,10 +534,10 @@ fn finish(mut root: Div, theme: &Theme, variant: FieldVariant) -> Div {
     if variant == FieldVariant::Search {
         root = root
             .relative()
-            .child(div().absolute().left(px(12.0)).top(px(8.0)).child(icon(
+            .child(div().absolute().left(px(12.0)).top(px(9.0)).child(icon(
                 "search",
                 IconSize::Sm,
-                theme.text_dim,
+                theme.label_muted,
             )));
     }
     root
@@ -656,5 +676,34 @@ mod tests {
         state.scroll_handle().set_offset(point(px(-80.0), px(0.0)));
         state.clear();
         assert_eq!(state.scroll_offset_x(), px(0.0));
+    }
+
+    #[gpui::test]
+    fn enter_submits_and_escape_cancels_without_typing(cx: &mut gpui::TestAppContext) {
+        use gpui::{Keystroke, Modifiers};
+
+        fn event(key: &str) -> KeyDownEvent {
+            KeyDownEvent {
+                keystroke: Keystroke {
+                    modifiers: Modifiers::none(),
+                    key: key.to_string(),
+                    key_char: None,
+                },
+                is_held: false,
+            }
+        }
+
+        let mut state = field("commit message");
+        let submit = cx.update(|cx| apply_field_key(&mut state, &event("enter"), cx));
+        assert!(matches!(submit, FieldKey::Submit));
+        assert_eq!(state.value, "commit message");
+
+        state.select_all();
+        let clear_selection = cx.update(|cx| apply_field_key(&mut state, &event("escape"), cx));
+        assert!(matches!(clear_selection, FieldKey::Changed));
+        assert_eq!(state.selection(), None);
+
+        let cancel = cx.update(|cx| apply_field_key(&mut state, &event("escape"), cx));
+        assert!(matches!(cancel, FieldKey::Cancel));
     }
 }
