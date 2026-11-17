@@ -2,7 +2,7 @@
 
 use gpui::{deferred, div, prelude::*, px, Context, Div, IntoElement, Styled, Window};
 
-use crate::app::{DetailsState, InspectorTab, RepoOp, VantageApp};
+use crate::app::{branch_row_actions, DetailsState, InspectorTab, RepoOp, VantageApp};
 use crate::theme::Theme;
 use crate::ui::{
     accent_button, accent_button_with, checkbox, disabled_button, label_tooltip, secondary_button,
@@ -1776,9 +1776,8 @@ impl VantageApp {
         list.into_any_element()
     }
 
-    /// Toolbar under the identity block: the three git actions for this
-    /// repository. Branch, counts and tree status live in the header above, so
-    /// nothing here repeats them.
+    /// The branch list: every branch row carries its upstream, divergence and
+    /// the actions that used to live only behind a right-click.
     fn render_branches_tab(
         &self,
         repo: &crate::model::Repository,
@@ -1808,6 +1807,32 @@ impl VantageApp {
         }
 
         let theme = self.theme;
+
+        if repo.branches.is_empty() {
+            return div()
+                .flex()
+                .flex_col()
+                .items_center()
+                .justify_center()
+                .gap(px(6.0))
+                .py(px(48.0))
+                .child(icon("git-branch", IconSize::Xl, theme.text_dim))
+                .child(
+                    div()
+                        .sm()
+                        .medium()
+                        .fg(theme.text_body)
+                        .child("No branches yet"),
+                )
+                .child(
+                    div()
+                        .xs()
+                        .fg(theme.label_muted)
+                        .child("This repository gets its first branch when it has a commit."),
+                )
+                .into_any_element();
+        }
+
         let mut list = div()
             .flex()
             .flex_col()
@@ -1835,16 +1860,56 @@ impl VantageApp {
             let menu_name = branch.name.clone();
             let menu_is_current = branch.is_current;
             let menu_is_default = branch.is_default;
+
+            let mut actions = div()
+                .flex()
+                .items_center()
+                .flex_wrap()
+                .gap(px(4.0))
+                .w_full();
+            for action in branch_row_actions(&repo.id, branch) {
+                let label = action.label();
+                let destructive = action.is_destructive();
+                let action_id = format!("branch-action-{}-{label}", branch.name);
+                let click_action = action.clone();
+                actions = actions.child(
+                    div()
+                        .id(gpui::SharedString::from(action_id))
+                        .px(px(6.0))
+                        .py(px(3.0))
+                        .rounded(px(4.0))
+                        .cursor_pointer()
+                        .text_size(px(11.0))
+                        .line_height(px(15.0))
+                        .medium()
+                        .whitespace_nowrap()
+                        .fg(if destructive {
+                            theme.status_red
+                        } else {
+                            theme.accent_text
+                        })
+                        .hover(move |s| s.bg(theme.nav_hover_bg))
+                        .on_click(cx.listener(move |this, _e, _w, cx| {
+                            this.perform_branch_action(click_action.clone(), cx);
+                        }))
+                        .child(label),
+                );
+            }
+
             list = list.child(
                 div()
+                    .id(gpui::SharedString::from(format!(
+                        "branch-row-{}",
+                        branch.name
+                    )))
                     .flex()
-                    .items_center()
-                    .justify_between()
-                    .gap(px(16.0))
+                    .flex_col()
+                    .gap(px(7.0))
                     .px(px(16.0))
-                    .py(px(12.0))
+                    .py(px(10.0))
                     .w_full()
                     .bg(theme.panel)
+                    .hover(move |s| s.bg(theme.row_hover_bg))
                     .on_mouse_down(
                         gpui::MouseButton::Right,
                         cx.listener(move |this, event: &gpui::MouseDownEvent, _w, cx| {
@@ -1861,42 +1926,50 @@ impl VantageApp {
                     )
                     .when(index > 0, |d| d.border_t_1().border_color(theme.row_border))
                     .child(
-                        div().flex().flex_col().flex_1().min_w(px(0.0)).child(
-                            div()
-                                .flex()
-                                .items_center()
-                                .gap(px(8.0))
-                                .child(icon("git-branch", IconSize::Sm, theme.icon_idle))
-                                .child(
-                                    div()
-                                        .mono_xs()
-                                        .medium()
-                                        .fg(theme.text_app)
-                                        .truncate()
-                                        .child(branch.name.clone()),
-                                )
-                                .when(branch.is_current, |d| {
-                                    d.child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .justify_between()
+                            .gap(px(16.0))
+                            .child(
+                                div()
+                                    .flex()
+                                    .items_center()
+                                    .gap(px(8.0))
+                                    .min_w(px(0.0))
+                                    .child(icon("git-branch", IconSize::Sm, theme.icon_idle))
+                                    .child(
                                         div()
-                                            .xs()
+                                            .mono_xs()
                                             .medium()
-                                            .fg(theme.accent_text)
-                                            .whitespace_nowrap()
-                                            .child("\u{00b7} Current"),
+                                            .fg(theme.text_app)
+                                            .truncate()
+                                            .child(branch.name.clone()),
                                     )
-                                })
-                                .when(branch.is_default, |d| {
-                                    d.child(
-                                        div()
-                                            .xs()
-                                            .fg(theme.text_meta)
-                                            .whitespace_nowrap()
-                                            .child("\u{00b7} Default"),
-                                    )
-                                }),
-                        ),
+                                    .when(branch.is_current, |d| {
+                                        d.child(
+                                            div()
+                                                .xs()
+                                                .medium()
+                                                .fg(theme.accent_text)
+                                                .whitespace_nowrap()
+                                                .child("\u{00b7} Current"),
+                                        )
+                                    })
+                                    .when(branch.is_default, |d| {
+                                        d.child(
+                                            div()
+                                                .xs()
+                                                .fg(theme.text_meta)
+                                                .whitespace_nowrap()
+                                                .child("\u{00b7} Default"),
+                                        )
+                                    }),
+                            )
+                            .child(right),
                     )
-                    .child(right),
+                    .child(branch_tracking(&theme, branch))
+                    .child(actions),
             );
         }
 
@@ -2171,6 +2244,67 @@ fn preview_row(theme: &Theme, line: &crate::model::PreviewLine) -> Div {
                 .child(sign),
         )
         .child(div().flex_1().fg(color).child(line.text.clone()))
+}
+
+/// A branch's upstream and divergence, rendered as quiet metadata.
+///
+/// Counts are shown only when both pieces exist. A branch with no upstream
+/// says so; an upstream ref that disappeared says `upstream gone` instead of
+/// pretending it is level.
+fn branch_tracking(theme: &Theme, branch: &crate::model::BranchInfo) -> Div {
+    let mut row = div()
+        .flex()
+        .items_center()
+        .flex_wrap()
+        .gap(px(8.0))
+        .min_w(px(0.0));
+
+    let Some(upstream) = &branch.upstream else {
+        return row.child(div().xs().fg(theme.text_dim).child("No upstream"));
+    };
+
+    row = row.child(
+        div()
+            .mono_xs()
+            .fg(theme.label_muted)
+            .truncate()
+            .child(upstream.clone()),
+    );
+    match (branch.ahead, branch.behind) {
+        (Some(0), Some(0)) => row.child(div().xs().fg(theme.label_muted).child("up to date")),
+        (Some(ahead), Some(behind)) => {
+            let mut counts = div().flex().items_center().gap(px(8.0)).flex_shrink_0();
+            if ahead > 0 {
+                counts = counts.child(branch_count("arrow-up", "ahead", ahead, theme.status_blue));
+            }
+            if behind > 0 {
+                counts = counts.child(branch_count(
+                    "arrow-down",
+                    "behind",
+                    behind,
+                    theme.status_red,
+                ));
+            }
+            row.child(counts)
+        }
+        _ => row.child(div().xs().fg(theme.status_amber).child("upstream gone")),
+    }
+}
+
+fn branch_count(icon_name: &'static str, word: &'static str, count: u32, color: gpui::Rgba) -> Div {
+    div()
+        .flex()
+        .items_center()
+        .gap(px(3.0))
+        .flex_shrink_0()
+        .child(icon(icon_name, IconSize::Xxs, color))
+        .child(
+            div()
+                .text_size(px(11.0))
+                .medium()
+                .fg(color)
+                .child(format!("{count} {word}")),
+        )
 }
 
 #[cfg(test)]

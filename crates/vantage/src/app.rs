@@ -14,7 +14,7 @@ use gpui::{
 use crate::backend::details::RepoDetails;
 use crate::backend::{Backend, BranchDeleteOutcome};
 use crate::model::{
-    ChangedFile, FileChangeStatus, NavSection, PreviewLine, RepoSyncState, Repository,
+    BranchInfo, ChangedFile, FileChangeStatus, NavSection, PreviewLine, RepoSyncState, Repository,
 };
 use crate::settings::{
     DefaultView, Diagnostics, SettingsSection, SortOrder, ThemeChoice, UiSettings,
@@ -3779,6 +3779,31 @@ impl VantageApp {
         cx.notify();
     }
 
+    /// Run a row action against the repository that rendered it.
+    pub fn perform_branch_action(&mut self, action: BranchRowAction, cx: &mut Context<Self>) {
+        self.context_menu = None;
+        let repo_id = action.repo_id().to_string();
+        if !self.repos.iter().any(|repo| repo.id == repo_id) {
+            self.show_toast("That repository is no longer in the list", cx);
+            return;
+        }
+        if let Some(prompt) = action.prompt() {
+            self.start_branch_prompt(&repo_id, prompt, cx);
+            return;
+        }
+        match action {
+            BranchRowAction::Checkout { branch, .. } => self.switch_branch(&repo_id, &branch, cx),
+            BranchRowAction::Merge { branch, .. } => self.ask_merge_branch(&repo_id, &branch, cx),
+            BranchRowAction::Compare { branch, .. } => {
+                self.compare_with_branch(&repo_id, &branch, cx)
+            }
+            // Prompt-backed variants returned above.
+            BranchRowAction::Create { .. }
+            | BranchRowAction::Rename { .. }
+            | BranchRowAction::Delete { .. } => {}
+        }
+    }
+
     pub fn cancel_branch_prompt(&mut self, cx: &mut Context<Self>) {
         self.branch_prompt = None;
         self.branch_field.clear();
@@ -6070,6 +6095,103 @@ fn validate_branch_prompt(
     }
 }
 
+/// A branch action a row offers without right-click.
+///
+/// The repository id is part of the action, not looked up at click time, so a
+/// row action keeps targeting the branch and repository it was rendered for.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum BranchRowAction {
+    Checkout { repo_id: String, branch: String },
+    Create { repo_id: String, base: String },
+    Merge { repo_id: String, branch: String },
+    Compare { repo_id: String, branch: String },
+    Rename { repo_id: String, from: String },
+    Delete { repo_id: String, branch: String },
+}
+
+impl BranchRowAction {
+    /// A short label for the row's action strip and the tests that pin it.
+    pub fn label(&self) -> &'static str {
+        match self {
+            Self::Checkout { .. } => "Checkout",
+            Self::Create { .. } => "New branch",
+            Self::Merge { .. } => "Merge into current",
+            Self::Compare { .. } => "Compare",
+            Self::Rename { .. } => "Rename",
+            Self::Delete { .. } => "Delete",
+        }
+    }
+
+    pub fn is_destructive(&self) -> bool {
+        matches!(self, Self::Delete { .. })
+    }
+
+    pub fn repo_id(&self) -> &str {
+        match self {
+            Self::Checkout { repo_id, .. }
+            | Self::Create { repo_id, .. }
+            | Self::Merge { repo_id, .. }
+            | Self::Compare { repo_id, .. }
+            | Self::Rename { repo_id, .. }
+            | Self::Delete { repo_id, .. } => repo_id,
+        }
+    }
+
+    /// The prompt this action opens, if it needs a name or confirmation.
+    pub fn prompt(&self) -> Option<BranchPromptKind> {
+        match self {
+            Self::Create { base, .. } => Some(BranchPromptKind::Create { base: base.clone() }),
+            Self::Rename { from, .. } => Some(BranchPromptKind::Rename { from: from.clone() }),
+            Self::Delete { branch, .. } => Some(BranchPromptKind::Delete {
+                name: branch.clone(),
+            }),
+            Self::Checkout { .. } | Self::Merge { .. } | Self::Compare { .. } => None,
+        }
+    }
+}
+
+/// The actions a branch row offers, in display order.
+///
+/// Checkout, Merge and Compare only make sense against another branch; Rename
+/// only against the checked-out one. Delete is offered for any branch that is
+/// not checked out and always opens the confirmation dialog.
+pub fn branch_row_actions(repo_id: &str, branch: &BranchInfo) -> Vec<BranchRowAction> {
+    let mut actions = Vec::new();
+    if !branch.is_current {
+        actions.push(BranchRowAction::Checkout {
+            repo_id: repo_id.to_string(),
+            branch: branch.name.clone(),
+        });
+    }
+    actions.push(BranchRowAction::Create {
+        repo_id: repo_id.to_string(),
+        base: branch.name.clone(),
+    });
+    if !branch.is_current {
+        actions.push(BranchRowAction::Merge {
+            repo_id: repo_id.to_string(),
+            branch: branch.name.clone(),
+        });
+        actions.push(BranchRowAction::Compare {
+            repo_id: repo_id.to_string(),
+            branch: branch.name.clone(),
+        });
+    }
+    if branch.is_current {
+        actions.push(BranchRowAction::Rename {
+            repo_id: repo_id.to_string(),
+            from: branch.name.clone(),
+        });
+    }
+    if !branch.is_current {
+        actions.push(BranchRowAction::Delete {
+            repo_id: repo_id.to_string(),
+            branch: branch.name.clone(),
+        });
+    }
+    actions
+}
+
 /// A right-click menu, anchored at the pointer.
 #[derive(Clone, Debug)]
 pub enum ContextMenu {
@@ -6900,6 +7022,99 @@ mod tests {
         repo
     }
 
+    fn branch(name: &str, is_current: bool, is_default: bool) -> BranchInfo {
+        BranchInfo {
+            name: name.to_string(),
+            is_current,
+            is_default,
+            upstream: Some(format!("origin/{name}")),
+            ahead: Some(0),
+            behind: Some(0),
+            last_commit_time: "just now".to_string(),
+        }
+    }
+
+    #[test]
+    fn branch_rows_expose_every_action_without_right_click() {
+        let actions = branch_row_actions("repo-row", &branch("feature", false, false));
+        assert_eq!(
+            actions
+                .iter()
+                .map(BranchRowAction::label)
+                .collect::<Vec<_>>(),
+            vec![
+                "Checkout",
+                "New branch",
+                "Merge into current",
+                "Compare",
+                "Delete"
+            ],
+            "checkout, create, merge, compare and delete are all visible in the row"
+        );
+
+        let current = branch_row_actions("repo-row", &branch("main", true, true));
+        assert_eq!(
+            current
+                .iter()
+                .map(BranchRowAction::label)
+                .collect::<Vec<_>>(),
+            vec!["New branch", "Rename"],
+            "the checked-out branch is not offered a checkout against itself"
+        );
+    }
+
+    #[test]
+    fn branch_row_actions_keep_the_repository_they_were_rendered_for() {
+        let actions = branch_row_actions("repo-opened", &branch("feature", false, false));
+        assert!(
+            actions
+                .iter()
+                .all(|action| action.repo_id() == "repo-opened"),
+            "every row action names its own repository instead of the selected one"
+        );
+
+        let merge = actions
+            .iter()
+            .find(|action| matches!(action, BranchRowAction::Merge { .. }))
+            .expect("merge action");
+        assert_eq!(merge.repo_id(), "repo-opened");
+
+        let prompts: Vec<BranchPromptKind> =
+            actions.iter().filter_map(BranchRowAction::prompt).collect();
+        assert_eq!(prompts.len(), 2, "create and delete need a prompt");
+        assert_eq!(
+            prompts[0],
+            BranchPromptKind::Create {
+                base: "feature".to_string()
+            }
+        );
+        assert_eq!(
+            prompts[1],
+            BranchPromptKind::Delete {
+                name: "feature".to_string()
+            }
+        );
+    }
+
+    #[test]
+    fn delete_is_only_offered_for_a_branch_that_is_not_checked_out() {
+        let other = branch_row_actions("repo-row", &branch("main", false, true));
+        assert!(
+            other
+                .iter()
+                .any(|action| matches!(action, BranchRowAction::Delete { .. })),
+            "any non-current branch, including the default one, can be deleted after confirmation"
+        );
+
+        let current = branch_row_actions("repo-row", &branch("main", true, true));
+        assert!(
+            !current
+                .iter()
+                .any(|action| matches!(action, BranchRowAction::Delete { .. })),
+            "the checked-out branch is never offered to itself for deletion"
+        );
+    }
+
     fn record(short: &str, previous_tip: Option<&str>) -> LastCommit {
         LastCommit {
             repo_id: "repo-1".to_string(),
@@ -7273,7 +7488,7 @@ mod tests {
         repo
     }
 
-    fn branch(name: &str, is_head: bool) -> vantage_core::state::BranchInfo {
+    fn core_branch(name: &str, is_head: bool) -> vantage_core::state::BranchInfo {
         vantage_core::state::BranchInfo {
             name: name.to_string(),
             upstream: None,
@@ -7288,7 +7503,7 @@ mod tests {
             &BranchPromptKind::Create {
                 base: "main".to_string(),
             },
-            &[branch("feature", false)],
+            &[core_branch("feature", false)],
         )
         .expect_err("a missing base branch must be refused");
         assert!(error.contains("'main' no longer exists"), "{error}");
@@ -7300,7 +7515,7 @@ mod tests {
             &BranchPromptKind::Rename {
                 from: "main".to_string(),
             },
-            &[branch("main", false), branch("other", true)],
+            &[core_branch("main", false), core_branch("other", true)],
         )
         .expect_err("a branch that is no longer checked out must not be renamed");
         assert!(
@@ -7315,7 +7530,7 @@ mod tests {
             &BranchPromptKind::Delete {
                 name: "feature".to_string(),
             },
-            &[branch("feature", true)],
+            &[core_branch("feature", true)],
         )
         .expect_err("git refuses to delete the checked-out branch, so say so first");
         assert!(error.contains("now the checked-out branch"), "{error}");

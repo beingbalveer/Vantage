@@ -125,6 +125,14 @@ pub fn branches(
             BranchInfo {
                 is_current: branch.is_head || name == current,
                 is_default: name == default,
+                // `refs::list_branches` is the source of truth for the name;
+                // the tip query carries the counts. Falling back keeps the
+                // upstream visible even when only the count query failed.
+                upstream: tip
+                    .and_then(|tip| tip.upstream.clone())
+                    .or_else(|| branch.upstream.clone()),
+                ahead: tip.and_then(|tip| tip.ahead),
+                behind: tip.and_then(|tip| tip.behind),
                 last_commit_time: tip
                     .and_then(|tip| tip.seconds)
                     .map(|seconds| relative_time_label(now, seconds))
@@ -146,9 +154,15 @@ pub fn branches(
 struct BranchTip {
     /// Seconds since the epoch of the branch tip, `None` for an unborn branch.
     seconds: Option<i64>,
+    /// The remote-tracking branch configured as upstream, if any.
+    upstream: Option<String>,
+    /// `None` whenever there is no upstream to compare against.
+    ahead: Option<u32>,
+    behind: Option<u32>,
 }
 
-const BRANCH_TIP_FORMAT: &str = "%(refname:short)\x1f%(committerdate:unix)";
+const BRANCH_TIP_FORMAT: &str =
+    "%(refname:short)\x1f%(committerdate:unix)\x1f%(upstream:short)\x1f%(upstream:track)";
 
 /// Ahead/behind and tip-commit metadata for every local branch in one call.
 /// `state::BranchInfo` (what `refs::list_branches` returns) only carries the
@@ -166,24 +180,85 @@ async fn branch_tips(
         return Err(out.stderr);
     }
 
+    parse_branch_tips(&out.stdout_string())
+}
+
+fn parse_branch_tips(output: &str) -> Result<HashMap<String, BranchTip>, String> {
     let mut tips = HashMap::new();
-    for line in out.stdout_string().lines() {
-        let fields: Vec<&str> = line.split('\x1f').collect();
-        let (Some(name), Some(seconds)) = (fields.first(), fields.last()) else {
+    for line in output.lines() {
+        let mut fields = line.split('\x1f');
+        let Some(name) = fields.next().map(str::trim).filter(|name| !name.is_empty()) else {
             continue;
         };
-        let name = name.trim();
-        if name.is_empty() {
-            continue;
-        }
+        let seconds = fields.next().and_then(|value| value.trim().parse().ok());
+        let upstream = fields
+            .next()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(str::to_string);
+        let (ahead, behind) = branch_counts(upstream.is_some(), fields.next().unwrap_or(""));
         tips.insert(
             name.to_string(),
             BranchTip {
-                seconds: seconds.trim().parse::<i64>().ok(),
+                seconds,
+                upstream,
+                ahead,
+                behind,
             },
         );
     }
     Ok(tips)
+}
+
+/// Parse `%(upstream:track)` into divergence counts.
+///
+/// An empty track with an upstream means the branch is level (`0/0`). A
+/// missing upstream always means "no counts", even if a malformed track string
+/// claims otherwise, so the row never invents a comparison that does not exist.
+/// `[gone]` also yields no counts: there is no remote ref to compare against.
+fn branch_counts(has_upstream: bool, track: &str) -> (Option<u32>, Option<u32>) {
+    if !has_upstream {
+        return (None, None);
+    }
+
+    let track = track.trim();
+    let track = track
+        .strip_prefix('[')
+        .and_then(|track| track.strip_suffix(']'))
+        .unwrap_or(track)
+        .trim();
+    if track.is_empty() {
+        return (Some(0), Some(0));
+    }
+
+    let mut ahead = 0;
+    let mut behind = 0;
+    let mut counted = false;
+    for part in track.split(',') {
+        let part = part.trim();
+        if let Some(value) = part.strip_prefix("ahead ") {
+            let Ok(value) = value.trim().parse::<u32>() else {
+                return (None, None);
+            };
+            ahead = value;
+            counted = true;
+        } else if let Some(value) = part.strip_prefix("behind ") {
+            let Ok(value) = value.trim().parse::<u32>() else {
+                return (None, None);
+            };
+            behind = value;
+            counted = true;
+        } else {
+            // `[gone]` or a format this parser does not know.
+            return (None, None);
+        }
+    }
+
+    if counted {
+        (Some(ahead), Some(behind))
+    } else {
+        (None, None)
+    }
 }
 
 // ---------------- Commits ----------------
@@ -979,6 +1054,138 @@ mod tests {
             .to_rfc3339();
         assert_eq!(relative_iso_label(now, &stamp), "2m ago");
         assert_eq!(relative_iso_label(now, ""), UNKNOWN_AUTHOR);
+    }
+
+    #[test]
+    fn branch_tips_parse_upstream_names_and_divergence_counts() {
+        let output = [
+            "main\x1f1700000000\x1forigin/main\x1f",
+            "feature\x1f1700000100\x1forigin/feature\x1f[ahead 2, behind 3]",
+            "local-only\x1f1700000200\x1f\x1f",
+            "gone\x1f1700000300\x1forigin/gone\x1f[gone]",
+        ]
+        .join("\n");
+
+        let tips = parse_branch_tips(&output).unwrap();
+        assert_eq!(tips.len(), 4);
+
+        let main = tips.get("main").expect("main branch");
+        assert_eq!(main.seconds, Some(1_700_000_000));
+        assert_eq!(main.upstream.as_deref(), Some("origin/main"));
+        assert_eq!(
+            (main.ahead, main.behind),
+            (Some(0), Some(0)),
+            "an empty track with an upstream means the branch is level"
+        );
+
+        let feature = tips.get("feature").expect("feature branch");
+        assert_eq!(feature.upstream.as_deref(), Some("origin/feature"));
+        assert_eq!((feature.ahead, feature.behind), (Some(2), Some(3)));
+
+        let local = tips.get("local-only").expect("local-only branch");
+        assert_eq!(local.upstream, None);
+        assert_eq!(
+            (local.ahead, local.behind),
+            (None, None),
+            "a branch with no upstream has nothing to compare against"
+        );
+
+        let gone = tips.get("gone").expect("branch with a deleted upstream");
+        assert_eq!(gone.upstream.as_deref(), Some("origin/gone"));
+        assert_eq!(
+            (gone.ahead, gone.behind),
+            (None, None),
+            "a gone upstream must not be reported as zero divergence"
+        );
+    }
+
+    #[test]
+    fn branch_counts_do_not_invent_a_comparison_without_an_upstream() {
+        assert_eq!(branch_counts(false, ""), (None, None));
+        assert_eq!(
+            branch_counts(false, "[ahead 4, behind 2]"),
+            (None, None),
+            "a malformed/forged track cannot create an upstream"
+        );
+
+        assert_eq!(
+            branch_counts(true, ""),
+            (Some(0), Some(0)),
+            "level with a real upstream is zero ahead and zero behind"
+        );
+        assert_eq!(branch_counts(true, "[ahead 1]"), (Some(1), Some(0)));
+        assert_eq!(branch_counts(true, "[behind 6]"), (Some(0), Some(6)));
+        assert_eq!(
+            branch_counts(true, "[ahead 1, behind 6]"),
+            (Some(1), Some(6))
+        );
+        assert_eq!(branch_counts(true, "[gone]"), (None, None));
+        assert_eq!(branch_counts(true, "[ahead many]"), (None, None));
+    }
+
+    /// The row gets git's own upstream and count, not a guess from the branch
+    /// list order.
+    #[test]
+    fn branches_report_real_upstream_and_ahead_counts() {
+        if !git_available() {
+            eprintln!("skipping: git is not installed");
+            return;
+        }
+
+        let dir =
+            std::env::temp_dir().join(format!("vantage_branch_tracking_{}", std::process::id()));
+        let remote = std::env::temp_dir().join(format!(
+            "vantage_branch_tracking_remote_{}",
+            std::process::id()
+        ));
+        std::fs::remove_dir_all(&dir).ok();
+        std::fs::remove_dir_all(&remote).ok();
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::create_dir_all(&remote).unwrap();
+
+        git(&remote, &["init", "-q", "--bare"]);
+        git(&dir, &["init", "-q", "-b", "main"]);
+        git(&dir, &["config", "user.name", "Vantage Test"]);
+        git(&dir, &["config", "user.email", "vantage@test.local"]);
+        git(&dir, &["config", "commit.gpgsign", "false"]);
+        std::fs::write(dir.join("tracked.txt"), "one\n").unwrap();
+        git(&dir, &["add", "tracked.txt"]);
+        git(&dir, &["commit", "-q", "-m", "first"]);
+        git(&dir, &["branch", "feature"]);
+        git(&dir, &["remote", "add", "origin", remote.to_str().unwrap()]);
+        git(&dir, &["push", "-q", "-u", "origin", "main"]);
+
+        std::fs::write(dir.join("tracked.txt"), "two\n").unwrap();
+        git(&dir, &["commit", "-q", "-am", "second"]);
+
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let runner = GitRunner::new();
+        let branches = branches(&rt, &runner, &dir, "main", "main").unwrap();
+
+        let main = branches
+            .iter()
+            .find(|branch| branch.name == "main")
+            .expect("main branch");
+        assert_eq!(main.upstream.as_deref(), Some("origin/main"));
+        assert_eq!(
+            (main.ahead, main.behind),
+            (Some(1), Some(0)),
+            "the local commit made after push is the only one ahead"
+        );
+
+        let feature = branches
+            .iter()
+            .find(|branch| branch.name == "feature")
+            .expect("feature branch");
+        assert_eq!(feature.upstream, None);
+        assert_eq!(
+            (feature.ahead, feature.behind),
+            (None, None),
+            "a branch that never tracked anything gets no counts"
+        );
+
+        std::fs::remove_dir_all(&remote).ok();
+        std::fs::remove_dir_all(&dir).ok();
     }
 
     #[test]
