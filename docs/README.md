@@ -10,6 +10,7 @@ Current documentation:
 - [Review branch summary](REVIEW_BRANCH_SUMMARY.md) — ticket branches, commits, verification,
   known gaps and the suggested merge order.
 - [SAFETY_TEST_MATRIX](SAFETY_TEST_MATRIX.md) — P0/P1 branches, regression tests and coverage gaps.
+- [PERFORMANCE](PERFORMANCE.md) — benchmark harness, baseline metrics and regression budgets.
 - [crates/vantage/README](../crates/vantage/README.md) — the desktop app crate in detail.
 
 ## Archive

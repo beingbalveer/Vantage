@@ -1,0 +1,81 @@
+---
+name: Performance budgets
+
+"on":
+  schedule:
+    # Weekly on Monday at 06:17 UTC. Off the hour to reduce runner contention.
+    - cron: "17 6 * * 1"
+  workflow_dispatch:
+    inputs:
+      with_cargo:
+        description: "Also measure cold/warm cargo check and target size"
+        required: false
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+# A newer manual run supersedes an in-flight one for the same ref.
+concurrency:
+  group: performance-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  engine-budgets:
+    name: Engine budgets (macos-15)
+    runs-on: macos-15
+    timeout-minutes: 30
+    env:
+      # CI runners are slower than the reference machine in docs/PERFORMANCE.md.
+      # These overrides are still regression guards; tighten them after a few
+      # scheduled runs establish this runner's baseline.
+      PERF_MAX_COLD_CHECK_S: 900
+      PERF_MAX_WARM_CHECK_S: 180
+      PERF_MAX_TARGET_MIB: 4096
+      PERF_MAX_OVERVIEW_5_MS: 6000
+      PERF_MAX_OVERVIEW_20_MS: 25000
+      PERF_MAX_OVERVIEW_50_MS: 60000
+      PERF_MAX_DETAIL_MS: 2000
+      PERF_MAX_DETAIL_LARGE_MS: 3000
+      PERF_MAX_RSS_MIB: 256
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4
+        with:
+          persist-credentials: false
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@39008827e6b4319a349e9a42dfc90579dd25f1ca  # stable
+        with:
+          toolchain: stable
+
+      - name: Rust cache
+        uses: swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0  # v2
+        with:
+          workspaces: "."
+
+      - name: Check benchmark script syntax
+        run: bash -n scripts/benchmark.sh
+
+      # The weekly run covers scan, detail and memory budgets. Cold build checks
+      # are opt-in for manual runs: they compile the whole workspace in a
+      # disposable target and add several minutes to a macOS runner.
+      - name: Run performance budgets
+        run: |
+          set -euo pipefail
+          if [ "${{ inputs.with_cargo || 'false' }}" = "true" ]; then
+            scripts/benchmark.sh --check --with-cargo --out performance.tsv
+          else
+            scripts/benchmark.sh --check --out performance.tsv
+          fi
+
+      - name: Upload performance metrics
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4
+        with:
+          name: performance-metrics-${{ github.run_id }}
+          path: performance.tsv
+          if-no-files-found: warn
+          retention-days: 90
