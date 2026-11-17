@@ -45,6 +45,14 @@ impl AppError {
         Self::new("Timeout", msg)
     }
 
+    pub fn cancelled() -> Self {
+        Self::new("Cancelled", "Clone cancelled.")
+    }
+
+    pub fn is_cancelled(&self) -> bool {
+        self.code == "Cancelled"
+    }
+
     pub fn auth_failed(stderr: Option<String>) -> Self {
         let mut err = Self::new(
             "AuthFailed",
