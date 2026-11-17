@@ -92,7 +92,6 @@ pub fn parse_log_output(output: &str, new_shas: &HashSet<String>) -> Vec<CommitS
             files_changed,
             additions,
             deletions,
-            flags: Vec::new(),
             is_new,
         });
     }

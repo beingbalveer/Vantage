@@ -6,7 +6,6 @@
 //! [`super::details`]; this module only decides *what the dashboard shows*.
 
 use std::path::Path;
-use std::time::{SystemTime, UNIX_EPOCH};
 
 use tokio::runtime::Runtime;
 use vantage_core::state::{RepoEntry, RepoStatus};
@@ -14,18 +13,13 @@ use vantage_core::{repos, GitRunner};
 
 use crate::model::{RepoSyncState, Repository};
 
-use super::details;
+use super::{details, now_seconds, relative_time_label};
 
 /// Shown instead of a branch name when HEAD is detached.
 const DETACHED: &str = "detached";
 /// Shown when the repository has no commit to date the row with.
 const NO_COMMITS: &str = "no commits";
 const SECONDS_PER_MINUTE: i64 = 60;
-const MINUTES_PER_HOUR: i64 = 60;
-const MINUTES_PER_DAY: i64 = 60 * 24;
-const MINUTES_PER_WEEK: i64 = MINUTES_PER_DAY * 7;
-const MINUTES_PER_MONTH: i64 = MINUTES_PER_DAY * 30;
-const MINUTES_PER_YEAR: i64 = MINUTES_PER_DAY * 365;
 
 /// `group` is the workspace the user assigned the repo to, or `"Ungrouped"`.
 pub fn map_repo(
@@ -112,33 +106,11 @@ fn last_activity(status: &RepoStatus) -> (String, i64) {
     }
 }
 
-/// `just now` / `14m ago` / `3h ago` / `2d ago` / `1w ago` / `2mo ago`, matching
-/// the React app's time strings, plus the age in whole minutes.
+/// The age label plus the age in whole minutes, matching the React app's time
+/// strings.
 fn relative_activity(now: i64, then: i64) -> (String, i64) {
     let minutes = now.saturating_sub(then).max(0) / SECONDS_PER_MINUTE;
-    let label = if minutes < 1 {
-        "just now".to_string()
-    } else if minutes < MINUTES_PER_HOUR {
-        format!("{minutes}m ago")
-    } else if minutes < MINUTES_PER_DAY {
-        format!("{}h ago", minutes / MINUTES_PER_HOUR)
-    } else if minutes < MINUTES_PER_WEEK {
-        format!("{}d ago", minutes / MINUTES_PER_DAY)
-    } else if minutes < MINUTES_PER_MONTH {
-        format!("{}w ago", minutes / MINUTES_PER_WEEK)
-    } else if minutes < MINUTES_PER_YEAR {
-        format!("{}mo ago", minutes / MINUTES_PER_MONTH)
-    } else {
-        format!("{}y ago", minutes / MINUTES_PER_YEAR)
-    };
-    (label, minutes)
-}
-
-fn now_seconds() -> i64 {
-    match SystemTime::now().duration_since(UNIX_EPOCH) {
-        Ok(elapsed) => elapsed.as_secs().min(i64::MAX as u64) as i64,
-        Err(_) => 0,
-    }
+    (relative_time_label(now, then), minutes)
 }
 
 /// Epoch seconds for `YYYY-MM-DDTHH:MM:SS` plus a `Z`/`±HH:MM` offset.

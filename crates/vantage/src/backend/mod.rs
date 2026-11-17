@@ -14,6 +14,7 @@ pub mod repo_map;
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use anyhow::{anyhow, Context, Result};
 use tokio::runtime::Runtime;
@@ -39,6 +40,36 @@ const EXTRA_KEY: &str = "vantage";
 const LEGACY_EXTRA_KEY: &str = "branchdeck";
 /// Workspace of a repository the user has not assigned to a group.
 const UNGROUPED: &str = "Ungrouped";
+
+/// Seconds since the Unix epoch, clamped to the range `i64` can hold.
+pub(crate) fn now_seconds() -> i64 {
+    match SystemTime::now().duration_since(UNIX_EPOCH) {
+        Ok(elapsed) => elapsed.as_secs().min(i64::MAX as u64) as i64,
+        Err(_) => 0,
+    }
+}
+
+/// `just now` / `14m ago` / `3h ago` / `2d ago` / `1w ago` / `3mo ago` /
+/// `1y ago`. Shared by the repository rows and the commit lists so both use
+/// the same scale.
+pub(crate) fn relative_time_label(now: i64, then: i64) -> String {
+    let minutes = now.saturating_sub(then).max(0) / 60;
+    if minutes < 1 {
+        "just now".to_string()
+    } else if minutes < 60 {
+        format!("{minutes}m ago")
+    } else if minutes < 60 * 24 {
+        format!("{}h ago", minutes / 60)
+    } else if minutes < 60 * 24 * 7 {
+        format!("{}d ago", minutes / (60 * 24))
+    } else if minutes < 60 * 24 * 30 {
+        format!("{}w ago", minutes / (60 * 24 * 7))
+    } else if minutes < 60 * 24 * 365 {
+        format!("{}mo ago", minutes / (60 * 24 * 30))
+    } else {
+        format!("{}y ago", minutes / (60 * 24 * 365))
+    }
+}
 
 pub struct Backend {
     /// Private engine runtime: every `block_on` in this module runs on it.
@@ -199,8 +230,8 @@ impl Backend {
             .unwrap_or_default()
     }
 
-    /// Check out `branch` in one repo. The caller re-reads the row with
-    /// [`Backend::refresh`] once this returns.
+    /// Check out `branch` in one repo. The caller re-reads the row once this
+    /// returns.
     pub fn checkout(&self, repo_id: &str, branch: &str) -> Result<()> {
         let path = self.known_path(repo_id)?;
         self.runtime

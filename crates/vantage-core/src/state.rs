@@ -103,7 +103,6 @@ pub struct CommitSummary {
     pub files_changed: u32,
     pub additions: u32,
     pub deletions: u32,
-    pub flags: Vec<TriageFlag>,
     pub is_new: bool,
 }
 
@@ -188,35 +187,6 @@ pub enum DiffScope {
     Commit { sha: String },
     Range { from: String, to: String },
     Working,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub enum FlagKind {
-    Large,
-    DeletionHeavy,
-    Dependencies,
-    Config,
-    TestsRemoved,
-    Secrets,
-    BigFile,
-    Binary,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub enum Severity {
-    Info,
-    Caution,
-    Warn,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct TriageFlag {
-    pub kind: FlagKind,
-    pub severity: Severity,
-    pub detail: String,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -522,24 +492,6 @@ pub struct StashPushResult {
 #[serde(rename_all = "camelCase")]
 pub struct CheckoutResult {
     pub stash: Option<StashEntry>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct DefHit {
-    pub path: String,
-    pub line: u32,
-    pub line_text: String,
-    pub context_lines: Vec<String>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct BlameInfo {
-    pub sha: String,
-    pub author: String,
-    pub date: String,
-    pub subject: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

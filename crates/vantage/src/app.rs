@@ -141,10 +141,8 @@ pub struct VantageApp {
     pub active_section: NavSection,
     /// "All" or a group name.
     pub active_group: String,
-    pub status_filter: Option<RepoSyncState>,
     /// Filter chosen from the summary strip above the repository list.
     pub summary_filter: Option<SummaryFilter>,
-    pub search_query: String,
     pub selected_repo_id: Option<String>,
     pub is_add_modal_open: bool,
     pub is_refreshing: bool,
@@ -279,9 +277,7 @@ impl VantageApp {
             groups,
             active_section: settings.default_view.nav_section(),
             active_group: "All".to_string(),
-            status_filter: None,
             summary_filter: None,
-            search_query: String::new(),
             selected_repo_id: None,
             is_add_modal_open: false,
             is_refreshing: false,
@@ -601,28 +597,6 @@ impl VantageApp {
                         && repo.behind_count <= 0
                         && repo.sync_state != RepoSyncState::Conflict
                 }
-            });
-        }
-
-        if let Some(filter) = self.status_filter {
-            list.retain(|r| match filter {
-                RepoSyncState::Behind => matches!(
-                    r.sync_state,
-                    RepoSyncState::Behind | RepoSyncState::Conflict
-                ),
-                RepoSyncState::Modified => !r.uncommitted_files.is_empty(),
-                RepoSyncState::Ahead => r.ahead_count > 0,
-                other => r.sync_state == other,
-            });
-        }
-
-        let query = self.search_query.trim().to_lowercase();
-        if !query.is_empty() {
-            list.retain(|r| {
-                r.name.to_lowercase().contains(&query)
-                    || r.current_branch.to_lowercase().contains(&query)
-                    || r.local_path.to_lowercase().contains(&query)
-                    || r.workspace.to_lowercase().contains(&query)
             });
         }
 
@@ -1566,9 +1540,6 @@ impl VantageApp {
             _ if filter == SummaryFilter::All => None,
             _ => Some(filter),
         };
-        // The summary and the "Needs Attention" view are different lenses; the
-        // summary filter wins so the numbers always match the list.
-        self.status_filter = None;
         cx.notify();
     }
 
@@ -3132,8 +3103,6 @@ impl VantageApp {
     }
 
     pub fn reset_filters(&mut self, cx: &mut Context<Self>) {
-        self.search_query.clear();
-        self.status_filter = None;
         self.active_group = "All".to_string();
         self.active_section = NavSection::Overview;
         cx.notify();

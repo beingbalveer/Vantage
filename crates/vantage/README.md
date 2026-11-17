@@ -15,22 +15,31 @@ The binaries are written to `target/debug/vantage` (debug) and
 
 ## Where the data comes from
 
-`crates/vantage-core` is Vantage's original engine (git CLI runner, status,
-log, refs, diffs, stash, watcher, JSON state). This crate adds a thin adapter:
+`crates/vantage-core` is Vantage's shared engine: git CLI runner, status,
+log, refs, diffs, stash and JSON state persistence. This crate adds the GPUI
+surface and a thin adapter over that engine.
 
 | File | Role |
 |---|---|
-| `src/backend/mod.rs` | Owns a `tokio::runtime::Runtime`, loads `PersistedState` via `StatePersistence`, exposes blocking `snapshot` / `refresh` / `add_repo` / `fetch` / `open_in_github_desktop` / `groups` / `set_groups`. |
+| `src/main.rs` | Binary entry point: embedded assets, application setup and window creation. |
+| `src/app.rs` | Dashboard state, list filtering/sorting, background jobs, prompts and the root view. |
+| `src/root.rs` | Thin window root that restores GPUI invalidation for the dashboard entity. |
+| `src/backend/mod.rs` | Owns a `tokio::runtime::Runtime`, loads and saves `PersistedState`, and exposes blocking snapshot and repository operations, groups and settings. |
 | `src/backend/repo_map.rs` | Maps `RepoStatus` + `RepoEntry` onto the UI's `Repository` (sync state, ahead/behind, activity, stash). |
-| `src/backend/details.rs` | Branches, recent commits, changed files with per-file stats and diff previews, remote normalisation, language detection. |
+| `src/backend/details.rs` | Branches, recent commits, changed files with per-file stats and diff previews, plus remote normalisation and commit identity. |
 | `src/model.rs` | View model (`Repository`, `BranchInfo`, `ChangedEntry`, …). |
 | `src/theme.rs` | The dashboard palette. |
-| `src/views/` | The sidebar, top bar, overview, pending changes, inspector, add-repository modal and settings modal. |
+| `src/views/` | The sidebar, top bar, repository table, viewport, pending changes, inspector, add-repository modal and settings modal. |
+| `src/ui/` | Shared design-system primitives (buttons, inputs, tabs, toggles, status badges, avatars and tooltips). |
 | `src/settings.rs` | Typed v2 preferences, legacy-theme import, diagnostics and validation. |
 | `src/menu.rs` | Native application menu bar and shortcuts. |
+| `src/chrome.rs` | Native window-drag helper for the custom title bar. |
+| `src/icons.rs` | Embedded Lucide icons and brand raster assets. |
+| `src/app_icon.rs` | Launcher / Dock icon for unbundled builds. |
+| `src/avatar_cache.rs` | Cached GitHub avatars for the commit identity. |
 | `src/path.rs` | Home-directory contraction for displayed paths. |
 | `src/text.rs` | Ellipsis fitting via GPUI's own line wrapper. |
-| `src/watcher.rs` | `notify` watchers over repo paths; a debounced poll refreshes through the backend. |
+| `src/watcher.rs` | `notify` watchers over repo paths; a debounced poll refreshes the changed rows through the backend. |
 
 Groups and per-repo group assignments are persisted inside Vantage's own
 `state.json` under `extra["vantage"]`, so there is a single source of truth.
