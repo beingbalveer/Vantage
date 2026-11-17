@@ -4,36 +4,35 @@ This is the completion index for the 38 tickets in
 [`REVIEW_TODO_2026-11-16.md`](REVIEW_TODO_2026-11-16.md).
 
 **Base:** ticket branches were created from `main` at `ab2b483`.
-**State:** all 38 tickets are committed on branches; **21 must-merge fixes are integrated into `main`**
-via the merge commits below. The remaining 17 branches are left for feature/quality review.
-All ticket worktrees are removed.
+**State:** all 38 tickets are committed on branches; **26 fixes and low-risk docs/tests/performance
+changes are integrated into `main`** via the merge commits below. The remaining 12 branches are
+feature or broad-refactor work left for separate review. All ticket worktrees are removed.
 **Integration verification:** `cargo fmt`, `cargo clippy --workspace --all-targets -- -D warnings`
-and `cargo test --workspace` pass on the integrated branch; the final test count is **334 passing
-tests** (130 `vantage` tests plus 204 `vantage-core` tests). The macOS package job has not been
-run against the integrated tree.
+and `cargo test --workspace` pass on `main`; the final test count is **334 passing
+tests** (130 `vantage` tests plus 204 `vantage-core` tests), including 5 cross-crate safety
+integration tests. The macOS package job has not been run against the integrated tree.
 
 Two branches (`P0-01`, `P0-04`, `P1-02`) were created before the build-profile commit and are
 based on `adc68cd`; they do not include `ab2b483`. They merged normally; `main` now includes both.
 
 ## Integration result
 
-Merged into `main` (21):
+Merged into `main` (26):
 
 `P0-01`, `P0-02`, `P0-03`, `P0-04`, `P0-05`, `P0-06`,
-`P1-02`, `P1-04`, `P1-05`, `P1-06`, `P1-09`,
+`P1-02`, `P1-04`, `P1-05`, `P1-06`, `P1-09`, `P1-10`,
 `P2-01`, `P2-02`, `P2-04`, `P2-05`, `P2-06`, `P2-07`, `P2-10`, `P2-11`,
-`P3-04`, `P3-06`.
+`P3-04`, `P3-05`, `P3-06`, `P3-07`, `P3-08`, `P3-09`.
 
-Left out intentionally (17):
+Left out intentionally (12):
 
 - **Feature branches:** `P1-01` view navigation, `P2-03` clone progress/cancel,
   `P2-08` folder scan, `P2-13` branch actions.
 - **Performance/quality:** `P1-03` lazy overview/details, `P1-07` accessibility,
-  `P2-09` debounced state writing, `P3-05` cached persistence path.
-- **Docs/CI/tests:** `P1-08` README accuracy, `P1-10` safety test matrix,
-  `P3-07` architecture docs, `P3-08` performance budgets, `P3-09` GPUI upgrade plan.
-- **Broad refactors:** `P3-01` module split, `P3-02` typed context menus, `P3-03` dead-code removal,
-  plus `P2-12` toast redesign (a UX enhancement rather than a correctness/security fix).
+  `P2-09` debounced state writing.
+- **Docs:** `P1-08` README accuracy.
+- **Broad refactors / UX:** `P3-01` module split, `P3-02` typed context menus,
+  `P3-03` dead-code removal, plus `P2-12` toast redesign.
 
 These left-out branches were not merged because they are feature, workflow, broad-refactor or
 performance work, or because they overlap heavily with the integrated safety changes. They remain
@@ -50,8 +49,11 @@ review-ready on their original branches.
 - `P2-10` and `P3-06` both touched the cask/scripts; the integrated result keeps quarantine in
   place and staples the app bundle, not the submission zip.
 - `P2-11` licenses and notices are integrated.
-- `P0-04`'s state recovery plus `P2-09`/`P3-05` debounced-writer changes were not combined: the
-  state-writer performance branches remain separate to avoid a second persistence rewrite.
+- `P3-05` is integrated on top of `P0-04`'s recovery work: the avatar cache keeps the process-wide
+  `CACHE_DIR` cell but derives its directory from `repos::state_path()`, and the duplicate
+  `Option`-returning path helper was dropped in favour of the existing `Result` version.
+- `P0-04`'s state recovery plus `P2-09`'s debounced-writer changes were not combined: `P2-09`
+  remains separate to avoid a second persistence rewrite.
 
 
 ## Branch inventory
@@ -116,10 +118,9 @@ Docs/release-only branches ran their relevant checks instead (`brew style`, `yam
 committed at `ab2b483`; `target/` measured **882 MB** after the slim-profile `cargo check` (down
 from 4.2 GB). `sccache` is installed and configured globally.
 
-P1-10's [`SAFETY_TEST_MATRIX.md`](https://github.com/beingbalveer/Vantage/blob/fix/p1-10-safety-tests/docs/SAFETY_TEST_MATRIX.md)
-maps every P0/P1 ticket to its branch, commit and regression tests, including the remaining gaps.
-It is on the `fix/p1-10-safety-tests` branch; it is not copied here to avoid an early merge
-conflict.
+P1-10's [`SAFETY_TEST_MATRIX.md`](SAFETY_TEST_MATRIX.md) maps every P0/P1 ticket to its branch,
+commit and regression tests, including the remaining gaps. The matrix and its cross-crate
+integration tests are now on `main`.
 
 ## Known limitations / gaps
 
@@ -142,8 +143,8 @@ These are deliberate residuals, not hidden failures:
   the custom input remains a documented limitation.
 - **P1-08:** docs-only branch; no automated claim-vs-shipped-UI check. Manual release-build review
   remains.
-- **P1-10:** the matrix documents which tests are branch-only. `cargo test` on `main` will not run
-  the GPUI tests that live on ticket branches.
+- **P1-10:** the matrix documents which tests are branch-only. `cargo test` on `main` runs the
+  safety integration suite; the remaining GPUI tests still live on their ticket branches.
 - **P2-01:** Windows command shapes are compile-checked but not runtime-tested; Linux was compile-
   checked, not launched. `dbus-send` failures are asynchronous.
 - **P2-03:** cancellation kills the direct Git child; descendant remote helpers rely on pipe
@@ -161,26 +162,21 @@ These are deliberate residuals, not hidden failures:
 
 ## Suggested merge order
 
-The safety/security/correctness subset has already been applied. This order remains useful if you
-continue merging the left-out feature/quality branches. Several touch the same files; merge them
-one at a time and run the full check suite after each merge.
+The safety/security/correctness subset and the low-risk docs/tests/performance branches have
+already been applied. This order remains useful for the 12 left-out branches. Several touch the
+same files; merge them one at a time and run the full check suite after each merge.
 
-1. **Persistence foundation:** P0-04 → P2-09 → P3-05. These overlap in `persist.rs`, `repos.rs`,
-   `backend/mod.rs` and `app.rs`; P2-09 and P3-05 may partly supersede each other.
-2. **Commit safety:** P0-01 → P0-03 → P0-05 → P0-06. All touch `app.rs`/`inspector.rs`/commit
-   flow. P0-03 and P0-01 both change the composer area.
-3. **Branch targeting:** P0-02 → P2-13. Both add repository-targeted branch actions; P2-13 may
-   absorb some P0-02 call-site changes.
-4. **Scan and watcher:** P1-03 → P1-02 → P2-04 → P2-13. P1-03 restructures the backend details and
-   P2-04/P2-13 add fields to that model.
-5. **UI foundation:** P1-01 → P1-04 → P1-05 → P1-06 → P1-07. All touch layout/sidebar/input/theme
-   and will conflict in `app.rs`, `views/`, and `theme.rs`.
-6. **Git/feature work:** P1-09 → P2-02 → P2-03 → P2-05 → P2-06 → P2-07 → P2-08 → P2-12.
-7. **Docs/release:** P1-08 → P2-10 → P3-06 → P2-11 → P3-07 → P3-08 → P3-09. Root `README.md` is
-   touched by P1-08 and P2-10; `Casks`/`scripts` by P2-10 and P3-06; `docs/README.md` by several.
-8. **Refactors last:** P3-01 and P3-03 should come after the behavior branches. P3-02 is
-   independent but touches the same `app.rs` menu block. P3-04 is small and can go anywhere after
-   P0-05/P1-06. P1-10's matrix should be refreshed after the merge sequence is chosen.
+1. **Persistence:** P2-09. It overlaps `P0-04`/`P3-05` in `persist.rs`, `repos.rs`,
+   `backend/mod.rs` and `app.rs`; re-check it against the integrated persistence path.
+2. **Branch and scan features:** P1-03 → P2-13 → P2-08. They restructure backend details and add
+   fields used by branch actions and the folder scan.
+3. **UI foundation:** P1-01 → P1-07. Both touch layout/sidebar/navigation and will conflict in
+   `app.rs`, `views/`, and `theme.rs`.
+4. **Feature/UX work:** P2-03 → P2-12. Clone progress/cancel and the toast redesign are independent
+   of the integrated safety fixes but touch `app.rs`.
+5. **Docs:** P1-08. Root `README.md` also changed in `P2-10`, so re-read before merging.
+6. **Refactors last:** P3-01 and P3-03 after the behavior branches; P3-02 touches the same `app.rs`
+   menu block. Refresh [`SAFETY_TEST_MATRIX.md`](SAFETY_TEST_MATRIX.md) after any UI merge.
 
 ## Review commands
 
@@ -191,5 +187,5 @@ git switch fix/p0-01-composer-state
 CARGO_INCREMENTAL=0 CARGO_BUILD_JOBS=2 cargo test --workspace
 ```
 
-Do not assume `main` contains any ticket fix: it contains only the build-profile commit and the
-review documents. No worktrees remain.
+`main` now contains the build-profile commit, the review documents, and the 26 integrated ticket
+branches. The remaining 12 branches are unmerged by design. No worktrees remain.
