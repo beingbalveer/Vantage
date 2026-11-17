@@ -85,15 +85,18 @@ impl VantageApp {
         }
 
         // Path row: the text field plus a compact native folder picker.
-        let path_field = self.text_field(
-            FieldId::ModalPath,
-            "/Users/you/Documents/GitHub/project",
-            FieldVariant::Form,
-            window,
-            cx,
-        );
+        let path_field = self
+            .text_field(
+                FieldId::ModalPath,
+                "/Users/you/Documents/GitHub/project",
+                FieldVariant::Form,
+                window,
+                cx,
+            )
+            .debug_selector(|| "add-repo-path-field".to_string());
         let browse = secondary_button(&theme, "Browse", Some("folder-git-2"))
             .id("modal-browse")
+            .debug_selector(|| "modal-browse".to_string())
             .py(px(10.0))
             .when(busy, |button| button.opacity(0.5))
             .when(!busy, |button| {
@@ -350,10 +353,92 @@ fn field_label(theme: &crate::theme::Theme, text: &'static str) -> impl IntoElem
 
 #[cfg(test)]
 mod tests {
-    use gpui::{point, px, AppContext, Modifiers, TestAppContext};
+    use gpui::{point, px, size, AppContext, Modifiers, TestAppContext};
 
     use crate::app::VantageApp;
     use crate::root::RootView;
+
+    fn draw(cx: &mut gpui::VisualTestContext) {
+        cx.update(|window, cx| {
+            window.draw(cx).clear();
+        });
+    }
+
+    #[gpui::test]
+    fn long_path_stays_inside_the_modal_and_scrolls_to_the_caret(cx: &mut TestAppContext) {
+        let app = cx.new(VantageApp::new);
+        let (_root, cx) = cx.add_window_view(|_window, _cx| RootView::new(app.clone()));
+
+        let long_path = format!(
+            "/private/var/folders/{}/{}",
+            "x".repeat(120),
+            "répo-日本語-with-a-long-name"
+        );
+        cx.update(|window, cx| {
+            app.update(cx, |app, cx| {
+                app.open_add_modal(cx);
+                app.modal_path.set(long_path.clone());
+            });
+            window.draw(cx).clear();
+        });
+        cx.run_until_parked();
+        draw(cx);
+
+        // At both the minimum and a wide window the field itself has to stay
+        // inside the dialog and clear of Browse, whatever the path length.
+        for (width, height) in [(1040.0, 640.0), (1470.0, 900.0)] {
+            cx.simulate_resize(size(px(width), px(height)));
+            cx.run_until_parked();
+            draw(cx);
+
+            let card = cx.debug_bounds("add-repo-card").expect("modal card bounds");
+            let field = cx
+                .debug_bounds("add-repo-path-field")
+                .expect("path field bounds");
+            let browse = cx.debug_bounds("modal-browse").expect("browse bounds");
+            assert!(
+                field.left() >= card.left() && field.right() <= card.right(),
+                "path field {field:?} must stay inside card {card:?}"
+            );
+            assert!(
+                field.right() <= browse.left(),
+                "path field {field:?} must not paint over Browse {browse:?}"
+            );
+            assert!(
+                browse.right() <= card.right(),
+                "Browse {browse:?} must stay inside card {card:?}"
+            );
+        }
+
+        // Focus the field: its content must scroll left far enough to keep the
+        // caret (parked at the end) inside the visible text area.
+        cx.simulate_resize(size(px(1040.0), px(640.0)));
+        cx.run_until_parked();
+        draw(cx);
+        let field = cx
+            .debug_bounds("add-repo-path-field")
+            .expect("path field bounds");
+        cx.simulate_click(field.center(), Modifiers::none());
+        cx.run_until_parked();
+        draw(cx);
+
+        let offset_at_end = cx.update(|_window, cx| app.read(cx).modal_path.scroll_offset_x());
+        assert!(
+            offset_at_end < px(0.0),
+            "the focused field should scroll to reveal the caret, offset {offset_at_end:?}"
+        );
+
+        // Home collapses the caret to index zero; the next frame brings the
+        // beginning of the path back into view.
+        app.update(cx, |app, _cx| app.modal_path.home());
+        draw(cx);
+        let offset_at_home = cx.update(|_window, cx| app.read(cx).modal_path.scroll_offset_x());
+        assert_eq!(
+            offset_at_home,
+            px(0.0),
+            "scrolling back to the start must reset the offset"
+        );
+    }
 
     #[gpui::test]
     fn dialog_ignores_clicks_on_its_own_body(cx: &mut TestAppContext) {
