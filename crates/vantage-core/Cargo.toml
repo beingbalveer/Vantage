@@ -4,7 +4,7 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
-description = "Vantage's git engine: runner, status, log, refs, diffs, watching and state persistence"
+description = "Vantage's git engine: runner, status, log, refs, diffs and state persistence"
 
 [dependencies]
 serde = { version = "1", features = ["derive"] }
@@ -22,10 +22,8 @@ tokio = { version = "1", features = [
     "time",
     "io-util",
 ] }
-notify = "6"
 similar = { version = "2", features = ["inline"] }
 chrono = { version = "0.4", features = ["serde"] }
-regex = "1"
 dirs = "5"
 dunce = "1.0"
 uuid = { version = "1", features = ["v4", "serde"] }

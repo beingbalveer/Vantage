@@ -8,7 +8,6 @@
 
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
-use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::model::{CommitIdentity, PreviewKind, PreviewLine};
 
@@ -18,6 +17,7 @@ use vantage_core::git::status::StatusRecord;
 use vantage_core::git::{diff, log, refs};
 use vantage_core::{repos, AppError, GitRunner};
 
+use super::{now_seconds, relative_time_label};
 use crate::model::{BranchInfo, ChangedFile, CommitEntry, FileChangeStatus};
 
 /// Commits listed per branch panel.
@@ -127,7 +127,7 @@ pub fn branches(
                 is_default: name == default,
                 last_commit_time: tip
                     .and_then(|tip| tip.seconds)
-                    .map(|seconds| relative_label(now, seconds))
+                    .map(|seconds| relative_time_label(now, seconds))
                     .unwrap_or_default(),
                 name,
             },
@@ -922,35 +922,10 @@ fn origin_url(repo_path: &Path) -> Result<Option<String>, String> {
 
 // ---------------- Relative time ----------------
 
-fn now_seconds() -> i64 {
-    match SystemTime::now().duration_since(UNIX_EPOCH) {
-        Ok(elapsed) => elapsed.as_secs().min(i64::MAX as u64) as i64,
-        Err(_) => 0,
-    }
-}
-
-/// `just now` / `14m ago` / `3h ago` / `2d ago` / `1w ago` / `3mo ago`.
-fn relative_label(now: i64, then: i64) -> String {
-    let minutes = now.saturating_sub(then).max(0) / 60;
-    if minutes < 1 {
-        "just now".to_string()
-    } else if minutes < 60 {
-        format!("{minutes}m ago")
-    } else if minutes < 60 * 24 {
-        format!("{}h ago", minutes / 60)
-    } else if minutes < 60 * 24 * 7 {
-        format!("{}d ago", minutes / (60 * 24))
-    } else if minutes < 60 * 24 * 30 {
-        format!("{}w ago", minutes / (60 * 24 * 7))
-    } else {
-        format!("{}mo ago", minutes / (60 * 24 * 30))
-    }
-}
-
-/// Same labels for git's `%aI` timestamps (`2024-05-06T07:08:09+02:00`).
+/// Labels for git's `%aI` timestamps (`2024-05-06T07:08:09+02:00`).
 fn relative_iso_label(now: i64, stamp: &str) -> String {
     match chrono::DateTime::parse_from_rfc3339(stamp) {
-        Ok(moment) => relative_label(now, moment.timestamp()),
+        Ok(moment) => relative_time_label(now, moment.timestamp()),
         Err(_) => UNKNOWN_AUTHOR.to_string(),
     }
 }
@@ -974,7 +949,6 @@ mod tests {
                 files_changed: 1,
                 additions: 2,
                 deletions: 0,
-                flags: Vec::new(),
                 is_new: false,
             },
             0,
@@ -987,13 +961,14 @@ mod tests {
     #[test]
     fn relative_labels_follow_the_dashboard_scale() {
         let now = 1_700_000_000;
-        assert_eq!(relative_label(now, now), "just now");
-        assert_eq!(relative_label(now, now - 30), "just now");
-        assert_eq!(relative_label(now, now - 14 * 60), "14m ago");
-        assert_eq!(relative_label(now, now - 3 * 3600), "3h ago");
-        assert_eq!(relative_label(now, now - 2 * 86_400), "2d ago");
-        assert_eq!(relative_label(now, now - 9 * 86_400), "1w ago");
-        assert_eq!(relative_label(now, now - 95 * 86_400), "3mo ago");
+        assert_eq!(relative_time_label(now, now), "just now");
+        assert_eq!(relative_time_label(now, now - 30), "just now");
+        assert_eq!(relative_time_label(now, now - 14 * 60), "14m ago");
+        assert_eq!(relative_time_label(now, now - 3 * 3600), "3h ago");
+        assert_eq!(relative_time_label(now, now - 2 * 86_400), "2d ago");
+        assert_eq!(relative_time_label(now, now - 9 * 86_400), "1w ago");
+        assert_eq!(relative_time_label(now, now - 95 * 86_400), "3mo ago");
+        assert_eq!(relative_time_label(now, now - 400 * 86_400), "1y ago");
     }
 
     #[test]
