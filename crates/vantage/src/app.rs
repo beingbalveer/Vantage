@@ -261,8 +261,19 @@ pub struct LastCommit {
     pub previous_tip: Option<String>,
 }
 
+/// Keymap context for the repository list. Plain arrows and Enter only act
+/// while the list itself owns the keyboard, never while a text field does.
+pub const REPO_LIST_KEY_CONTEXT: &str = "RepoList";
+/// Every editable field carries this context, so a future global binding can
+/// exclude text entry without knowing which field is focused.
+pub const TEXT_FIELD_KEY_CONTEXT: &str = "TextField";
+/// An open dialog. Escape and Tab are handled at this level, and because the
+/// context is on the dialog card it also matches when a field inside it is
+/// focused.
+pub const MODAL_KEY_CONTEXT: &str = "Modal";
+
 /// Which text field a keystroke belongs to.
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum FieldId {
     NewGroup,
     ModalPath,
@@ -275,6 +286,32 @@ pub enum FieldId {
     CloneParent,
     NewRepoName,
     NewRepoParent,
+}
+
+impl FieldId {
+    /// Fields that live inside a dialog. Their widgets only exist while that
+    /// dialog is open, so they are tab stops only for that lifetime.
+    fn is_modal(self) -> bool {
+        matches!(
+            self,
+            Self::ModalPath
+                | Self::ModalCustomGroup
+                | Self::SettingsBranch
+                | Self::BranchName
+                | Self::CloneUrl
+                | Self::CloneParent
+                | Self::NewRepoName
+                | Self::NewRepoParent
+        )
+    }
+}
+
+/// A focus destination the app can restore after a dialog closes.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum FocusTarget {
+    RepoList,
+    Field(FieldId),
+    Modal,
 }
 
 pub struct VantageApp {
@@ -407,6 +444,18 @@ pub struct VantageApp {
     load_seq: u64,
     modal_path_focus: FocusHandle,
     modal_custom_group_focus: FocusHandle,
+    /// Owns the plain arrow/Enter bindings while the repository list is the
+    /// active keyboard context. Clicking a row focuses it.
+    repo_list_focus: FocusHandle,
+    /// The dialog card itself: focused for dialogs without a field, and the
+    /// ancestor key context that makes Escape/Tab work anywhere inside.
+    pub(crate) modal_focus: FocusHandle,
+    /// Where focus should return after the open dialog closes.
+    last_main_focus: Option<FocusTarget>,
+    /// One-shot focus request, used when the inline New Group row appears.
+    pending_focus: Option<FocusTarget>,
+    /// Set by dialog close paths; consumed by the next render.
+    restore_focus: bool,
 }
 
 impl VantageApp {
@@ -549,6 +598,11 @@ impl VantageApp {
             load_seq: 0,
             modal_path_focus: cx.focus_handle(),
             modal_custom_group_focus: cx.focus_handle(),
+            repo_list_focus: cx.focus_handle(),
+            modal_focus: cx.focus_handle(),
+            last_main_focus: None,
+            pending_focus: None,
+            restore_focus: false,
         }
     }
 
@@ -965,6 +1019,7 @@ impl VantageApp {
         }
         self.is_add_modal_open = false;
         self.modal_group_menu_open = false;
+        self.restore_focus = true;
         cx.notify();
     }
 
@@ -1185,6 +1240,7 @@ impl VantageApp {
     pub fn close_settings(&mut self, cx: &mut Context<Self>) {
         self.is_settings_open = false;
         self.settings_reset_confirm = false;
+        self.restore_focus = true;
         cx.notify();
     }
 
@@ -2163,6 +2219,7 @@ impl VantageApp {
 
     pub fn cancel_confirm(&mut self, cx: &mut Context<Self>) {
         self.confirm = None;
+        self.restore_focus = true;
         cx.notify();
     }
 
@@ -2171,6 +2228,7 @@ impl VantageApp {
         let Some(prompt) = self.confirm.take() else {
             return;
         };
+        self.restore_focus = true;
         match prompt.action {
             ConfirmAction::MergeBranch { repo_id, target } => {
                 let Some(repo) = self.repos.iter().find(|repo| repo.id == repo_id).cloned() else {
@@ -2311,6 +2369,7 @@ impl VantageApp {
 
     pub fn close_stash_modal(&mut self, cx: &mut Context<Self>) {
         self.stash_modal = None;
+        self.restore_focus = true;
         cx.notify();
     }
 
@@ -2320,6 +2379,7 @@ impl VantageApp {
             return;
         };
         self.stash_modal = None;
+        self.restore_focus = true;
         let Some(repo) = self
             .repos
             .iter()
@@ -2346,6 +2406,7 @@ impl VantageApp {
             return;
         };
         self.stash_modal = None;
+        self.restore_focus = true;
         let Some(repo) = self
             .repos
             .iter()
@@ -2538,6 +2599,7 @@ impl VantageApp {
     pub fn close_clone_modal(&mut self, cx: &mut Context<Self>) {
         self.is_clone_modal_open = false;
         self.is_cloning = false;
+        self.restore_focus = true;
         cx.notify();
     }
 
@@ -2560,6 +2622,7 @@ impl VantageApp {
     pub fn close_new_repo_modal(&mut self, cx: &mut Context<Self>) {
         self.is_new_repo_modal_open = false;
         self.is_creating_repo = false;
+        self.restore_focus = true;
         cx.notify();
     }
 
@@ -2599,6 +2662,7 @@ impl VantageApp {
                     Ok(()) => {
                         app.is_new_repo_modal_open = false;
                         app.new_repo_name.clear();
+                        app.restore_focus = true;
                         app.show_toast("Repository created", cx);
                         app.start_scan(cx);
                     }
@@ -2646,6 +2710,7 @@ impl VantageApp {
                     Ok(()) => {
                         app.is_clone_modal_open = false;
                         app.clone_url.clear();
+                        app.restore_focus = true;
                         app.show_toast("Cloned and added to the list", cx);
                         app.start_scan(cx);
                     }
@@ -2836,6 +2901,7 @@ impl VantageApp {
     pub fn cancel_branch_prompt(&mut self, cx: &mut Context<Self>) {
         self.branch_prompt = None;
         self.branch_field.clear();
+        self.restore_focus = true;
         cx.notify();
     }
 
@@ -2915,15 +2981,19 @@ impl VantageApp {
 
         self.branch_prompt = None;
         self.branch_field.clear();
+        self.restore_focus = true;
         self.run_repo_op(&repo, cx, RepoOp::Branch, RepoOpReport::new(ok, fail), op);
     }
 
     /// The stash list, with restore and drop per entry.
-    fn render_stash_modal(&self, cx: &mut Context<Self>) -> gpui::Div {
+    fn render_stash_modal(&self, window: &mut Window, cx: &mut Context<Self>) -> gpui::Div {
         let theme = self.theme;
         let Some(modal) = self.stash_modal.clone() else {
             return div();
         };
+        if !self.modal_focus.contains_focused(window, cx) {
+            window.focus(&self.modal_focus);
+        }
 
         let mut list = div().flex().flex_col().gap(px(2.0)).w_full();
         if modal.loading {
@@ -3037,6 +3107,9 @@ impl VantageApp {
             .border_color(theme.divider)
             .rounded(px(12.0))
             .shadow_lg()
+            .track_focus(&self.modal_focus)
+            .key_context(MODAL_KEY_CONTEXT)
+            .on_key_down(cx.listener(Self::handle_modal_key))
             .on_mouse_down(
                 MouseButton::Left,
                 cx.listener(|_this, _e, _w, cx| cx.stop_propagation()),
@@ -3070,7 +3143,7 @@ impl VantageApp {
     /// Dialog for starting a repository: name, folder, and a starter ignore file.
     fn render_new_repo_modal(&self, window: &mut Window, cx: &mut Context<Self>) -> gpui::Div {
         let theme = self.theme;
-        if !self.new_repo_name_focus.is_focused(window) {
+        if !self.modal_focus.contains_focused(window, cx) {
             window.focus(&self.new_repo_name_focus);
         }
 
@@ -3117,6 +3190,9 @@ impl VantageApp {
             .border_color(theme.divider)
             .rounded(px(12.0))
             .shadow_lg()
+            .track_focus(&self.modal_focus)
+            .key_context(MODAL_KEY_CONTEXT)
+            .on_key_down(cx.listener(Self::handle_modal_key))
             .on_mouse_down(
                 MouseButton::Left,
                 cx.listener(|_this, _e, _w, cx| cx.stop_propagation()),
@@ -3182,7 +3258,7 @@ impl VantageApp {
     /// Dialog for cloning a repository: where from, and into which folder.
     fn render_clone_modal(&self, window: &mut Window, cx: &mut Context<Self>) -> gpui::Div {
         let theme = self.theme;
-        if !self.clone_url_focus.is_focused(window) {
+        if !self.modal_focus.contains_focused(window, cx) {
             window.focus(&self.clone_url_focus);
         }
 
@@ -3209,6 +3285,9 @@ impl VantageApp {
             .border_color(theme.divider)
             .rounded(px(12.0))
             .shadow_lg()
+            .track_focus(&self.modal_focus)
+            .key_context(MODAL_KEY_CONTEXT)
+            .on_key_down(cx.listener(Self::handle_modal_key))
             .on_mouse_down(
                 MouseButton::Left,
                 cx.listener(|_this, _e, _w, cx| cx.stop_propagation()),
@@ -3269,11 +3348,14 @@ impl VantageApp {
     }
 
     /// Small dialog for a destructive action: what will happen, and one way out.
-    fn render_confirm_modal(&self, cx: &mut Context<Self>) -> gpui::Div {
+    fn render_confirm_modal(&self, window: &mut Window, cx: &mut Context<Self>) -> gpui::Div {
         let theme = self.theme;
         let Some(prompt) = self.confirm.clone() else {
             return div();
         };
+        if !self.modal_focus.contains_focused(window, cx) {
+            window.focus(&self.modal_focus);
+        }
 
         let card = div()
             .w(px(420.0))
@@ -3286,6 +3368,9 @@ impl VantageApp {
             .border_color(theme.divider)
             .rounded(px(12.0))
             .shadow_lg()
+            .track_focus(&self.modal_focus)
+            .key_context(MODAL_KEY_CONTEXT)
+            .on_key_down(cx.listener(Self::handle_modal_key))
             .on_mouse_down(
                 MouseButton::Left,
                 cx.listener(|_this, _e, _w, cx| cx.stop_propagation()),
@@ -3304,10 +3389,8 @@ impl VantageApp {
                             .on_click(cx.listener(|this, _e, _w, cx| this.cancel_confirm(cx))),
                     )
                     .child(
-                        crate::ui::accent_button(&theme, prompt.label)
+                        crate::ui::destructive_button(&theme, prompt.label)
                             .id("confirm-ok")
-                            .bg(theme.status_red)
-                            .hover(move |s| s.bg(theme.del_text))
                             .on_click(cx.listener(|this, _e, _w, cx| this.submit_confirm(cx))),
                     ),
             );
@@ -3335,9 +3418,17 @@ impl VantageApp {
             return div().into_any_element();
         };
 
-        // The dialog owns the keyboard while it is open.
-        if !self.branch_focus.is_focused(window) {
-            window.focus(&self.branch_focus);
+        // The dialog owns the keyboard while it is open. A delete prompt has no
+        // field, so the card itself takes focus and Escape still works.
+        if !self.modal_focus.contains_focused(window, cx) {
+            if matches!(
+                self.branch_prompt.as_ref().map(|prompt| &prompt.kind),
+                Some(BranchPromptKind::Create { .. } | BranchPromptKind::Rename { .. })
+            ) {
+                window.focus(&self.branch_focus);
+            } else {
+                window.focus(&self.modal_focus);
+            }
         }
 
         let (title, action_label, destructive) = match &prompt.kind {
@@ -3378,14 +3469,14 @@ impl VantageApp {
             }
         }
 
-        let mut confirm = crate::ui::accent_button(&theme, action_label)
+        let confirm_button = if destructive {
+            crate::ui::destructive_button(&theme, action_label)
+        } else {
+            crate::ui::accent_button(&theme, action_label)
+        };
+        let confirm = confirm_button
             .id("branch-modal-confirm")
             .on_click(cx.listener(|this, _e, _w, cx| this.submit_branch_prompt(cx)));
-        if destructive {
-            confirm = confirm
-                .bg(theme.status_red)
-                .hover(move |s| s.bg(theme.del_text));
-        }
 
         let card = div()
             .w(px(420.0))
@@ -3398,6 +3489,9 @@ impl VantageApp {
             .border_color(theme.divider)
             .rounded(px(12.0))
             .shadow_lg()
+            .track_focus(&self.modal_focus)
+            .key_context(MODAL_KEY_CONTEXT)
+            .on_key_down(cx.listener(Self::handle_modal_key))
             // A click inside the dialog is not a click on the backdrop.
             .on_mouse_down(
                 MouseButton::Left,
@@ -3670,6 +3764,7 @@ impl VantageApp {
                         app.modal_error = None;
                         app.is_add_modal_open = false;
                         app.modal_group_menu_open = false;
+                        app.restore_focus = true;
 
                         let state_saved = app.persist(cx);
                         let settings_saved = app.save_settings(cx);
@@ -3859,6 +3954,199 @@ impl VantageApp {
 
     // ---- text fields -----------------------------------------------------
 
+    /// Whether any dialog currently owns the screen.
+    pub fn has_modal_open(&self) -> bool {
+        self.is_settings_open
+            || self.is_add_modal_open
+            || self.is_clone_modal_open
+            || self.is_new_repo_modal_open
+            || self.stash_modal.is_some()
+            || self.confirm.is_some()
+            || self.branch_prompt.is_some()
+    }
+
+    /// The repository rows are on screen and can take list navigation.
+    fn repo_list_visible(&self) -> bool {
+        !self.is_refreshing
+            && !self.repos.is_empty()
+            && matches!(
+                self.active_section,
+                NavSection::Overview | NavSection::Attention
+            )
+    }
+
+    /// The commit bar (and therefore its fields) is rendered for this state.
+    fn commit_bar_visible(&self) -> bool {
+        self.settings.right_panel_open
+            && self.inspector_tab == InspectorTab::Changes
+            && self
+                .selected_repo()
+                .is_some_and(|repo| !repo.uncommitted_files.is_empty())
+    }
+
+    fn focus_target_for(&self, handle: &FocusHandle) -> Option<FocusTarget> {
+        if handle == &self.repo_list_focus {
+            return Some(FocusTarget::RepoList);
+        }
+        if handle == &self.modal_focus {
+            return Some(FocusTarget::Modal);
+        }
+        for id in [
+            FieldId::NewGroup,
+            FieldId::ModalPath,
+            FieldId::ModalCustomGroup,
+            FieldId::SettingsBranch,
+            FieldId::CommitMessage,
+            FieldId::CommitBody,
+            FieldId::BranchName,
+            FieldId::CloneUrl,
+            FieldId::CloneParent,
+            FieldId::NewRepoName,
+            FieldId::NewRepoParent,
+        ] {
+            if handle == &self.field_focus(id) {
+                return Some(FocusTarget::Field(id));
+            }
+        }
+        None
+    }
+
+    fn focus_handle_for(&self, target: FocusTarget) -> FocusHandle {
+        match target {
+            FocusTarget::RepoList => self.repo_list_focus.clone(),
+            FocusTarget::Modal => self.modal_focus.clone(),
+            FocusTarget::Field(id) => self.field_focus(id),
+        }
+    }
+
+    /// Whether a target is part of the tree this frame can render.
+    fn focus_target_visible(&self, target: FocusTarget) -> bool {
+        match target {
+            FocusTarget::RepoList => self.repo_list_visible(),
+            FocusTarget::Modal => self.has_modal_open(),
+            FocusTarget::Field(id) => match id {
+                FieldId::NewGroup => self.is_adding_group,
+                FieldId::ModalPath | FieldId::ModalCustomGroup => self.is_add_modal_open,
+                FieldId::SettingsBranch => self.is_settings_open,
+                FieldId::CommitMessage | FieldId::CommitBody => self.commit_bar_visible(),
+                FieldId::BranchName => matches!(
+                    self.branch_prompt.as_ref().map(|prompt| &prompt.kind),
+                    Some(BranchPromptKind::Create { .. } | BranchPromptKind::Rename { .. })
+                ),
+                FieldId::CloneUrl | FieldId::CloneParent => self.is_clone_modal_open,
+                FieldId::NewRepoName | FieldId::NewRepoParent => self.is_new_repo_modal_open,
+            },
+        }
+    }
+
+    /// Keep the keyboard on a live control: restore a dialog's previous focus,
+    /// service a one-shot request, or fall back to the repository list when
+    /// nothing editable owns the keyboard.
+    fn sync_focus(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.has_modal_open() {
+            return;
+        }
+
+        if let Some(target) = self.pending_focus.take() {
+            if self.focus_target_visible(target) {
+                window.focus(&self.focus_handle_for(target));
+            }
+        }
+
+        if std::mem::take(&mut self.restore_focus) {
+            let preferred = self.last_main_focus.unwrap_or(FocusTarget::RepoList);
+            let target = if self.focus_target_visible(preferred) {
+                preferred
+            } else {
+                FocusTarget::RepoList
+            };
+            if self.focus_target_visible(target) {
+                window.focus(&self.focus_handle_for(target));
+            }
+        }
+
+        match window
+            .focused(cx)
+            .and_then(|handle| self.focus_target_for(&handle))
+        {
+            Some(target) if self.focus_target_visible(target) => {
+                self.last_main_focus = Some(target);
+            }
+            _ if self.repo_list_visible() => {
+                window.focus(&self.repo_list_focus);
+                self.last_main_focus = Some(FocusTarget::RepoList);
+            }
+            _ => {}
+        }
+    }
+
+    /// Give the list keyboard focus, e.g. after a row click.
+    pub fn focus_repo_list(&self, window: &mut Window) {
+        window.focus(&self.repo_list_focus);
+    }
+
+    /// The repository list's focus handle, so the list view can make it the
+    /// active key context.
+    pub fn repo_list_focus(&self) -> FocusHandle {
+        self.repo_list_focus.clone()
+    }
+
+    /// New Group toggles the inline field and puts the caret in it.
+    pub fn toggle_new_group(&mut self, cx: &mut Context<Self>) {
+        self.is_adding_group = !self.is_adding_group;
+        if self.is_adding_group {
+            self.pending_focus = Some(FocusTarget::Field(FieldId::NewGroup));
+        } else {
+            self.group_field.clear();
+        }
+        cx.notify();
+    }
+
+    /// Escape closes the topmost dialog, whatever control inside it has focus.
+    pub fn dismiss_modal(&mut self, cx: &mut Context<Self>) {
+        // Topmost first: this mirrors the order dialogs are painted in `render`.
+        if self.is_settings_open {
+            self.close_settings(cx);
+        } else if self.is_add_modal_open {
+            self.close_add_modal(cx);
+        } else if self.branch_prompt.is_some() {
+            self.cancel_branch_prompt(cx);
+        } else if self.confirm.is_some() {
+            self.cancel_confirm(cx);
+        } else if self.is_clone_modal_open {
+            self.close_clone_modal(cx);
+        } else if self.is_new_repo_modal_open {
+            self.close_new_repo_modal(cx);
+        } else if self.stash_modal.is_some() {
+            self.close_stash_modal(cx);
+        }
+    }
+
+    /// Tab and Shift+Tab move between the dialog's tab stops only. No field
+    /// behind the dialog is a tab stop, so this cannot escape it.
+    pub fn focus_modal_tab_stop(&self, forward: bool, window: &mut Window) {
+        if !self.has_modal_open() {
+            return;
+        }
+        if forward {
+            window.focus_next();
+        } else {
+            window.focus_prev();
+        }
+    }
+
+    /// Tab on a dialog card moves into (or around) the dialog's fields.
+    pub fn handle_modal_key(
+        &mut self,
+        event: &KeyDownEvent,
+        window: &mut Window,
+        _cx: &mut Context<Self>,
+    ) {
+        if event.keystroke.key == "tab" {
+            self.focus_modal_tab_stop(!event.keystroke.modifiers.shift, window);
+        }
+    }
+
     pub fn field_state_mut(&mut self, id: FieldId) -> &mut FieldState {
         match id {
             FieldId::NewGroup => &mut self.group_field,
@@ -3907,23 +4195,41 @@ impl VantageApp {
         }
     }
 
+    /// Apply a keystroke to the field. Returns whether the field consumed it,
+    /// so the caller can stop it bubbling to list-level handlers.
     pub fn handle_field_key(
         &mut self,
         id: FieldId,
         event: &KeyDownEvent,
-        _window: &mut Window,
+        window: &mut Window,
         cx: &mut Context<Self>,
-    ) {
+    ) -> bool {
+        // Tab walks the dialog's own fields; the window's tab stops outside it
+        // are not tab stops while a dialog is open.
+        if id.is_modal() && event.keystroke.key == "tab" {
+            self.focus_modal_tab_stop(!event.keystroke.modifiers.shift, window);
+            return true;
+        }
+
         let outcome = {
             let state = self.field_state_mut(id);
             apply_field_key(state, event, cx)
         };
 
         match outcome {
-            FieldKey::Ignored => {}
-            FieldKey::Changed => cx.notify(),
-            FieldKey::Cancel => self.cancel_field(id, cx),
-            FieldKey::Submit => self.submit_field(id, cx),
+            FieldKey::Ignored => false,
+            FieldKey::Changed => {
+                cx.notify();
+                true
+            }
+            FieldKey::Cancel => {
+                self.cancel_field(id, cx);
+                true
+            }
+            FieldKey::Submit => {
+                self.submit_field(id, cx);
+                true
+            }
         }
     }
 
@@ -3991,7 +4297,7 @@ impl VantageApp {
         window: &Window,
         cx: &mut Context<Self>,
     ) -> gpui::Stateful<gpui::Div> {
-        let focus = self.field_focus(id);
+        let focus = self.field_focus(id).tab_stop(id.is_modal());
         let focused = focus.is_focused(window);
         let state = self.field_state(id).clone();
         let theme = self.theme;
@@ -4000,6 +4306,7 @@ impl VantageApp {
         let row = crate::ui::field(&theme, &state, placeholder, focused, variant, text_id)
             .id(gpui::ElementId::named_usize("field", id as u8 as usize))
             .track_focus(&focus)
+            .key_context(TEXT_FIELD_KEY_CONTEXT)
             .cursor_text()
             .on_mouse_down(
                 MouseButton::Left,
@@ -4023,7 +4330,9 @@ impl VantageApp {
                 }),
             )
             .on_key_down(cx.listener(move |this, event: &KeyDownEvent, window, cx| {
-                this.handle_field_key(id, event, window, cx);
+                if this.handle_field_key(id, event, window, cx) {
+                    cx.stop_propagation();
+                }
             }));
 
         row
@@ -4033,6 +4342,7 @@ impl VantageApp {
 impl Render for VantageApp {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = self.theme;
+        self.sync_focus(window, cx);
 
         let viewport = self.render_viewport(window, cx).into_any_element();
         let inspector = self.render_inspector(window, cx);
@@ -4496,7 +4806,7 @@ impl Render for VantageApp {
                 .child(deferred(panel));
         }
         if self.stash_modal.is_some() {
-            let modal = self.render_stash_modal(cx);
+            let modal = self.render_stash_modal(window, cx);
             root = root.child(deferred(modal));
         }
         if self.is_new_repo_modal_open {
@@ -4508,7 +4818,7 @@ impl Render for VantageApp {
             root = root.child(deferred(modal));
         }
         if self.confirm.is_some() {
-            let modal = self.render_confirm_modal(cx);
+            let modal = self.render_confirm_modal(window, cx);
             root = root.child(deferred(modal));
         }
         if self.branch_prompt.is_some() {
@@ -4976,11 +5286,11 @@ pub fn expand_home(path: &str) -> std::path::PathBuf {
 
 #[cfg(test)]
 mod tests {
+    use gpui::{AppContext, Modifiers, TestAppContext, VisualTestContext};
+
     use super::*;
     use crate::model::{ChangedFile, FileChangeStatus};
     use crate::root::RootView;
-    use gpui::{AppContext, TestAppContext};
-
     fn temp_state_dir(name: &str) -> PathBuf {
         let stamp = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -5536,5 +5846,434 @@ mod tests {
     #[test]
     fn a_clean_tree_can_reach_the_reset_confirmation() {
         assert_eq!(reset_refusal(&repo_with(Vec::new())), None);
+    }
+
+    // ---- keyboard context and dialog focus -------------------------------
+
+    fn list_repo(id: &str, name: &str, minutes: i64) -> Repository {
+        let mut repo = repo_with(vec![file("src/lib.rs", false)]);
+        repo.id = id.to_string();
+        repo.name = name.to_string();
+        repo.last_activity_minutes = minutes;
+        repo
+    }
+
+    fn open_test_window(
+        cx: &mut TestAppContext,
+        repos: Vec<Repository>,
+    ) -> (gpui::Entity<VantageApp>, &mut VisualTestContext) {
+        let app = cx.new(VantageApp::new);
+        let (_root, window) = cx.add_window_view(|_window, _cx| RootView::new(app.clone()));
+        window.update(|_window, cx| crate::menu::install(cx, app.clone()));
+        window.update(|_window, cx| {
+            app.update(cx, |app, cx| {
+                app.repos = repos;
+                app.selected_repo_id = None;
+                app.settings.right_panel_open = false;
+                cx.notify();
+            });
+        });
+        (app, window)
+    }
+
+    fn draw(window: &mut VisualTestContext) {
+        window.update(|window, cx| {
+            window.draw(cx).clear();
+        });
+    }
+
+    fn focused(window: &mut VisualTestContext, handle: &FocusHandle) -> bool {
+        window.update(|window, _cx| handle.is_focused(window))
+    }
+
+    fn selected(window: &mut VisualTestContext, app: &gpui::Entity<VantageApp>) -> Option<String> {
+        window.update(|_window, cx| app.read(cx).selected_repo_id.clone())
+    }
+
+    #[gpui::test]
+    fn arrows_in_a_text_field_leave_the_repository_selection_alone(cx: &mut TestAppContext) {
+        let (app, window) = open_test_window(
+            cx,
+            vec![
+                list_repo("repo-1", "alpha", 0),
+                list_repo("repo-2", "beta", 1),
+            ],
+        );
+        window.update(|_window, cx| {
+            app.update(cx, |app, cx| {
+                app.selected_repo_id = Some("repo-1".to_string());
+                app.settings.right_panel_open = true;
+                cx.notify();
+            });
+        });
+        draw(window);
+
+        let message = window.update(|_window, cx| app.read(cx).field_focus(FieldId::CommitMessage));
+        window.update(|window, _cx| window.focus(&message));
+        draw(window);
+        assert!(focused(window, &message), "the message field is focused");
+
+        window.simulate_keystrokes("down up");
+        assert_eq!(
+            selected(window, &app),
+            Some("repo-1".to_string()),
+            "arrow keys while editing must not walk the repository list"
+        );
+
+        window.simulate_keystrokes("a->a b->b");
+        assert_eq!(
+            window.update(|_window, cx| app.read(cx).composer().message.value.clone()),
+            "ab",
+            "typed characters land in the focused field"
+        );
+        assert_eq!(
+            selected(window, &app),
+            Some("repo-1".to_string()),
+            "typing never changes the selection"
+        );
+    }
+
+    #[gpui::test]
+    fn enter_in_a_modal_field_does_not_open_the_repository(cx: &mut TestAppContext) {
+        let (app, window) = open_test_window(
+            cx,
+            vec![
+                list_repo("repo-1", "alpha", 0),
+                list_repo("repo-2", "beta", 1),
+            ],
+        );
+        window.update(|_window, cx| {
+            app.update(cx, |app, cx| {
+                app.selected_repo_id = Some("repo-1".to_string());
+                app.open_add_modal(cx);
+            });
+        });
+        draw(window);
+
+        let path = window.update(|_window, cx| app.read(cx).field_focus(FieldId::ModalPath));
+        assert!(focused(window, &path), "the path field opens focused");
+
+        window.simulate_keystrokes("enter");
+        let (error, panel_open) = window.update(|_window, cx| {
+            let app = app.read(cx);
+            (app.modal_error.clone(), app.settings.right_panel_open)
+        });
+        assert!(
+            error.is_some(),
+            "Enter belongs to the field (it asks for a path) and must not open a repository"
+        );
+        assert!(!panel_open, "no repository view action ran");
+    }
+
+    #[gpui::test]
+    fn repository_list_keeps_arrow_and_enter_navigation(cx: &mut TestAppContext) {
+        let (app, window) = open_test_window(
+            cx,
+            vec![
+                list_repo("repo-1", "alpha", 0),
+                list_repo("repo-2", "beta", 1),
+                list_repo("repo-3", "gamma", 2),
+            ],
+        );
+        draw(window);
+
+        let list = window.update(|_window, cx| app.read(cx).repo_list_focus());
+        assert!(
+            focused(window, &list),
+            "an empty selection focuses the list so the keyboard works"
+        );
+
+        window.simulate_keystrokes("down");
+        assert_eq!(selected(window, &app), Some("repo-1".to_string()));
+        window.simulate_keystrokes("down");
+        assert_eq!(selected(window, &app), Some("repo-2".to_string()));
+        window.simulate_keystrokes("up");
+        assert_eq!(selected(window, &app), Some("repo-1".to_string()));
+
+        window.simulate_keystrokes("enter");
+        assert!(
+            window.update(|_window, cx| app.read(cx).settings.right_panel_open),
+            "Enter opens the highlighted repository"
+        );
+    }
+
+    #[gpui::test]
+    fn clicking_a_row_establishes_the_list_keyboard_context(cx: &mut TestAppContext) {
+        let (app, window) = open_test_window(
+            cx,
+            vec![
+                list_repo("repo-1", "alpha", 0),
+                list_repo("repo-2", "beta", 1),
+                list_repo("repo-3", "gamma", 2),
+            ],
+        );
+        draw(window);
+
+        let selector: &'static str = Box::leak(format!("repo-row-{}", "repo-2").into_boxed_str());
+        let row = window
+            .debug_bounds(selector)
+            .expect("the second row is drawn");
+        window.simulate_click(row.center(), Modifiers::none());
+
+        assert_eq!(selected(window, &app), Some("repo-2".to_string()));
+        let list = window.update(|_window, cx| app.read(cx).repo_list_focus());
+        assert!(
+            focused(window, &list),
+            "clicking a row makes the list the active keyboard context"
+        );
+
+        window.simulate_keystrokes("down");
+        assert_eq!(
+            selected(window, &app),
+            Some("repo-3".to_string()),
+            "the list keeps working after a row click"
+        );
+    }
+
+    #[gpui::test]
+    fn each_dialog_focuses_its_first_control(cx: &mut TestAppContext) {
+        let (app, window) = open_test_window(cx, vec![list_repo("repo-1", "alpha", 0)]);
+        draw(window);
+
+        let handle = |window: &mut VisualTestContext, id| {
+            window.update(|_window, cx| app.read(cx).field_focus(id))
+        };
+        let card = window.update(|_window, cx| app.read(cx).modal_focus.clone());
+
+        window.update(|_window, cx| {
+            app.update(cx, |app, cx| app.open_new_repo_modal(cx));
+        });
+        draw(window);
+        let name = handle(window, FieldId::NewRepoName);
+        assert!(focused(window, &name));
+
+        window.update(|_window, cx| {
+            app.update(cx, |app, cx| app.close_new_repo_modal(cx));
+            app.update(cx, |app, cx| app.open_clone_modal(cx));
+        });
+        draw(window);
+        let url = handle(window, FieldId::CloneUrl);
+        assert!(focused(window, &url));
+
+        window.update(|_window, cx| {
+            app.update(cx, |app, cx| {
+                app.close_clone_modal(cx);
+                app.start_branch_prompt(
+                    "repo-1",
+                    BranchPromptKind::Create {
+                        base: "main".to_string(),
+                    },
+                    cx,
+                );
+            });
+        });
+        draw(window);
+        let branch = handle(window, FieldId::BranchName);
+        assert!(focused(window, &branch));
+
+        window.update(|_window, cx| {
+            app.update(cx, |app, cx| {
+                app.start_branch_prompt(
+                    "repo-1",
+                    BranchPromptKind::Delete {
+                        name: "old".to_string(),
+                    },
+                    cx,
+                );
+            });
+        });
+        draw(window);
+        assert!(
+            focused(window, &card),
+            "a prompt with no field focuses its card"
+        );
+
+        window.update(|_window, cx| {
+            app.update(cx, |app, cx| {
+                app.cancel_branch_prompt(cx);
+                app.confirm = Some(ConfirmPrompt {
+                    title: "Remove?".to_string(),
+                    body: "Nothing is deleted.".to_string(),
+                    label: "Remove",
+                    action: ConfirmAction::ForgetRepository {
+                        repo_id: "repo-1".to_string(),
+                    },
+                });
+                cx.notify();
+            });
+        });
+        draw(window);
+        assert!(focused(window, &card));
+    }
+
+    #[gpui::test]
+    fn shortcut_opens_the_add_dialog_with_the_path_focused(cx: &mut TestAppContext) {
+        let (app, window) = open_test_window(cx, vec![list_repo("repo-1", "alpha", 0)]);
+        draw(window);
+
+        window.simulate_keystrokes("cmd-o");
+        draw(window);
+
+        let path = window.update(|_window, cx| app.read(cx).field_focus(FieldId::ModalPath));
+        assert!(
+            window.update(|_window, cx| app.read(cx).is_add_modal_open),
+            "the shortcut opens the dialog"
+        );
+        assert!(
+            focused(window, &path),
+            "the first field takes focus when the dialog opens"
+        );
+    }
+
+    #[gpui::test]
+    fn toolbar_opens_the_add_dialog_with_the_path_focused(cx: &mut TestAppContext) {
+        let (app, window) = open_test_window(cx, vec![list_repo("repo-1", "alpha", 0)]);
+        draw(window);
+
+        let button = window
+            .debug_bounds("add-repository")
+            .expect("toolbar button");
+        window.simulate_click(button.center(), Modifiers::none());
+        draw(window);
+
+        let path = window.update(|_window, cx| app.read(cx).field_focus(FieldId::ModalPath));
+        assert!(window.update(|_window, cx| app.read(cx).is_add_modal_open));
+        assert!(focused(window, &path));
+    }
+
+    #[gpui::test]
+    fn menu_action_opens_the_add_dialog_with_the_path_focused(cx: &mut TestAppContext) {
+        let (app, window) = open_test_window(cx, vec![list_repo("repo-1", "alpha", 0)]);
+        draw(window);
+
+        window.dispatch_action(crate::menu::AddRepository);
+        draw(window);
+
+        let path = window.update(|_window, cx| app.read(cx).field_focus(FieldId::ModalPath));
+        assert!(window.update(|_window, cx| app.read(cx).is_add_modal_open));
+        assert!(focused(window, &path));
+    }
+
+    #[gpui::test]
+    fn escape_closes_a_dialog_from_a_non_field_control(cx: &mut TestAppContext) {
+        let (app, window) = open_test_window(cx, vec![list_repo("repo-1", "alpha", 0)]);
+        draw(window);
+
+        window.dispatch_action(crate::menu::Settings);
+        draw(window);
+        let card = window.update(|_window, cx| app.read(cx).modal_focus.clone());
+        assert!(
+            focused(window, &card),
+            "Settings with no field focuses its card"
+        );
+
+        window.simulate_keystrokes("escape");
+        assert!(
+            !window.update(|_window, cx| app.read(cx).is_settings_open),
+            "Escape closes the dialog even though no text field is focused"
+        );
+    }
+
+    #[gpui::test]
+    fn tab_cycles_inside_an_open_dialog(cx: &mut TestAppContext) {
+        let (app, window) = open_test_window(cx, vec![list_repo("repo-1", "alpha", 0)]);
+        draw(window);
+
+        window.dispatch_action(crate::menu::CloneRepository);
+        draw(window);
+        let url = window.update(|_window, cx| app.read(cx).field_focus(FieldId::CloneUrl));
+        let parent = window.update(|_window, cx| app.read(cx).field_focus(FieldId::CloneParent));
+        assert!(focused(window, &url));
+
+        window.simulate_keystrokes("tab");
+        assert!(focused(window, &parent), "Tab moves to the next field");
+        window.simulate_keystrokes("tab");
+        assert!(
+            focused(window, &url),
+            "Tab wraps without leaving the dialog"
+        );
+        window.simulate_keystrokes("shift-tab");
+        assert!(
+            focused(window, &parent),
+            "Shift+Tab walks back inside the dialog"
+        );
+        assert!(window.update(|_window, cx| app.read(cx).is_clone_modal_open));
+    }
+
+    #[gpui::test]
+    fn closing_a_dialog_restores_the_previous_field(cx: &mut TestAppContext) {
+        let (app, window) = open_test_window(cx, vec![list_repo("repo-1", "alpha", 0)]);
+        window.update(|_window, cx| {
+            app.update(cx, |app, cx| {
+                app.selected_repo_id = Some("repo-1".to_string());
+                app.settings.right_panel_open = true;
+                cx.notify();
+            });
+        });
+        draw(window);
+
+        let message = window.update(|_window, cx| app.read(cx).field_focus(FieldId::CommitMessage));
+        window.update(|window, _cx| window.focus(&message));
+        draw(window);
+        assert!(focused(window, &message));
+
+        window.dispatch_action(crate::menu::Settings);
+        draw(window);
+        assert!(window.update(|_window, cx| app.read(cx).is_settings_open));
+
+        window.simulate_keystrokes("escape");
+        draw(window);
+        assert!(!window.update(|_window, cx| app.read(cx).is_settings_open));
+        assert!(
+            focused(window, &message),
+            "closing the dialog puts the caret back where it was"
+        );
+    }
+
+    #[gpui::test]
+    fn new_group_reveals_with_its_input_focused(cx: &mut TestAppContext) {
+        let (app, window) = open_test_window(cx, vec![list_repo("repo-1", "alpha", 0)]);
+        draw(window);
+
+        window.update(|_window, cx| {
+            app.update(cx, |app, cx| app.toggle_new_group(cx));
+        });
+        draw(window);
+
+        let group = window.update(|_window, cx| app.read(cx).field_focus(FieldId::NewGroup));
+        assert!(window.update(|_window, cx| app.read(cx).is_adding_group));
+        assert!(
+            focused(window, &group),
+            "the New Group input is ready for typing"
+        );
+    }
+
+    #[gpui::test]
+    fn left_right_arrows_still_edit_inside_the_commit_message(cx: &mut TestAppContext) {
+        let (app, window) = open_test_window(cx, vec![list_repo("repo-1", "alpha", 0)]);
+        window.update(|_window, cx| {
+            app.update(cx, |app, cx| {
+                app.selected_repo_id = Some("repo-1".to_string());
+                app.settings.right_panel_open = true;
+                app.composers
+                    .active_mut()
+                    .message
+                    .set("subject".to_string());
+                cx.notify();
+            });
+        });
+        draw(window);
+
+        let message = window.update(|_window, cx| app.read(cx).field_focus(FieldId::CommitMessage));
+        window.update(|window, _cx| window.focus(&message));
+        draw(window);
+
+        window.simulate_keystrokes("left left");
+        assert_eq!(
+            window.update(|_window, cx| app.read(cx).composer().message.caret),
+            5,
+            "left/right still edit inside the field"
+        );
+        assert_eq!(selected(window, &app), Some("repo-1".to_string()));
     }
 }

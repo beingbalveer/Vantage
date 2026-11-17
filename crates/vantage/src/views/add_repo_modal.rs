@@ -3,7 +3,7 @@
 
 use gpui::{deferred, div, prelude::*, px, relative, Context, IntoElement, Styled, Window};
 
-use crate::app::{FieldId, VantageApp};
+use crate::app::{FieldId, VantageApp, MODAL_KEY_CONTEXT};
 use crate::theme::{FONT_SANS, LH_SM, TEXT_SM};
 use crate::ui::{icon, IconSize};
 use crate::ui::{secondary_button, FieldVariant, Txt};
@@ -11,12 +11,15 @@ use crate::ui::{secondary_button, FieldVariant, Txt};
 impl VantageApp {
     pub fn render_add_repo_modal(
         &mut self,
-        window: &Window,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
         let theme = self.theme;
         let busy = self.modal_is_adding;
         let detected_name = self.modal_detected_repo_name();
+        if !self.modal_focus.contains_focused(window, cx) {
+            window.focus(&self.field_focus(FieldId::ModalPath));
+        }
 
         let backdrop = div()
             .debug_selector(|| "add-repo-backdrop".to_string())
@@ -44,6 +47,9 @@ impl VantageApp {
             .border_color(theme.divider)
             .rounded(px(12.0))
             .shadow_xl()
+            .track_focus(&self.modal_focus)
+            .key_context(MODAL_KEY_CONTEXT)
+            .on_key_down(cx.listener(Self::handle_modal_key))
             .child(
                 div()
                     .flex()

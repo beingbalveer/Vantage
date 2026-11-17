@@ -317,6 +317,9 @@ pub fn apply_field_key(
             FieldKey::Changed
         }
         "enter" => FieldKey::Submit,
+        // Tab belongs to focus navigation, and a single-line field must never
+        // insert a control character if the keystroke reaches it.
+        "tab" => FieldKey::Ignored,
         "escape" => {
             if field.selection().is_some() {
                 field.anchor = None;

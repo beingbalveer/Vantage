@@ -3,7 +3,7 @@
 
 use gpui::{div, prelude::*, px, relative, Context, Div, IntoElement, Styled, Window};
 
-use crate::app::{SummaryFilter, VantageApp};
+use crate::app::{SummaryFilter, VantageApp, REPO_LIST_KEY_CONTEXT};
 use crate::model::RepoSyncState;
 use crate::theme::Theme;
 use crate::ui::{icon, status_badges, BadgeDensity, IconSize};
@@ -90,6 +90,7 @@ impl VantageApp {
         }
 
         let is_empty = sections.iter().all(|s| s.rows.is_empty());
+        let list_focus = self.repo_list_focus();
 
         let mut table = div()
             .debug_selector(|| "repo-table".to_string())
@@ -99,6 +100,8 @@ impl VantageApp {
             .w_full()
             .min_w(px(0.0))
             .gap(px(10.0))
+            .track_focus(&list_focus)
+            .key_context(REPO_LIST_KEY_CONTEXT)
             .child(self.render_summary_strip(theme, compact_summary, cx));
 
         if self.is_refreshing {
@@ -262,6 +265,10 @@ impl VantageApp {
                 move || id.clone()
             })
             .id(gpui::SharedString::from(format!("repo-row-{}", row.id)))
+            .debug_selector({
+                let id = row.id.clone();
+                move || format!("repo-row-{id}")
+            })
             .group("repo-row")
             .flex()
             .flex_col()
@@ -283,6 +290,9 @@ impl VantageApp {
             })
             .on_click(cx.listener(move |this, _e, window, cx| {
                 this.select_repo(repo_id.clone(), cx);
+                // A row click makes the list the active keyboard context, so
+                // the following arrow keys belong to it.
+                this.focus_repo_list(window);
                 window.refresh();
             }))
             // Name first: it is what the eye looks for. When the list is

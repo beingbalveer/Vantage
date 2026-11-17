@@ -12,11 +12,14 @@ use crate::ui::{primary_button, secondary_button, FieldVariant, Txt};
 impl VantageApp {
     pub fn render_settings_modal(
         &mut self,
-        window: &Window,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
         let theme = self.theme;
         let section = self.settings_section;
+        if !self.modal_focus.contains_focused(window, cx) {
+            window.focus(&self.modal_focus);
+        }
 
         let backdrop = div()
             .debug_selector(|| "settings-backdrop".to_string())
@@ -44,6 +47,9 @@ impl VantageApp {
             .border_color(theme.divider)
             .rounded(px(12.0))
             .shadow_xl()
+            .track_focus(&self.modal_focus)
+            .key_context(crate::app::MODAL_KEY_CONTEXT)
+            .on_key_down(cx.listener(Self::handle_modal_key))
             .child(
                 div()
                     .flex()

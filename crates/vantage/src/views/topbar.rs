@@ -6,7 +6,7 @@
 
 use gpui::{div, prelude::*, px, Context, IntoElement, MouseButton, Styled, Window};
 
-use crate::app::{FieldId, VantageApp};
+use crate::app::VantageApp;
 use crate::ui::icon_button;
 use crate::ui::Txt;
 
@@ -98,10 +98,10 @@ impl VantageApp {
                     )
                     .child(
                         icon_button(&theme, "plus")
+                            .debug_selector(|| "add-repository".to_string())
                             .id("add-repository")
-                            .on_click(cx.listener(|this, _e, window, cx| {
+                            .on_click(cx.listener(|this, _e, _window, cx| {
                                 this.open_add_modal(cx);
-                                window.focus(&this.field_focus(FieldId::ModalPath));
                             })),
                     )
                     .child(
