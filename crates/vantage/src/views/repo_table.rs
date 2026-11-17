@@ -595,6 +595,7 @@ mod tests {
             }],
             branches: Vec::new(),
             recent_commits: Vec::new(),
+            local_only_commits: std::collections::HashSet::new(),
         }
     }
 

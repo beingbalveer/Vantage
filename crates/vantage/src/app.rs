@@ -5416,6 +5416,7 @@ mod tests {
             uncommitted_files: files,
             branches: Vec::new(),
             recent_commits: Vec::new(),
+            local_only_commits: std::collections::HashSet::new(),
         }
     }
 
@@ -5425,6 +5426,7 @@ mod tests {
             .iter()
             .map(|sha| crate::model::CommitEntry {
                 sha: sha.to_string(),
+                full_sha: sha.to_string(),
                 message: format!("subject of {sha}"),
                 body: format!("body of {sha}"),
                 author: "QA".to_string(),

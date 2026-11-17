@@ -157,10 +157,12 @@ pub fn commits(
 }
 
 /// Map the engine's commit summary to the row/composer model, keeping the body
-/// so amend can restore the full original message.
+/// so amend can restore the full original message and the full SHA so history
+/// can be matched against the upstream range.
 fn commit_entry(commit: vantage_core::state::CommitSummary, now: i64) -> CommitEntry {
     CommitEntry {
         sha: short_sha(&commit.sha, &commit.short),
+        full_sha: commit.sha,
         message: commit.subject,
         body: commit.body,
         author: if commit.author_name.trim().is_empty() {
@@ -170,6 +172,42 @@ fn commit_entry(commit: vantage_core::state::CommitSummary, now: i64) -> CommitE
         },
         author_email: commit.author_email,
         relative_time: relative_iso_label(now, &commit.date),
+    }
+}
+
+/// Full SHAs of commits reachable from `HEAD` that the upstream does not have.
+///
+/// When the checked-out branch tracks nothing, every remote is used instead, so
+/// a commit pushed to any remote is not called local. A repository without a
+/// remote has no push target and gets an empty set. A failure (unborn `HEAD`,
+/// deleted upstream ref) is treated as "nothing known" rather than guessing
+/// from indices, so the UI never labels a pushed commit as local.
+pub fn local_only_commits(
+    rt: &tokio::runtime::Runtime,
+    runner: &GitRunner,
+    path: &Path,
+    upstream: Option<&str>,
+    has_remote: bool,
+) -> HashSet<String> {
+    if !has_remote {
+        return HashSet::new();
+    }
+
+    let mut args = vec!["rev-list", "HEAD", "--not"];
+    match upstream.map(str::trim).filter(|name| !name.is_empty()) {
+        Some(upstream) => args.push(upstream),
+        None => args.push("--remotes"),
+    }
+
+    match rt.block_on(runner.run_read(path, &args)) {
+        Ok(out) if out.success() => out
+            .stdout_string()
+            .lines()
+            .map(str::trim)
+            .filter(|sha| !sha.is_empty())
+            .map(str::to_string)
+            .collect(),
+        _ => HashSet::new(),
     }
 }
 
@@ -1151,5 +1189,169 @@ u UU N... 100644 100644 100644 100644 aaaaaaa bbbbbbb ccccccc conflicted.rs\0\
         assert!(second
             .iter()
             .any(|line| line.kind == PreviewKind::Context && line.text == "keep"));
+    }
+
+    fn git_available() -> bool {
+        std::process::Command::new("git")
+            .arg("--version")
+            .output()
+            .map(|out| out.status.success())
+            .unwrap_or(false)
+    }
+
+    fn git(dir: &Path, args: &[&str]) -> String {
+        git_at(dir, args, None)
+    }
+
+    fn git_at(dir: &Path, args: &[&str], date: Option<&str>) -> String {
+        let mut command = std::process::Command::new("git");
+        command.arg("-C").arg(dir).args(args);
+        if let Some(date) = date {
+            command.env("GIT_AUTHOR_DATE", date);
+            command.env("GIT_COMMITTER_DATE", date);
+        }
+        let out = command.output().expect("run git");
+        assert!(
+            out.status.success(),
+            "git {args:?} failed: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        String::from_utf8_lossy(&out.stdout).trim().to_string()
+    }
+
+    fn init_repo(dir: &Path) {
+        std::fs::create_dir_all(dir).unwrap();
+        git(dir, &["init", "-q", "-b", "main"]);
+        git(dir, &["config", "user.name", "QA"]);
+        git(dir, &["config", "user.email", "qa@example.com"]);
+        git(dir, &["config", "commit.gpgsign", "false"]);
+    }
+
+    fn commit(dir: &Path, file: &str, contents: &str, message: &str, date: &str) -> String {
+        std::fs::write(dir.join(file), contents).unwrap();
+        git(dir, &["add", file]);
+        git_at(dir, &["commit", "-q", "-m", message], Some(date));
+        git(dir, &["rev-parse", "HEAD"])
+    }
+
+    /// Build a diverged repository and assert the local-only set comes from
+    /// the upstream range, not from the first N rows of the newest-first log.
+    #[test]
+    fn local_only_commits_use_the_upstream_range_not_list_indices() {
+        if !git_available() {
+            eprintln!("skipping: git is not installed");
+            return;
+        }
+
+        let root = std::env::temp_dir().join(format!("vantage_local_only_{}", std::process::id()));
+        std::fs::remove_dir_all(&root).ok();
+        let origin = root.join("origin.git");
+        let local = root.join("local");
+        let peer = root.join("peer");
+
+        std::fs::create_dir_all(&origin).unwrap();
+        git(&origin, &["init", "-q", "--bare"]);
+
+        init_repo(&local);
+        let base = commit(&local, "base.ts", "base\n", "base", "2024-01-01T00:00:00Z");
+        git(
+            &local,
+            &["remote", "add", "origin", origin.to_str().unwrap()],
+        );
+        git(&local, &["push", "-q", "-u", "origin", "main"]);
+
+        // Two local commits on top of the published base: the ahead-only case.
+        let first = commit(
+            &local,
+            "local.ts",
+            "local one\n",
+            "local one",
+            "2024-01-02T00:00:00Z",
+        );
+        let second = commit(
+            &local,
+            "local.ts",
+            "local two\n",
+            "local two",
+            "2024-01-03T00:00:00Z",
+        );
+
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let runner = GitRunner::new();
+        let ahead = local_only_commits(&rt, &runner, &local, Some("origin/main"), true);
+        assert_eq!(
+            ahead,
+            [first.clone(), second.clone()].into_iter().collect(),
+            "ahead-only commits are exactly the upstream range"
+        );
+
+        // A peer pushes an upstream commit that local then merges. The merge
+        // commit and the two local commits are absent from origin/main, and the
+        // upstream commit sorts between them in the newest-first log.
+        std::process::Command::new("git")
+            .args(["clone", "-q", origin.to_str().unwrap()])
+            .arg(&peer)
+            .output()
+            .expect("clone peer");
+        git(&peer, &["config", "user.name", "Peer"]);
+        git(&peer, &["config", "user.email", "peer@example.com"]);
+        git(&peer, &["config", "commit.gpgsign", "false"]);
+        let upstream = commit(
+            &peer,
+            "upstream.ts",
+            "upstream\n",
+            "upstream commit",
+            "2024-01-04T00:00:00Z",
+        );
+        git(&peer, &["push", "-q", "origin", "main"]);
+
+        git(&local, &["fetch", "-q", "origin"]);
+        git(&local, &["merge", "-q", "--no-edit", "origin/main"]);
+        let merge = git(&local, &["rev-parse", "HEAD"]);
+
+        let diverged = local_only_commits(&rt, &runner, &local, Some("origin/main"), true);
+        assert_eq!(
+            diverged,
+            [first.clone(), second.clone(), merge.clone()]
+                .into_iter()
+                .collect(),
+            "only commits absent from the upstream are local"
+        );
+        assert!(
+            !diverged.contains(&upstream) && !diverged.contains(&base),
+            "the upstream commit and the shared base are pushed"
+        );
+
+        // The same repository with no tracked upstream falls back to every
+        // remote; the range is unchanged because origin is the only remote.
+        assert_eq!(
+            local_only_commits(&rt, &runner, &local, None, true),
+            diverged,
+            "an untracked branch compares against all remotes"
+        );
+        assert!(
+            local_only_commits(&rt, &runner, &local, None, false).is_empty(),
+            "a repository without a remote has nothing to push"
+        );
+
+        // The log itself is non-contiguous: the upstream commit sits between
+        // the merge and the older local commits.
+        let commits = commits(&rt, &runner, &local, "main");
+        let position = |sha: &str| {
+            commits
+                .iter()
+                .position(|commit| commit.full_sha == sha)
+                .unwrap_or_else(|| panic!("missing {sha}"))
+        };
+        assert!(position(&merge) < position(&upstream));
+        assert!(position(&upstream) < position(&second));
+        assert!(position(&upstream) < position(&first));
+
+        // An unborn repository has no HEAD to diff and no local-only commits.
+        let unborn = root.join("unborn");
+        init_repo(&unborn);
+        assert!(local_only_commits(&rt, &runner, &unborn, None, true).is_empty());
+
+        std::fs::remove_dir_all(&root).ok();
     }
 }

@@ -1393,7 +1393,16 @@ impl VantageApp {
         let panel_width = self.dashboard_layout(window).inspector_width;
         let message_width =
             (px(panel_width) - px(24.0 * 2.0 + 16.0 * 2.0 + 16.0 + 12.0)).max(px(40.0));
-        let unpushed = repo.ahead_count.max(0) as usize;
+        let local_only_count = repo.local_only_commits.len();
+        let local_only_prefix = repo.local_only_prefix_len();
+        // The count is the whole set; the divider only follows the leading run,
+        // because a diverged history can put an upstream commit between two
+        // local ones. Badges on the rows mark any local commit below it.
+        let divider_label = match local_only_count {
+            0 => String::new(),
+            1 => "1 commit not pushed".to_string(),
+            count => format!("{count} commits not pushed"),
+        };
         let mut list = div()
             .flex()
             .flex_col()
@@ -1402,29 +1411,6 @@ impl VantageApp {
             .border_color(theme.divider)
             .rounded(px(8.0))
             .overflow_hidden();
-
-        // Names the badges below: everything above this line is still local.
-        if repo.has_remote && unpushed > 0 {
-            let label = if unpushed == 1 {
-                "1 commit not pushed".to_string()
-            } else {
-                format!("{unpushed} commits not pushed")
-            };
-            list = list.child(
-                div()
-                    .flex()
-                    .items_center()
-                    .gap(px(6.0))
-                    .w_full()
-                    .px(px(14.0))
-                    .py(px(8.0))
-                    .bg(theme.table_head_bg)
-                    .border_b_1()
-                    .border_color(theme.row_border)
-                    .child(icon("arrow-up", IconSize::Xs, theme.status_blue))
-                    .child(div().xs().medium().fg(theme.status_blue).child(label)),
-            );
-        }
 
         for (index, commit) in repo.recent_commits.iter().enumerate() {
             let short_sha: String = commit.sha.chars().take(7).collect();
@@ -1441,7 +1427,7 @@ impl VantageApp {
             let menu_short = commit.sha.clone();
             let menu_subject = commit.message.clone();
             let menu_body = commit.body.clone();
-            let can_amend = index == 0 && repo.commit_is_local_only(0);
+            let can_amend = index == 0 && repo.commit_is_local_only(commit);
             list = list.child(
                 div()
                     .id(gpui::SharedString::from(format!("commit-{}", commit.sha)))
@@ -1554,7 +1540,7 @@ impl VantageApp {
                                             .items_center()
                                             .gap(px(8.0))
                                             .flex_shrink_0();
-                                        if repo.commit_is_local_only(index) {
+                                        if repo.commit_is_local_only(commit) {
                                             // GitHub Desktop's marker: a quiet
                                             // round chip with an up arrow, sat
                                             // where the row's trailing controls
@@ -1588,6 +1574,32 @@ impl VantageApp {
                             ),
                     ),
             );
+
+            // The divider belongs at the boundary between the leading local
+            // run and the history the upstream already has. Only the leading
+            // run positions it; every row after it keeps its own badge.
+            if local_only_prefix > 0 && index + 1 == local_only_prefix {
+                list = list.child(
+                    div()
+                        .flex()
+                        .items_center()
+                        .gap(px(6.0))
+                        .w_full()
+                        .px(px(14.0))
+                        .py(px(8.0))
+                        .bg(theme.table_head_bg)
+                        .border_t_1()
+                        .border_color(theme.row_border)
+                        .child(icon("arrow-up", IconSize::Xs, theme.status_blue))
+                        .child(
+                            div()
+                                .xs()
+                                .medium()
+                                .fg(theme.status_blue)
+                                .child(divider_label.clone()),
+                        ),
+                );
+            }
         }
 
         list
@@ -2027,6 +2039,7 @@ mod tests {
                 uncommitted_files: Vec::new(),
                 branches: Vec::new(),
                 recent_commits: Vec::new(),
+                local_only_commits: std::collections::HashSet::new(),
             });
             app.selected_repo_id = Some("repo-1".to_string());
         });
