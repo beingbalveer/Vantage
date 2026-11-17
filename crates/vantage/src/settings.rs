@@ -7,7 +7,6 @@
 use serde::{Deserialize, Serialize};
 use vantage_core::git::refs::PullStrategy;
 use vantage_core::persist::PersistedState;
-use vantage_core::repos;
 use vantage_core::state::{validate_branch_name, Theme as LegacyTheme, WindowBounds};
 
 use crate::model::NavSection;
@@ -229,12 +228,6 @@ impl Default for UiSettings {
 }
 
 impl UiSettings {
-    /// Read the v2 preferences. If the object has never been written, import
-    /// only the old theme choice and leave everything else at v2 defaults.
-    pub fn load() -> Self {
-        Self::from_state(&repos::load_state().0)
-    }
-
     pub fn from_state(state: &PersistedState) -> Self {
         let section = state
             .extra

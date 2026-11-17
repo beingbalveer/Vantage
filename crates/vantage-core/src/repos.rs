@@ -9,7 +9,7 @@
 
 use crate::error::AppError;
 use crate::git::runner::GitRunner;
-use crate::persist::{PersistedState, StatePersistence};
+use crate::persist::{PersistedState, StateBackup, StatePersistence};
 use crate::state::{Marker, RepoEntry};
 use chrono::Utc;
 use std::fs;
@@ -50,6 +50,23 @@ pub fn load_state() -> (PersistedState, Option<String>) {
 /// Write the workspace state immediately (used after critical mutations).
 pub fn save_state(state: &PersistedState) -> Result<(), AppError> {
     persistence()?.save(state)
+}
+
+/// Absolute path of the shared state file, when its data directory could be
+/// opened.
+pub fn state_path() -> Option<PathBuf> {
+    persistence().ok().map(|state| state.path().to_path_buf())
+}
+
+/// Recoverable files sitting beside the shared state file, newest first.
+///
+/// Listing is best-effort: a UI showing recovery options must not fail to open
+/// just because the directory cannot be read.
+pub fn state_backups() -> Vec<StateBackup> {
+    persistence()
+        .ok()
+        .and_then(|state| state.backups().ok())
+        .unwrap_or_default()
 }
 
 // ---------------- Path validation / entry construction ----------------

@@ -18,6 +18,7 @@ use crate::settings::{
 };
 use crate::theme::Theme;
 use crate::ui::{apply_field_key, FieldKey, FieldState, Txt};
+use vantage_core::persist::StateBackup;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum InspectorTab {
@@ -150,6 +151,15 @@ pub struct VantageApp {
     pub is_refreshing: bool,
     pub toast: Option<String>,
     toast_seq: u64,
+    /// Load warning from startup (corrupt/unreadable state), kept after the
+    /// banner is dismissed so Settings → Data can still show it.
+    pub state_warning: Option<String>,
+    /// The recovery banner was dismissed; the warning remains in Settings.
+    pub state_warning_dismissed: bool,
+    /// Recoverable files beside the live state file, refreshed when Settings
+    /// opens.
+    pub state_backups: Vec<StateBackup>,
+    pub state_data_dir: PathBuf,
     pub collapsed_groups: HashSet<String>,
     /// Left sidebar shrunk to its 56px icon rail.
     pub sidebar_collapsed: bool,
@@ -251,6 +261,39 @@ pub struct VantageApp {
 impl VantageApp {
     pub fn new(cx: &mut Context<Self>) -> Self {
         let backend = Backend::new().map(std::sync::Arc::new).ok();
+        Self::build(cx, backend, None)
+    }
+
+    /// Build the app with a warning already obtained by the caller.
+    ///
+    /// `main` must read preferences before opening the window, which loads the
+    /// state file before [`Backend`] exists; passing that first load's warning
+    /// here keeps a corrupt-state notice from being lost.
+    pub fn new_with_startup_warning(cx: &mut Context<Self>, state_warning: Option<String>) -> Self {
+        let backend = Backend::new().map(std::sync::Arc::new).ok();
+        Self::build(cx, backend, state_warning)
+    }
+
+    /// Build the app around an already-created backend. Tests use this to
+    /// point persistence at a temporary state file.
+    fn build(
+        cx: &mut Context<Self>,
+        backend: Option<std::sync::Arc<Backend>>,
+        startup_warning: Option<String>,
+    ) -> Self {
+        let state_warning = startup_warning.or_else(|| {
+            backend
+                .as_ref()
+                .and_then(|backend| backend.take_state_warning())
+        });
+        let state_backups = backend
+            .as_ref()
+            .map(|backend| backend.state_backups())
+            .unwrap_or_default();
+        let state_data_dir = backend
+            .as_ref()
+            .map(|backend| backend.state_data_dir())
+            .unwrap_or_default();
         let (groups, assignments) = match backend.as_ref() {
             Some(backend) => backend.groups(),
             None => (Vec::new(), Default::default()),
@@ -287,6 +330,10 @@ impl VantageApp {
             is_refreshing: false,
             toast: None,
             toast_seq: 0,
+            state_warning,
+            state_warning_dismissed: false,
+            state_backups,
+            state_data_dir,
             collapsed_groups: HashSet::new(),
             sidebar_collapsed: settings.sidebar_collapsed,
             right_panel_drag_start: None,
@@ -353,6 +400,20 @@ impl VantageApp {
             modal_path_focus: cx.focus_handle(),
             modal_custom_group_focus: cx.focus_handle(),
         }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn with_backend(cx: &mut Context<Self>, backend: Backend) -> Self {
+        Self::build(cx, Some(std::sync::Arc::new(backend)), None)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn with_backend_and_warning(
+        cx: &mut Context<Self>,
+        backend: Backend,
+        warning: String,
+    ) -> Self {
+        Self::build(cx, Some(std::sync::Arc::new(backend)), Some(warning))
     }
 
     // ---- scanning & persistence -----------------------------------------
@@ -517,9 +578,16 @@ impl VantageApp {
     /// Only rows backed by the engine are merged in: repositories that failed to
     /// scan must not overwrite the assignments already on disk, and rows that
     /// are not on screen keep their stored group.
-    pub fn persist(&mut self, _cx: &mut Context<Self>) {
+    ///
+    /// Returns whether the write landed. Failures are shown as a toast and the
+    /// return value lets a caller skip its own success message.
+    pub fn persist(&mut self, cx: &mut Context<Self>) -> bool {
         let Some(backend) = self.backend.clone() else {
-            return;
+            self.show_toast(
+                "Workspace state is unavailable; the change was not saved",
+                cx,
+            );
+            return false;
         };
         let known = backend.repo_ids();
         for repo in &self.repos {
@@ -533,7 +601,18 @@ impl VantageApp {
                     .insert(repo.id.clone(), repo.workspace.clone());
             }
         }
-        backend.set_groups(&self.groups, &self.assignments).ok();
+        let result = backend.set_groups(&self.groups, &self.assignments);
+        if let Some(warning) = backend.take_state_warning() {
+            self.state_warning = Some(warning);
+            self.state_warning_dismissed = false;
+        }
+        match result {
+            Ok(()) => true,
+            Err(error) => {
+                self.show_toast(format!("Workspace changes were not saved: {error}"), cx);
+                false
+            }
+        }
     }
 
     fn repo_path_opt(&self, repo: &Repository) -> Option<std::path::PathBuf> {
@@ -893,6 +972,24 @@ impl VantageApp {
         self.settings_branch_field
             .set(self.settings.default_branch.clone());
         self.diagnostics = Some(Diagnostics::collect(&self.state_path()));
+        self.refresh_state_backups();
+        cx.notify();
+    }
+
+    /// Refresh the recoverable-backup list from the state directory.
+    pub fn refresh_state_backups(&mut self) {
+        let Some(backend) = &self.backend else {
+            self.state_backups.clear();
+            return;
+        };
+        self.state_backups = backend.state_backups();
+        self.state_data_dir = backend.state_data_dir();
+    }
+
+    /// Open Settings on the Data section, where backups are listed.
+    pub fn open_data_settings(&mut self, cx: &mut Context<Self>) {
+        self.open_settings(cx);
+        self.settings_section = SettingsSection::Data;
         cx.notify();
     }
 
@@ -985,8 +1082,9 @@ impl VantageApp {
             return;
         }
         self.settings.default_branch = branch;
-        self.save_settings(cx);
-        self.show_toast("Default branch saved", cx);
+        if self.save_settings(cx) {
+            self.show_toast("Default branch saved", cx);
+        }
     }
 
     pub fn reset_settings(&mut self, appearance: WindowAppearance, cx: &mut Context<Self>) {
@@ -996,16 +1094,21 @@ impl VantageApp {
             .set(self.settings.default_branch.clone());
         self.settings_reset_confirm = false;
         self.apply_theme(appearance);
-        self.save_settings(cx);
-        self.show_toast("Preferences reset", cx);
+        if self.save_settings(cx) {
+            self.show_toast("Preferences reset", cx);
+        }
     }
 
-    pub fn save_settings(&mut self, cx: &mut Context<Self>) {
+    pub fn save_settings(&mut self, cx: &mut Context<Self>) -> bool {
         let Some(backend) = self.backend.clone() else {
-            return;
+            return false;
         };
-        if let Err(error) = backend.set_ui_settings(&self.settings) {
-            self.show_toast(format!("Could not save settings: {error}"), cx);
+        match backend.set_ui_settings(&self.settings) {
+            Ok(()) => true,
+            Err(error) => {
+                self.show_toast(format!("Could not save settings: {error}"), cx);
+                false
+            }
         }
     }
 
@@ -1035,19 +1138,43 @@ impl VantageApp {
         self.show_toast("Diagnostics copied", cx);
     }
 
-    pub fn reveal_state_path(&mut self, cx: &mut Context<Self>) {
-        let path = self.state_path();
-        let mut command = std::process::Command::new(if cfg!(target_os = "macos") {
-            "open"
-        } else {
-            "xdg-open"
-        });
-        if cfg!(target_os = "macos") {
-            command.arg("-R");
+    /// Open the folder that holds `state.json` and its backups.
+    pub fn open_state_data_folder(&mut self, cx: &mut Context<Self>) {
+        let path = self.state_data_dir.clone();
+        if path.as_os_str().is_empty() {
+            self.show_toast("The data folder is unavailable", cx);
+            return;
         }
-        let result = command.arg(&path).spawn();
+        #[cfg(target_os = "macos")]
+        let result = std::process::Command::new("open").arg(&path).spawn();
+        #[cfg(target_os = "windows")]
+        let result = std::process::Command::new("explorer").arg(&path).spawn();
+        #[cfg(all(unix, not(target_os = "macos")))]
+        let result = std::process::Command::new("xdg-open").arg(&path).spawn();
+
         if let Err(error) = result {
-            self.show_toast(format!("Could not reveal the data folder: {error}"), cx);
+            self.show_toast(format!("Could not open the data folder: {error}"), cx);
+        }
+    }
+
+    /// Reveal one state backup in the platform file manager.
+    pub fn reveal_state_backup(&mut self, path: PathBuf, cx: &mut Context<Self>) {
+        #[cfg(target_os = "macos")]
+        let result = std::process::Command::new("open")
+            .arg("-R")
+            .arg(&path)
+            .spawn();
+        #[cfg(target_os = "windows")]
+        let result = std::process::Command::new("explorer")
+            .arg(format!("/select,{}", path.display()))
+            .spawn();
+        #[cfg(all(unix, not(target_os = "macos")))]
+        let result = std::process::Command::new("xdg-open")
+            .arg(path.parent().unwrap_or(path.as_path()))
+            .spawn();
+
+        if let Err(error) = result {
+            self.show_toast(format!("Could not reveal the backup: {error}"), cx);
         }
     }
 
@@ -1202,8 +1329,9 @@ impl VantageApp {
         }
         self.groups.push(trimmed.clone());
         self.active_group = trimmed.clone();
-        self.persist(cx);
-        self.show_toast(format!("Created group \"{trimmed}\""), cx);
+        if self.persist(cx) {
+            self.show_toast(format!("Created group \"{trimmed}\""), cx);
+        }
     }
 
     pub fn delete_group(&mut self, name: String, cx: &mut Context<Self>) {
@@ -1221,8 +1349,9 @@ impl VantageApp {
         if self.active_group == name {
             self.active_group = "All".to_string();
         }
-        self.persist(cx);
-        self.show_toast(format!("Removed group \"{name}\""), cx);
+        if self.persist(cx) {
+            self.show_toast(format!("Removed group \"{name}\""), cx);
+        }
     }
 
     pub fn move_repo_group(&mut self, repo_id: &str, group: String, cx: &mut Context<Self>) {
@@ -1237,8 +1366,9 @@ impl VantageApp {
             }
         }
         if let Some(name) = moved {
-            self.persist(cx);
-            self.show_toast(format!("Moved {name} to {group}"), cx);
+            if self.persist(cx) {
+                self.show_toast(format!("Moved {name} to {group}"), cx);
+            }
         }
     }
 
@@ -3210,12 +3340,14 @@ impl VantageApp {
                         app.is_add_modal_open = false;
                         app.modal_group_menu_open = false;
 
-                        app.persist(cx);
-                        app.save_settings(cx);
-                        app.show_toast(
-                            format!("Added {} to {}", repository.name, resolved_group),
-                            cx,
-                        );
+                        let state_saved = app.persist(cx);
+                        let settings_saved = app.save_settings(cx);
+                        if state_saved && settings_saved {
+                            app.show_toast(
+                                format!("Added {} to {}", repository.name, resolved_group),
+                                cx,
+                            );
+                        }
                         app.start_scan(cx);
                     }
                     Err(error) => {
@@ -3315,6 +3447,81 @@ impl VantageApp {
                 .xs()
                 .medium()
                 .child(message)
+                .into_any_element(),
+        )
+    }
+
+    /// A persistent startup notice for a state file that had to be recovered.
+    /// Unlike a toast it stays until dismissed, so the backup location cannot
+    /// disappear before the user reads it.
+    pub fn render_state_recovery(&self, cx: &mut Context<Self>) -> Option<gpui::AnyElement> {
+        if self.state_warning_dismissed {
+            return None;
+        }
+        let warning = self.state_warning.clone()?;
+        let theme = self.theme;
+        Some(
+            div()
+                .debug_selector(|| "state-recovery-banner".to_string())
+                .flex()
+                .items_start()
+                .gap(px(12.0))
+                .px(px(18.0))
+                .py(px(10.0))
+                .flex_shrink_0()
+                .border_b_1()
+                .border_color(theme.error_border)
+                .bg(theme.error_bg)
+                .child(
+                    div()
+                        .flex()
+                        .flex_col()
+                        .gap(px(2.0))
+                        .flex_1()
+                        .min_w(px(0.0))
+                        .child(
+                            div()
+                                .display_xs()
+                                .semibold()
+                                .fg(theme.error_text)
+                                .child("Saved state needed recovery"),
+                        )
+                        .child(div().xs().fg(theme.text_body).child(warning)),
+                )
+                .child(
+                    div()
+                        .flex()
+                        .items_center()
+                        .gap(px(6.0))
+                        .flex_shrink_0()
+                        .child(
+                            crate::ui::secondary_button(
+                                &theme,
+                                "Open data folder",
+                                Some("folder-git-2"),
+                            )
+                            .id("state-recovery-open-folder")
+                            .on_click(
+                                cx.listener(|this, _e, _w, cx| this.open_state_data_folder(cx)),
+                            ),
+                        )
+                        .child(
+                            crate::ui::secondary_button(&theme, "Review backups", None)
+                                .id("state-recovery-review")
+                                .on_click(cx.listener(|this, _e, _w, cx| {
+                                    this.state_warning_dismissed = true;
+                                    this.open_data_settings(cx);
+                                })),
+                        )
+                        .child(
+                            crate::ui::icon_button(&theme, "x")
+                                .id("state-recovery-dismiss")
+                                .on_click(cx.listener(|this, _e, _w, cx| {
+                                    this.state_warning_dismissed = true;
+                                    cx.notify();
+                                })),
+                        ),
+                )
                 .into_any_element(),
         )
     }
@@ -3614,7 +3821,11 @@ impl Render for VantageApp {
             .font_family(crate::theme::FONT_SANS)
             .text_size(px(crate::theme::TEXT_SM))
             .line_height(crate::theme::LH_SM)
-            .child(self.render_top_bar(window, cx))
+            .child(self.render_top_bar(window, cx));
+        if let Some(notice) = self.render_state_recovery(cx) {
+            root = root.child(notice);
+        }
+        let mut root = root
             .child(content)
             // Any press a text field did not claim drops focus, so clicking into
             // empty space leaves the commit box blurred instead of still taking
@@ -4220,6 +4431,21 @@ pub fn expand_home(path: &str) -> std::path::PathBuf {
 mod tests {
     use super::*;
     use crate::model::{ChangedFile, FileChangeStatus};
+    use crate::root::RootView;
+    use gpui::{AppContext, TestAppContext};
+
+    fn temp_state_dir(name: &str) -> PathBuf {
+        let stamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|duration| duration.as_nanos())
+            .unwrap_or(0);
+        let dir = std::env::temp_dir().join(format!(
+            "vantage_app_state_{name}_{}_{stamp}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
 
     fn file(path: &str, staged: bool) -> ChangedFile {
         ChangedFile {
@@ -4397,5 +4623,80 @@ mod tests {
         let repo = repo_with(vec![file("untracked.rs", false)]);
         assert!(ticked_paths(None, &repo).is_empty());
         assert!(ticked_paths(Some(&overrides(&[("untracked.rs", false)])), &repo).is_empty());
+    }
+
+    #[gpui::test]
+    fn corrupt_state_warning_is_visible_and_lists_backups(cx: &mut TestAppContext) {
+        let dir = temp_state_dir("corrupt");
+        let path = dir.join("state.json");
+        std::fs::write(&path, "{ not json").unwrap();
+
+        let backend = Backend::with_state_path(path).expect("backend with a temp state file");
+        let app = cx.new(|cx| VantageApp::with_backend(cx, backend));
+
+        let warning = cx.read(|cx| app.read(cx).state_warning.clone());
+        let warning = warning.expect("the startup warning must reach the app");
+        assert!(
+            warning.contains("could not read its saved state"),
+            "{warning}"
+        );
+
+        let backup_count = cx.read(|cx| app.read(cx).state_backups.len());
+        assert_eq!(
+            backup_count, 1,
+            "the corrupt file must be listed for recovery"
+        );
+
+        let (_root, cx) = cx.add_window_view(|_window, _cx| RootView::new(app.clone()));
+        cx.update(|window, cx| {
+            window.draw(cx).clear();
+        });
+        assert!(
+            cx.debug_bounds("state-recovery-banner").is_some(),
+            "a corrupt state must show a recovery notice, not a silent empty dashboard"
+        );
+
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[gpui::test]
+    fn warning_from_the_main_thread_is_kept_for_the_banner(cx: &mut TestAppContext) {
+        let dir = temp_state_dir("main_warning");
+        let backend = Backend::with_state_path(dir.join("state.json")).unwrap();
+        let app = cx.new(|cx| {
+            VantageApp::with_backend_and_warning(
+                cx,
+                backend,
+                "state.json was corrupt; backup at /tmp/state.corrupt-1.json".to_string(),
+            )
+        });
+
+        let warning = cx.read(|cx| app.read(cx).state_warning.clone());
+        assert_eq!(
+            warning.as_deref(),
+            Some("state.json was corrupt; backup at /tmp/state.corrupt-1.json")
+        );
+
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[gpui::test]
+    fn failed_workspace_save_is_reported_instead_of_succeeding_silently(cx: &mut TestAppContext) {
+        let dir = temp_state_dir("failed_save");
+        let blocker = dir.join("not-a-directory");
+        std::fs::write(&blocker, "blocked").unwrap();
+        let backend = Backend::with_state_path(blocker.join("state.json"))
+            .expect("backend with an unwritable state path");
+        let app = cx.new(|cx| VantageApp::with_backend(cx, backend));
+
+        let saved = cx.update(|cx| app.update(cx, |app, cx| app.persist(cx)));
+        assert!(!saved, "persist must report a failed write");
+        let toast = cx.read(|cx| app.read(cx).toast.clone()).unwrap_or_default();
+        assert!(
+            toast.contains("not saved") && toast.contains("save the workspace state"),
+            "the failed save must be visible: {toast}"
+        );
+
+        std::fs::remove_dir_all(&dir).ok();
     }
 }
