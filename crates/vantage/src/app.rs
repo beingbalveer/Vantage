@@ -1020,15 +1020,7 @@ impl VantageApp {
         self.settings.right_panel_open = true;
         self.save_settings(cx);
         if let Some(repo) = self.selected_repo().cloned() {
-            self.ensure_avatar(&repo, cx);
-            let seen: Vec<(String, String)> = repo
-                .recent_commits
-                .iter()
-                .map(|commit| (commit.author_email.clone(), repo.local_path.clone()))
-                .collect();
-            for (email, path) in seen {
-                self.ensure_avatar_for(&email, &path, cx);
-            }
+            self.ensure_avatars(&repo, cx);
         }
         cx.notify();
     }
@@ -1072,56 +1064,117 @@ impl VantageApp {
         self.avatars.get(email).cloned().flatten()
     }
 
-    /// Resolve and fetch the profile photo for a repository's commit identity.
+    /// Load the commit-bar face and any history faces already on disk.
     ///
-    /// Runs off the UI thread: the lookup may read `gh`'s config and the fetch
-    /// shells out to `curl`. Both the download and the decode are cached, so
-    /// selecting the same repository again costs nothing.
-    fn ensure_avatar(&mut self, repo: &Repository, cx: &mut Context<Self>) {
+    /// The commit bar may resolve the machine's `gh` account because it names
+    /// the identity a commit from here will use. History rows must not: their
+    /// faces come from the cache and only when the commit email proves a login,
+    /// so one repository selection cannot start a download per author.
+    fn ensure_avatars(&mut self, repo: &Repository, cx: &mut Context<Self>) {
+        self.ensure_commit_bar_avatar(repo, cx);
+        self.ensure_history_avatars(repo, cx);
+    }
+
+    /// Fetch the photo for the identity this repository will commit as.
+    fn ensure_commit_bar_avatar(&mut self, repo: &Repository, cx: &mut Context<Self>) {
         let Some(author) = repo.author.clone() else {
             return;
         };
-        self.ensure_avatar_for(&author.email, &repo.local_path, cx);
-    }
-
-    /// Fetch the GitHub photo for one email, once. Commit rows use this for the
-    /// author icons, so history shows faces where the cache can resolve a login.
-    fn ensure_avatar_for(&mut self, email: &str, local_path: &str, cx: &mut Context<Self>) {
-        if email.trim().is_empty() {
+        let Some(email) = self.claim_avatar_lookup(author.email) else {
             return;
-        }
-        let key = email.to_string();
-        if self.avatars.contains_key(&key) || self.avatars_pending.contains(&key) {
-            return;
-        }
-        self.avatars_pending.insert(key.clone());
-
-        let path = expand_home(local_path);
-        let load_key = key.clone();
+        };
+        let path = expand_home(&repo.local_path);
+        let load_email = email.clone();
         cx.spawn(async move |this, cx| {
             let avatar = cx
                 .background_executor()
-                .spawn(async move { crate::avatar_cache::load(&load_key, &path) })
+                .spawn(async move { crate::avatar_cache::load_current(&load_email, &path) })
                 .await;
             this.update(cx, |app, cx| {
-                app.avatars_pending.remove(&key);
-                let photo = avatar.map(|avatar| {
-                    // GitHub serves PNG or JPEG depending on the uploaded
-                    // avatar, so the detected format is what we decode with.
-                    let format = match avatar.format {
-                        crate::avatar_cache::AvatarFormat::Png => gpui::ImageFormat::Png,
-                        crate::avatar_cache::AvatarFormat::Jpeg => gpui::ImageFormat::Jpeg,
-                        crate::avatar_cache::AvatarFormat::Gif => gpui::ImageFormat::Gif,
-                        crate::avatar_cache::AvatarFormat::Webp => gpui::ImageFormat::Webp,
-                    };
-                    std::sync::Arc::new(gpui::Image::from_bytes(format, avatar.bytes))
-                });
-                app.avatars.insert(key, photo);
+                app.avatars_pending.remove(&email);
+                app.avatars.insert(email, Self::avatar_image(avatar));
                 cx.notify();
             })
             .ok();
         })
         .detach();
+    }
+
+    /// Read photos already cached for this repository's commit authors.
+    ///
+    /// This never downloads. An unproven email keeps the initials tile, and a
+    /// cache miss is not retried: the fallback `gh` account belongs to this
+    /// machine, not necessarily to the person who wrote the commit.
+    fn ensure_history_avatars(&mut self, repo: &Repository, cx: &mut Context<Self>) {
+        let mut emails = Vec::new();
+        for email in repo
+            .recent_commits
+            .iter()
+            .map(|commit| commit.author_email.clone())
+        {
+            if let Some(email) = self.claim_avatar_lookup(email) {
+                emails.push(email);
+            }
+        }
+        if emails.is_empty() {
+            return;
+        }
+
+        let path = expand_home(&repo.local_path);
+        cx.spawn(async move |this, cx| {
+            let avatars = cx
+                .background_executor()
+                .spawn(async move {
+                    // `github.user` is repository-wide, so read it once rather
+                    // than once per author.
+                    let explicit = crate::avatar_cache::explicit_github_user(&path);
+                    emails
+                        .into_iter()
+                        .map(|email| {
+                            let avatar = crate::avatar_cache::cached(&email, explicit.as_deref());
+                            (email, avatar)
+                        })
+                        .collect::<Vec<_>>()
+                })
+                .await;
+            this.update(cx, |app, cx| {
+                for (email, avatar) in avatars {
+                    app.avatars_pending.remove(&email);
+                    app.avatars.insert(email, Self::avatar_image(avatar));
+                }
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
+    }
+
+    /// Mark an email as being looked up, unless it has already been handled.
+    fn claim_avatar_lookup(&mut self, email: String) -> Option<String> {
+        if email.trim().is_empty()
+            || self.avatars.contains_key(&email)
+            || self.avatars_pending.contains(&email)
+        {
+            return None;
+        }
+        self.avatars_pending.insert(email.clone());
+        Some(email)
+    }
+
+    fn avatar_image(
+        avatar: Option<crate::avatar_cache::Avatar>,
+    ) -> Option<std::sync::Arc<gpui::Image>> {
+        avatar.map(|avatar| {
+            // GitHub serves PNG or JPEG depending on the uploaded avatar, so
+            // the detected format is what we decode with.
+            let format = match avatar.format {
+                crate::avatar_cache::AvatarFormat::Png => gpui::ImageFormat::Png,
+                crate::avatar_cache::AvatarFormat::Jpeg => gpui::ImageFormat::Jpeg,
+                crate::avatar_cache::AvatarFormat::Gif => gpui::ImageFormat::Gif,
+                crate::avatar_cache::AvatarFormat::Webp => gpui::ImageFormat::Webp,
+            };
+            std::sync::Arc::new(gpui::Image::from_bytes(format, avatar.bytes))
+        })
     }
 
     pub fn toggle_right_panel(&mut self, cx: &mut Context<Self>) {
@@ -2830,7 +2883,7 @@ impl VantageApp {
         if let Some(repo) = self.selected_repo().cloned() {
             self.settings.right_panel_open = true;
             self.save_settings(cx);
-            self.ensure_avatar(&repo, cx);
+            self.ensure_avatars(&repo, cx);
             cx.notify();
         }
     }

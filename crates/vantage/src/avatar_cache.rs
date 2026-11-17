@@ -5,13 +5,19 @@
 //! `state.json`, so a photo is fetched once and then read from disk — the commit
 //! bar never waits on the network twice for the same person.
 //!
-//! The account is resolved from evidence, never guessed: a
-//! `@users.noreply.github.com` address names its login outright, `github.user`
-//! is an explicit choice, and a logged-in `gh` CLI is the account this machine
-//! pushes as. Without one of those the caller keeps the initials tile rather
-//! than showing somebody else's face.
+//! The account is resolved from evidence, never guessed. History rows only get
+//! a photo when the commit itself proves a login: a `@users.noreply.github.com`
+//! address names the account, and an explicit `github.user` is a deliberate
+//! repository setting. The commit bar may additionally fall back to the logged-in
+//! `gh` CLI, because that is the account this machine commits as — but that
+//! fallback must never be applied to somebody else's commit.
+//!
+//! Downloads are capped at [`MAX_CONCURRENT_DOWNLOADS`], and history rows are
+//! served from the cache only, so selecting a repository cannot start one
+//! network request per author.
 
 use std::path::{Path, PathBuf};
+use std::sync::{Condvar, Mutex, OnceLock};
 use std::time::{Duration, SystemTime};
 
 /// Re-download a cached photo after this long, so a changed avatar appears
@@ -19,6 +25,57 @@ use std::time::{Duration, SystemTime};
 const MAX_AGE: Duration = Duration::from_secs(60 * 60 * 24 * 7);
 /// Give up on a slow network rather than leaving a download thread stuck.
 const FETCH_TIMEOUT_SECONDS: &str = "8";
+/// Never run more than this many `curl` processes at once.
+const MAX_CONCURRENT_DOWNLOADS: usize = 2;
+
+/// The avatars directory is resolved once: finding it constructs the state
+/// persistence handle (and its writer thread), and a history pass asks for it
+/// once per author.
+static CACHE_DIR: OnceLock<Option<PathBuf>> = OnceLock::new();
+
+/// Slots for in-flight downloads, shared by every caller in the process.
+static DOWNLOAD_GATE: OnceLock<DownloadGate> = OnceLock::new();
+
+struct DownloadGate {
+    active: Mutex<usize>,
+    ready: Condvar,
+}
+
+/// A held download slot. Dropping it wakes the next waiter.
+struct DownloadSlot(&'static DownloadGate);
+
+impl DownloadSlot {
+    fn acquire() -> Self {
+        let gate = DOWNLOAD_GATE.get_or_init(|| DownloadGate {
+            active: Mutex::new(0),
+            ready: Condvar::new(),
+        });
+        let mut active = gate
+            .active
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        while *active >= MAX_CONCURRENT_DOWNLOADS {
+            active = gate
+                .ready
+                .wait(active)
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+        }
+        *active += 1;
+        Self(gate)
+    }
+}
+
+impl Drop for DownloadSlot {
+    fn drop(&mut self) {
+        let mut active = self
+            .0
+            .active
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        *active = active.saturating_sub(1);
+        self.0.ready.notify_one();
+    }
+}
 
 /// What GitHub actually served.
 ///
@@ -55,15 +112,34 @@ pub fn format_of(bytes: &[u8]) -> Option<AvatarFormat> {
     }
 }
 
-/// The GitHub login behind a commit identity, if the machine can prove one.
-pub fn resolve_login(email: &str, repo_path: &Path) -> Option<String> {
-    if let Some(login) = login_from_noreply_email(email) {
-        return Some(login);
-    }
-    if let Some(login) = github_user_config(repo_path) {
-        return Some(login);
-    }
-    gh_cli_login()
+/// The login an email proves without consulting the machine's own account.
+///
+/// A `users.noreply.github.com` address embeds its login, and `github.user` is
+/// an explicit repository setting. Nothing else proves that an arbitrary commit
+/// author is a particular GitHub account.
+pub fn proven_login(email: &str, explicit_github_user: Option<&str>) -> Option<String> {
+    login_from_noreply_email(email).or_else(|| explicit_github_user.and_then(sanitize_login))
+}
+
+/// The login for the identity this machine commits as.
+///
+/// The commit bar describes the local user, so a logged-in `gh` account is
+/// valid evidence here. History deliberately omits it: the same fallback on a
+/// commit row would put the owner's face beside somebody else's commit.
+pub fn resolve_current_login(email: &str, repo_path: &Path) -> Option<String> {
+    current_login_from(
+        email,
+        github_user_config(repo_path).as_deref(),
+        gh_cli_login().as_deref(),
+    )
+}
+
+fn current_login_from(
+    email: &str,
+    explicit_github_user: Option<&str>,
+    machine_login: Option<&str>,
+) -> Option<String> {
+    proven_login(email, explicit_github_user).or_else(|| machine_login.and_then(sanitize_login))
 }
 
 /// `12345+octocat@users.noreply.github.com` → `octocat`.
@@ -117,25 +193,41 @@ pub fn avatar(login: &str) -> Option<Avatar> {
     // A stale or missing file: try the network, then fall back to whatever is
     // already on disk (an expired photo beats no photo).
     download(&login, &path);
-    read_avatar(&path).or_else(|| {
-        // Cache files written before format detection existed were named .png
-        // even when the bytes were a JPEG.
-        read_avatar(&dir.join(format!("{login}.png")))
-    })
+    read_cached(&dir, &login)
 }
 
-/// Resolve the login for `email` and return its photo, if any step works.
-pub fn load(email: &str, repo_path: &Path) -> Option<Avatar> {
-    let login = resolve_login(email, repo_path)?;
+/// The photo already on disk for a history identity.
+///
+/// History never downloads: a cache miss just keeps the initials tile, so
+/// selecting a repository cannot fan out into one network request per author.
+pub fn cached(email: &str, explicit_github_user: Option<&str>) -> Option<Avatar> {
+    let login = proven_login(email, explicit_github_user)?;
+    read_cached(&cache_dir()?, &login)
+}
+
+/// The explicit `github.user` configured for a repository, if any. Read once
+/// per history pass rather than once per author.
+pub fn explicit_github_user(repo_path: &Path) -> Option<String> {
+    github_user_config(repo_path)
+}
+
+/// Resolve the current commit identity and return its photo, fetching it if
+/// the cache is missing or stale.
+pub fn load_current(email: &str, repo_path: &Path) -> Option<Avatar> {
+    let login = resolve_current_login(email, repo_path)?;
     avatar(&login)
 }
 
 /// `…/vantage/avatars`, beside the workspace `state.json`.
 pub fn cache_dir() -> Option<PathBuf> {
-    let state = vantage_core::persist::StatePersistence::new().ok()?;
-    let dir = state.path().parent()?.join("avatars");
-    std::fs::create_dir_all(&dir).ok()?;
-    Some(dir)
+    CACHE_DIR
+        .get_or_init(|| {
+            let state = vantage_core::persist::StatePersistence::new().ok()?;
+            let dir = state.path().parent()?.join("avatars");
+            std::fs::create_dir_all(&dir).ok()?;
+            Some(dir)
+        })
+        .clone()
 }
 
 /// A GitHub login is alphanumeric with hyphens, up to 39 characters.
@@ -158,6 +250,14 @@ fn read_avatar(path: &Path) -> Option<Avatar> {
     Some(Avatar { format, bytes })
 }
 
+fn read_cached(dir: &Path, login: &str) -> Option<Avatar> {
+    read_avatar(&dir.join(format!("{login}.img"))).or_else(|| {
+        // Cache files written before format detection existed were named .png
+        // even when the bytes were a JPEG.
+        read_avatar(&dir.join(format!("{login}.png")))
+    })
+}
+
 fn fresh(path: &Path) -> bool {
     std::fs::metadata(path)
         .and_then(|meta| meta.modified())
@@ -171,6 +271,7 @@ fn fresh(path: &Path) -> bool {
 /// The download lands in a temporary file first, so an interrupted fetch can
 /// never leave a truncated image in the cache.
 fn download(login: &str, dest: &Path) -> Option<()> {
+    let _slot = DownloadSlot::acquire();
     let temp = dest.with_extension("part");
     let url = format!("https://github.com/{login}.png?size=64");
     let status = std::process::Command::new("curl")
@@ -265,6 +366,129 @@ mod tests {
         );
         assert_eq!(login_from_noreply_email("octocat@example.com"), None);
         assert_eq!(login_from_noreply_email("not-an-email"), None);
+        assert_eq!(login_from_noreply_email("@users.noreply.github.com"), None);
+        assert_eq!(
+            login_from_noreply_email("12345+@users.noreply.github.com"),
+            None
+        );
+        assert_eq!(
+            login_from_noreply_email("octocat@users.noreply.github.com.evil"),
+            None
+        );
+    }
+
+    #[test]
+    fn a_proven_login_comes_only_from_the_email_or_explicit_config() {
+        // A noreply address is the strongest evidence and wins over config.
+        assert_eq!(
+            proven_login(
+                "12345+octocat@users.noreply.github.com",
+                Some("someone-else")
+            )
+            .as_deref(),
+            Some("octocat")
+        );
+        // `github.user` is explicit consent, so it may name the account.
+        assert_eq!(
+            proven_login("octocat@example.com", Some("octocat")).as_deref(),
+            Some("octocat")
+        );
+        // Without either, an arbitrary email proves nothing.
+        assert_eq!(proven_login("octocat@example.com", None), None);
+        // A hostile config value cannot escape the cache directory.
+        assert_eq!(
+            proven_login("octocat@example.com", Some("../../etc/passwd")),
+            None
+        );
+    }
+
+    #[test]
+    fn history_identity_never_falls_back_to_the_machines_gh_account() {
+        // The commit bar describes the local user, so it may use `gh`.
+        assert_eq!(
+            current_login_from("author@example.com", None, Some("octocat")).as_deref(),
+            Some("octocat")
+        );
+        // A history row with the same evidence must not: the `gh` account is
+        // whoever owns this machine, not necessarily the commit's author.
+        assert_eq!(proven_login("author@example.com", None), None);
+        assert!(cached("author@example.com", None).is_none());
+    }
+
+    #[test]
+    fn explicit_github_user_config_proves_a_login() {
+        let dir = temp_dir("explicit_user");
+        let Ok(init) = std::process::Command::new("git")
+            .arg("-C")
+            .arg(&dir)
+            .args(["init", "-q"])
+            .status()
+        else {
+            eprintln!("skipping: git is not installed");
+            std::fs::remove_dir_all(&dir).ok();
+            return;
+        };
+        if !init.success() {
+            eprintln!("skipping: git init failed");
+            std::fs::remove_dir_all(&dir).ok();
+            return;
+        }
+        let configured = std::process::Command::new("git")
+            .arg("-C")
+            .arg(&dir)
+            .args(["config", "github.user", "octocat"])
+            .status()
+            .expect("run git config");
+        assert!(configured.success());
+
+        assert_eq!(explicit_github_user(&dir).as_deref(), Some("octocat"));
+        assert_eq!(
+            proven_login("someone@example.com", explicit_github_user(&dir).as_deref()).as_deref(),
+            Some("octocat"),
+            "an explicit github.user is deliberate proof, not a guess"
+        );
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn download_slots_cap_concurrent_fetches() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        static ACTIVE: AtomicUsize = AtomicUsize::new(0);
+        static PEAK: AtomicUsize = AtomicUsize::new(0);
+
+        let handles: Vec<_> = (0..6)
+            .map(|_| {
+                std::thread::spawn(|| {
+                    let _slot = DownloadSlot::acquire();
+                    let active = ACTIVE.fetch_add(1, Ordering::SeqCst) + 1;
+                    PEAK.fetch_max(active, Ordering::SeqCst);
+                    std::thread::sleep(Duration::from_millis(10));
+                    ACTIVE.fetch_sub(1, Ordering::SeqCst);
+                })
+            })
+            .collect();
+        for handle in handles {
+            handle.join().unwrap();
+        }
+        assert!(
+            PEAK.load(Ordering::SeqCst) <= MAX_CONCURRENT_DOWNLOADS,
+            "no more than {MAX_CONCURRENT_DOWNLOADS} downloads may run at once"
+        );
+    }
+
+    fn temp_dir(name: &str) -> PathBuf {
+        let unique = SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|elapsed| elapsed.as_nanos())
+            .unwrap_or_default();
+        let dir = std::env::temp_dir().join(format!(
+            "vantage_avatar_{name}_{}_{unique}",
+            std::process::id()
+        ));
+        std::fs::remove_dir_all(&dir).ok();
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
     }
 
     #[test]
