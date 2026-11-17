@@ -2800,6 +2800,102 @@ impl VantageApp {
         cx.notify();
     }
 
+    /// Run the action a context-menu row carries.
+    ///
+    /// Every action names itself, so a menu row is never matched by its English
+    /// label. There is deliberately no catch-all arm: a new [`ContextAction`]
+    /// fails to compile until it is handled here.
+    fn run_context_action(&mut self, action: &ContextAction, cx: &mut Context<Self>) {
+        match action {
+            ContextAction::IgnoreFile { repo_id, path } => {
+                self.ignore_file(repo_id, path, cx);
+            }
+            ContextAction::DiscardFile { repo_id, path } => {
+                self.discard_file(repo_id, path, cx);
+            }
+            ContextAction::StashAll { repo_id } => self.stash_repo(repo_id, cx),
+            ContextAction::RestoreStash { repo_id } => self.pop_stash(repo_id, cx),
+            ContextAction::DiscardRepo { repo_id } => self.ask_discard_repo(repo_id, cx),
+            ContextAction::UpdateFromDefault { repo_id } => {
+                self.ask_update_from_default(repo_id, cx);
+            }
+            ContextAction::ManageStashes { repo_id } => self.open_stash_modal(repo_id, cx),
+            ContextAction::ViewOnGitHub { repo_id } => self.open_repo_page(repo_id, cx),
+            ContextAction::RemoveFromList { repo_id } => self.ask_forget_repo(repo_id, cx),
+            ContextAction::RevealInFinder { repo_id } => self.reveal_repo(repo_id, cx),
+            ContextAction::OpenInTerminal { repo_id } => self.open_repo_terminal(repo_id, cx),
+            ContextAction::OpenInEditor { repo_id } => self.open_repo_editor(repo_id, cx),
+            ContextAction::CheckoutBranch { repo_id, branch } => {
+                if self.selected_repo_id.as_deref() == Some(repo_id.as_str()) {
+                    self.close_file_menu(cx);
+                    self.switch_branch(repo_id, branch, cx);
+                } else {
+                    self.close_file_menu(cx);
+                }
+            }
+            ContextAction::MergeBranch { repo_id, branch } => {
+                self.ask_merge_branch(repo_id, branch, cx);
+            }
+            ContextAction::CompareWithCurrent { repo_id, branch } => {
+                self.compare_with_branch(repo_id, branch, cx);
+            }
+            ContextAction::NewBranchFrom { repo_id, base } => {
+                // The action belongs to the repository the menu came from, not
+                // whatever is selected now.
+                if self.selected_repo_id.as_deref() == Some(repo_id.as_str()) {
+                    self.start_branch_prompt(
+                        repo_id,
+                        BranchPromptKind::Create { base: base.clone() },
+                        cx,
+                    );
+                } else {
+                    self.close_file_menu(cx);
+                }
+            }
+            ContextAction::RenameCurrentBranch { repo_id, from } => {
+                if self.selected_repo_id.as_deref() == Some(repo_id.as_str()) {
+                    self.start_branch_prompt(
+                        repo_id,
+                        BranchPromptKind::Rename { from: from.clone() },
+                        cx,
+                    );
+                } else {
+                    self.close_file_menu(cx);
+                }
+            }
+            ContextAction::DeleteBranch { repo_id, name } => {
+                if self.selected_repo_id.as_deref() == Some(repo_id.as_str()) {
+                    self.start_branch_prompt(
+                        repo_id,
+                        BranchPromptKind::Delete { name: name.clone() },
+                        cx,
+                    );
+                } else {
+                    self.close_file_menu(cx);
+                }
+            }
+            ContextAction::AmendCommit {
+                repo_id,
+                subject,
+                body,
+            } => {
+                // Only the repo the menu came from can be amended, even if the
+                // selection moved on.
+                if self.selected_repo_id.as_deref() == Some(repo_id.as_str()) {
+                    self.begin_amend(subject, body, cx);
+                } else {
+                    self.close_file_menu(cx);
+                }
+            }
+            ContextAction::RevertCommit { repo_id, sha } => {
+                self.revert_commit(repo_id, sha, cx);
+            }
+            ContextAction::ResetBranchHere { repo_id, sha } => {
+                self.ask_reset_commit(repo_id, sha, cx);
+            }
+        }
+    }
+
     /// Sidebar width in points while it is expanded.
     pub fn sidebar_width(&self) -> f32 {
         if self.sidebar_collapsed {
@@ -5597,97 +5693,25 @@ impl Render for VantageApp {
             let bounds = window.bounds();
             let width = 200.0;
             let height = 260.0;
-            let (anchor_x, anchor_y, title, items) = match &menu {
+            let (anchor_x, anchor_y, title) = match &menu {
                 ContextMenu::File { path, x, y, .. } => {
                     let name = path
                         .rsplit_once('/')
                         .map_or(path.as_str(), |(_, name)| name)
                         .to_string();
-                    let items: Vec<(&'static str, bool, u64)> = vec![
-                        ("Add to .gitignore", false, 0),
-                        ("Discard changes", true, 0),
-                    ];
-                    (*x, *y, name, items)
+                    (*x, *y, name)
                 }
-                ContextMenu::Repo {
-                    name,
-                    uncommitted,
-                    stashes,
-                    with_changes,
-                    x,
-                    y,
-                    ..
-                } => {
-                    // One menu, one subject: the working tree where it was
-                    // opened from the Changes header, the repository elsewhere.
-                    let mut items: Vec<(&'static str, bool, u64)> = Vec::new();
-                    if *with_changes {
-                        if *uncommitted > 0 {
-                            items.push(("Stash all changes", false, 0));
-                        }
-                        if *stashes > 0 {
-                            items.push(("Restore latest stash", false, 0));
-                        }
-                        if *uncommitted > 0 {
-                            items.push(("Discard all changes", true, 0));
-                        }
-                    } else {
-                        items.push(("Update from default branch", false, 0));
-                        if *stashes > 0 {
-                            items.push(("Manage stashes…", false, 0));
-                        }
-                        items.push(("View on GitHub", false, 0));
-                        items.push(("Remove from list", true, 0));
-                        items.push(("Reveal in File Manager", false, 0));
-                        items.push(("Open in Terminal", false, 0));
-                        items.push(("Open in editor", false, 0));
-                    }
-                    (*x, *y, name.clone(), items)
-                }
-                ContextMenu::Branch {
-                    name,
-                    is_current,
-                    is_default,
-                    x,
-                    y,
-                    ..
-                } => {
-                    let mut items: Vec<(&'static str, bool, u64)> = Vec::new();
-                    if !*is_current {
-                        items.push(("Checkout branch", false, 0));
-                    }
-                    if !*is_current {
-                        items.push(("Merge into current branch", false, 0));
-                        items.push(("Compare with current", false, 0));
-                    }
-                    items.push(("New branch from this branch", false, 0));
-                    if *is_current {
-                        items.push(("Rename current branch", false, 0));
-                    }
-                    if !*is_current && !*is_default {
-                        items.push(("Delete branch", true, 0));
-                    }
-                    (*x, *y, name.clone(), items)
-                }
+                ContextMenu::Repo { name, x, y, .. } => (*x, *y, name.clone()),
+                ContextMenu::Branch { name, x, y, .. } => (*x, *y, name.clone()),
                 ContextMenu::Commit {
                     short,
                     subject,
-                    is_tip,
                     x,
                     y,
                     ..
-                } => {
-                    // Only the tip commit can be rewritten, and only while it is
-                    // still local.
-                    let mut revert_only: Vec<(&'static str, bool, u64)> =
-                        vec![("Revert commit", false, 0), ("Reset branch here", true, 0)];
-                    if *is_tip {
-                        revert_only.push(("Amend commit", false, 0));
-                    }
-                    let _ = is_tip;
-                    (*x, *y, format!("{short}  {subject}"), revert_only)
-                }
+                } => (*x, *y, format!("{short}  {subject}")),
             };
+            let items = menu.rows();
             let x = anchor_x
                 .min(f32::from(bounds.size.width) - width - 8.0)
                 .max(8.0);
@@ -5719,9 +5743,7 @@ impl Render for VantageApp {
                 )
                 .child(div().h(px(1.0)).my(px(4.0)).bg(theme.divider));
 
-            let menu_for_actions = menu.clone();
-            for (label, destructive, _) in items {
-                let action_menu = menu_for_actions.clone();
+            for (label, action, destructive) in items {
                 panel = panel.child(
                     div()
                         .id(gpui::SharedString::from(format!("ctx-{label}")))
@@ -5741,141 +5763,7 @@ impl Render for VantageApp {
                         .hover(move |s| s.bg(theme.row_hover_bg))
                         .child(label)
                         .on_click(cx.listener(move |this, _e, _w, cx| {
-                            match (&action_menu, label) {
-                                (ContextMenu::File { repo_id, path, .. }, "Add to .gitignore") => {
-                                    let id = repo_id.clone();
-                                    let file = path.clone();
-                                    this.ignore_file(&id, &file, cx);
-                                }
-                                (ContextMenu::File { repo_id, path, .. }, "Discard changes") => {
-                                    this.discard_file(repo_id, path, cx)
-                                }
-                                (ContextMenu::Repo { repo_id, .. }, "Stash all changes") => {
-                                    let id = repo_id.clone();
-                                    this.stash_repo(&id, cx);
-                                }
-                                (ContextMenu::Repo { repo_id, .. }, "Restore latest stash") => {
-                                    let id = repo_id.clone();
-                                    this.pop_stash(&id, cx);
-                                }
-                                (ContextMenu::Repo { repo_id, .. }, "Discard all changes") => {
-                                    let id = repo_id.clone();
-                                    this.ask_discard_repo(&id, cx);
-                                }
-                                (
-                                    ContextMenu::Repo { repo_id, .. },
-                                    "Update from default branch",
-                                ) => {
-                                    let id = repo_id.clone();
-                                    this.ask_update_from_default(&id, cx);
-                                }
-                                (
-                                    ContextMenu::Branch { repo_id, name, .. },
-                                    "Merge into current branch",
-                                ) => {
-                                    let id = repo_id.clone();
-                                    let branch = name.clone();
-                                    this.ask_merge_branch(&id, &branch, cx);
-                                }
-                                (ContextMenu::Repo { repo_id, .. }, "Manage stashes…") => {
-                                    let id = repo_id.clone();
-                                    this.open_stash_modal(&id, cx);
-                                }
-                                (
-                                    ContextMenu::Branch { repo_id, name, .. },
-                                    "Compare with current",
-                                ) => {
-                                    let id = repo_id.clone();
-                                    let other = name.clone();
-                                    this.compare_with_branch(&id, &other, cx);
-                                }
-                                (
-                                    ContextMenu::Commit { repo_id, short, .. },
-                                    "Reset branch here",
-                                ) => {
-                                    let id = repo_id.clone();
-                                    let sha = short.clone();
-                                    this.ask_reset_commit(&id, &sha, cx);
-                                }
-                                (ContextMenu::Repo { repo_id, .. }, "View on GitHub") => {
-                                    let id = repo_id.clone();
-                                    this.open_repo_page(&id, cx);
-                                }
-                                (ContextMenu::Repo { repo_id, .. }, "Remove from list") => {
-                                    let id = repo_id.clone();
-                                    this.ask_forget_repo(&id, cx);
-                                }
-                                (ContextMenu::Repo { repo_id, .. }, "Reveal in File Manager") => {
-                                    let id = repo_id.clone();
-                                    this.reveal_repo(&id, cx);
-                                }
-                                (ContextMenu::Repo { repo_id, .. }, "Open in Terminal") => {
-                                    let id = repo_id.clone();
-                                    this.open_repo_terminal(&id, cx);
-                                }
-                                (ContextMenu::Repo { repo_id, .. }, "Open in editor") => {
-                                    let id = repo_id.clone();
-                                    this.open_repo_editor(&id, cx);
-                                }
-                                (ContextMenu::Commit { repo_id, short, .. }, "Revert commit") => {
-                                    let id = repo_id.clone();
-                                    let sha = short.clone();
-                                    this.revert_commit(&id, &sha, cx);
-                                }
-                                (ContextMenu::Branch { repo_id, name, .. }, "Checkout branch") => {
-                                    if this.selected_repo_id.as_deref() == Some(repo_id.as_str()) {
-                                        this.close_file_menu(cx);
-                                        this.switch_branch(repo_id, name, cx);
-                                    } else {
-                                        this.close_file_menu(cx);
-                                    }
-                                }
-                                (
-                                    ContextMenu::Branch { repo_id, name, .. },
-                                    "New branch from this branch",
-                                ) => {
-                                    this.start_branch_prompt(
-                                        repo_id,
-                                        BranchPromptKind::Create { base: name.clone() },
-                                        cx,
-                                    );
-                                }
-                                (
-                                    ContextMenu::Branch { repo_id, name, .. },
-                                    "Rename current branch",
-                                ) => {
-                                    this.start_branch_prompt(
-                                        repo_id,
-                                        BranchPromptKind::Rename { from: name.clone() },
-                                        cx,
-                                    );
-                                }
-                                (ContextMenu::Branch { repo_id, name, .. }, "Delete branch") => {
-                                    this.start_branch_prompt(
-                                        repo_id,
-                                        BranchPromptKind::Delete { name: name.clone() },
-                                        cx,
-                                    );
-                                }
-                                (
-                                    ContextMenu::Commit {
-                                        repo_id,
-                                        subject,
-                                        body,
-                                        ..
-                                    },
-                                    "Amend commit",
-                                ) => {
-                                    // Only the repo the menu came from can be
-                                    // amended, even if the selection moved on.
-                                    if this.selected_repo_id.as_deref() == Some(repo_id.as_str()) {
-                                        this.begin_amend(subject, body, cx);
-                                    } else {
-                                        this.close_file_menu(cx);
-                                    }
-                                }
-                                _ => this.close_file_menu(cx),
-                            }
+                            this.run_context_action(&action, cx);
                         })),
                 );
             }
@@ -6220,6 +6108,312 @@ pub enum ContextMenu {
         x: f32,
         y: f32,
     },
+}
+
+/// One row of a context menu: its label, the typed action a click runs, and
+/// whether the row is styled as destructive.
+type ContextMenuRow = (&'static str, ContextAction, bool);
+
+impl ContextMenu {
+    /// The rows this menu shows, in display order.
+    ///
+    /// Labels and destructive styling are derived from the action, so they
+    /// cannot drift from what a click actually does.
+    fn rows(&self) -> Vec<ContextMenuRow> {
+        let actions: Vec<ContextAction> = match self {
+            Self::File { repo_id, path, .. } => vec![
+                ContextAction::IgnoreFile {
+                    repo_id: repo_id.clone(),
+                    path: path.clone(),
+                },
+                ContextAction::DiscardFile {
+                    repo_id: repo_id.clone(),
+                    path: path.clone(),
+                },
+            ],
+            Self::Repo {
+                repo_id,
+                uncommitted,
+                stashes,
+                with_changes,
+                ..
+            } => {
+                // One menu, one subject: the working tree where it was opened
+                // from the Changes header, the repository elsewhere.
+                let mut actions = Vec::new();
+                if *with_changes {
+                    if *uncommitted > 0 {
+                        actions.push(ContextAction::StashAll {
+                            repo_id: repo_id.clone(),
+                        });
+                    }
+                    if *stashes > 0 {
+                        actions.push(ContextAction::RestoreStash {
+                            repo_id: repo_id.clone(),
+                        });
+                    }
+                    if *uncommitted > 0 {
+                        actions.push(ContextAction::DiscardRepo {
+                            repo_id: repo_id.clone(),
+                        });
+                    }
+                } else {
+                    actions.push(ContextAction::UpdateFromDefault {
+                        repo_id: repo_id.clone(),
+                    });
+                    if *stashes > 0 {
+                        actions.push(ContextAction::ManageStashes {
+                            repo_id: repo_id.clone(),
+                        });
+                    }
+                    actions.push(ContextAction::ViewOnGitHub {
+                        repo_id: repo_id.clone(),
+                    });
+                    actions.push(ContextAction::RemoveFromList {
+                        repo_id: repo_id.clone(),
+                    });
+                    actions.push(ContextAction::RevealInFinder {
+                        repo_id: repo_id.clone(),
+                    });
+                    actions.push(ContextAction::OpenInTerminal {
+                        repo_id: repo_id.clone(),
+                    });
+                    actions.push(ContextAction::OpenInEditor {
+                        repo_id: repo_id.clone(),
+                    });
+                }
+                actions
+            }
+            Self::Branch {
+                repo_id,
+                name,
+                is_current,
+                is_default,
+                ..
+            } => {
+                let mut actions = Vec::new();
+                if !*is_current {
+                    actions.push(ContextAction::CheckoutBranch {
+                        repo_id: repo_id.clone(),
+                        branch: name.clone(),
+                    });
+                    actions.push(ContextAction::MergeBranch {
+                        repo_id: repo_id.clone(),
+                        branch: name.clone(),
+                    });
+                    actions.push(ContextAction::CompareWithCurrent {
+                        repo_id: repo_id.clone(),
+                        branch: name.clone(),
+                    });
+                }
+                actions.push(ContextAction::NewBranchFrom {
+                    repo_id: repo_id.clone(),
+                    base: name.clone(),
+                });
+                if *is_current {
+                    actions.push(ContextAction::RenameCurrentBranch {
+                        repo_id: repo_id.clone(),
+                        from: name.clone(),
+                    });
+                }
+                if !*is_current && !*is_default {
+                    actions.push(ContextAction::DeleteBranch {
+                        repo_id: repo_id.clone(),
+                        name: name.clone(),
+                    });
+                }
+                actions
+            }
+            Self::Commit {
+                repo_id,
+                short,
+                subject,
+                body,
+                is_tip,
+                ..
+            } => {
+                // Only the tip commit can be rewritten, and only while it is
+                // still local.
+                let mut actions = vec![
+                    ContextAction::RevertCommit {
+                        repo_id: repo_id.clone(),
+                        sha: short.clone(),
+                    },
+                    ContextAction::ResetBranchHere {
+                        repo_id: repo_id.clone(),
+                        sha: short.clone(),
+                    },
+                ];
+                if *is_tip {
+                    actions.push(ContextAction::AmendCommit {
+                        repo_id: repo_id.clone(),
+                        subject: subject.clone(),
+                        body: body.clone(),
+                    });
+                }
+                actions
+            }
+        };
+
+        actions
+            .into_iter()
+            .map(|action| {
+                let label = action.label();
+                let destructive = action.is_destructive();
+                (label, action, destructive)
+            })
+            .collect()
+    }
+}
+
+/// An action a context-menu row performs, with the subject it was opened for.
+///
+/// Dispatching on this value instead of the row's English label means renaming
+/// a label can never silently disable an action.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum ContextAction {
+    IgnoreFile {
+        repo_id: String,
+        path: String,
+    },
+    DiscardFile {
+        repo_id: String,
+        path: String,
+    },
+    StashAll {
+        repo_id: String,
+    },
+    RestoreStash {
+        repo_id: String,
+    },
+    DiscardRepo {
+        repo_id: String,
+    },
+    UpdateFromDefault {
+        repo_id: String,
+    },
+    ManageStashes {
+        repo_id: String,
+    },
+    ViewOnGitHub {
+        repo_id: String,
+    },
+    RemoveFromList {
+        repo_id: String,
+    },
+    RevealInFinder {
+        repo_id: String,
+    },
+    OpenInTerminal {
+        repo_id: String,
+    },
+    OpenInEditor {
+        repo_id: String,
+    },
+    CheckoutBranch {
+        repo_id: String,
+        branch: String,
+    },
+    MergeBranch {
+        repo_id: String,
+        branch: String,
+    },
+    CompareWithCurrent {
+        repo_id: String,
+        branch: String,
+    },
+    NewBranchFrom {
+        repo_id: String,
+        base: String,
+    },
+    RenameCurrentBranch {
+        repo_id: String,
+        from: String,
+    },
+    DeleteBranch {
+        repo_id: String,
+        name: String,
+    },
+    AmendCommit {
+        repo_id: String,
+        subject: String,
+        body: String,
+    },
+    RevertCommit {
+        repo_id: String,
+        sha: String,
+    },
+    ResetBranchHere {
+        repo_id: String,
+        sha: String,
+    },
+}
+
+impl ContextAction {
+    /// The row text this action shows.
+    fn label(&self) -> &'static str {
+        match self {
+            Self::IgnoreFile { .. } => "Add to .gitignore",
+            Self::DiscardFile { .. } => "Discard changes",
+            Self::StashAll { .. } => "Stash all changes",
+            Self::RestoreStash { .. } => "Restore latest stash",
+            Self::DiscardRepo { .. } => "Discard all changes",
+            Self::UpdateFromDefault { .. } => "Update from default branch",
+            Self::ManageStashes { .. } => "Manage stashes…",
+            Self::ViewOnGitHub { .. } => "View on GitHub",
+            Self::RemoveFromList { .. } => "Remove from list",
+            Self::RevealInFinder { .. } => "Reveal in Finder",
+            Self::OpenInTerminal { .. } => "Open in Terminal",
+            Self::OpenInEditor { .. } => "Open in editor",
+            Self::CheckoutBranch { .. } => "Checkout branch",
+            Self::MergeBranch { .. } => "Merge into current branch",
+            Self::CompareWithCurrent { .. } => "Compare with current",
+            Self::NewBranchFrom { .. } => "New branch from this branch",
+            Self::RenameCurrentBranch { .. } => "Rename current branch",
+            Self::DeleteBranch { .. } => "Delete branch",
+            Self::AmendCommit { .. } => "Amend commit",
+            Self::RevertCommit { .. } => "Revert commit",
+            Self::ResetBranchHere { .. } => "Reset branch here",
+        }
+    }
+
+    fn is_destructive(&self) -> bool {
+        matches!(
+            self,
+            Self::DiscardFile { .. }
+                | Self::DiscardRepo { .. }
+                | Self::RemoveFromList { .. }
+                | Self::DeleteBranch { .. }
+                | Self::ResetBranchHere { .. }
+        )
+    }
+
+    #[cfg(test)]
+    fn repo_id(&self) -> &str {
+        match self {
+            Self::IgnoreFile { repo_id, .. }
+            | Self::DiscardFile { repo_id, .. }
+            | Self::StashAll { repo_id }
+            | Self::RestoreStash { repo_id }
+            | Self::DiscardRepo { repo_id }
+            | Self::UpdateFromDefault { repo_id }
+            | Self::ManageStashes { repo_id }
+            | Self::ViewOnGitHub { repo_id }
+            | Self::RemoveFromList { repo_id }
+            | Self::RevealInFinder { repo_id }
+            | Self::OpenInTerminal { repo_id }
+            | Self::OpenInEditor { repo_id }
+            | Self::CheckoutBranch { repo_id, .. }
+            | Self::MergeBranch { repo_id, .. }
+            | Self::CompareWithCurrent { repo_id, .. }
+            | Self::NewBranchFrom { repo_id, .. }
+            | Self::RenameCurrentBranch { repo_id, .. }
+            | Self::DeleteBranch { repo_id, .. }
+            | Self::AmendCommit { repo_id, .. }
+            | Self::RevertCommit { repo_id, .. }
+            | Self::ResetBranchHere { repo_id, .. } => repo_id,
+        }
+    }
 }
 
 /// Which slice of the list the summary strip is showing.
@@ -7750,5 +7944,313 @@ mod tests {
             ));
         }
         message
+    }
+
+    fn file_menu() -> ContextMenu {
+        ContextMenu::File {
+            repo_id: "repo-1".to_string(),
+            path: "src/lib.rs".to_string(),
+            x: 20.0,
+            y: 40.0,
+        }
+    }
+
+    fn repo_menu(with_changes: bool, uncommitted: usize, stashes: usize) -> ContextMenu {
+        ContextMenu::Repo {
+            repo_id: "repo-1".to_string(),
+            name: "fixture".to_string(),
+            uncommitted,
+            stashes,
+            with_changes,
+            x: 20.0,
+            y: 40.0,
+        }
+    }
+
+    fn branch_menu(is_current: bool, is_default: bool) -> ContextMenu {
+        ContextMenu::Branch {
+            repo_id: "repo-1".to_string(),
+            name: "feature".to_string(),
+            is_current,
+            is_default,
+            x: 20.0,
+            y: 40.0,
+        }
+    }
+
+    fn commit_menu(is_tip: bool) -> ContextMenu {
+        ContextMenu::Commit {
+            repo_id: "repo-1".to_string(),
+            short: "abc1234".to_string(),
+            subject: "Tighten the menu".to_string(),
+            body: "The original description.".to_string(),
+            is_tip,
+            x: 20.0,
+            y: 40.0,
+        }
+    }
+
+    fn action_rows(menu: &ContextMenu) -> Vec<ContextAction> {
+        menu.rows()
+            .into_iter()
+            .map(|(_, action, _)| action)
+            .collect()
+    }
+
+    fn styled_labels(menu: &ContextMenu) -> Vec<(&'static str, bool)> {
+        menu.rows()
+            .into_iter()
+            .map(|(label, _, destructive)| (label, destructive))
+            .collect()
+    }
+
+    #[test]
+    fn every_context_menu_variant_carries_typed_actions() {
+        // One menu for every variant and every state that changes its rows.
+        // `run_context_action` matches every `ContextAction` without a
+        // catch-all, so a row that is generated here is always dispatchable.
+        let menus = [
+            file_menu(),
+            repo_menu(true, 2, 1),
+            repo_menu(false, 0, 1),
+            branch_menu(false, false),
+            branch_menu(true, false),
+            branch_menu(false, true),
+            commit_menu(true),
+            commit_menu(false),
+        ];
+
+        for menu in &menus {
+            let rows = menu.rows();
+            assert!(!rows.is_empty(), "every context menu offers an action");
+            for (label, action, destructive) in rows {
+                assert_eq!(label, action.label(), "labels are derived from the action");
+                assert_eq!(destructive, action.is_destructive());
+                assert_eq!(action.repo_id(), "repo-1", "the row targets its own menu");
+            }
+        }
+    }
+
+    #[test]
+    fn file_menu_offers_ignore_and_discard_in_order() {
+        let menu = file_menu();
+        assert_eq!(
+            styled_labels(&menu),
+            vec![("Add to .gitignore", false), ("Discard changes", true)]
+        );
+        assert_eq!(
+            action_rows(&menu),
+            vec![
+                ContextAction::IgnoreFile {
+                    repo_id: "repo-1".to_string(),
+                    path: "src/lib.rs".to_string(),
+                },
+                ContextAction::DiscardFile {
+                    repo_id: "repo-1".to_string(),
+                    path: "src/lib.rs".to_string(),
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn changes_header_menu_offers_stash_restore_and_discard() {
+        let menu = repo_menu(true, 2, 1);
+        assert_eq!(
+            styled_labels(&menu),
+            vec![
+                ("Stash all changes", false),
+                ("Restore latest stash", false),
+                ("Discard all changes", true),
+            ]
+        );
+        assert_eq!(
+            action_rows(&menu),
+            vec![
+                ContextAction::StashAll {
+                    repo_id: "repo-1".to_string(),
+                },
+                ContextAction::RestoreStash {
+                    repo_id: "repo-1".to_string(),
+                },
+                ContextAction::DiscardRepo {
+                    repo_id: "repo-1".to_string(),
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn repository_menu_keeps_its_action_order() {
+        let menu = repo_menu(false, 0, 1);
+        assert_eq!(
+            styled_labels(&menu),
+            vec![
+                ("Update from default branch", false),
+                ("Manage stashes…", false),
+                ("View on GitHub", false),
+                ("Remove from list", true),
+                ("Reveal in Finder", false),
+                ("Open in Terminal", false),
+                ("Open in editor", false),
+            ]
+        );
+        assert_eq!(
+            action_rows(&menu),
+            vec![
+                ContextAction::UpdateFromDefault {
+                    repo_id: "repo-1".to_string(),
+                },
+                ContextAction::ManageStashes {
+                    repo_id: "repo-1".to_string(),
+                },
+                ContextAction::ViewOnGitHub {
+                    repo_id: "repo-1".to_string(),
+                },
+                ContextAction::RemoveFromList {
+                    repo_id: "repo-1".to_string(),
+                },
+                ContextAction::RevealInFinder {
+                    repo_id: "repo-1".to_string(),
+                },
+                ContextAction::OpenInTerminal {
+                    repo_id: "repo-1".to_string(),
+                },
+                ContextAction::OpenInEditor {
+                    repo_id: "repo-1".to_string(),
+                },
+            ]
+        );
+
+        let without_stashes = repo_menu(false, 0, 0);
+        assert!(
+            !action_rows(&without_stashes).contains(&ContextAction::ManageStashes {
+                repo_id: "repo-1".to_string(),
+            })
+        );
+    }
+
+    #[test]
+    fn branch_menu_actions_follow_current_and_default_state() {
+        let other = branch_menu(false, false);
+        assert_eq!(
+            styled_labels(&other),
+            vec![
+                ("Checkout branch", false),
+                ("Merge into current branch", false),
+                ("Compare with current", false),
+                ("New branch from this branch", false),
+                ("Delete branch", true),
+            ]
+        );
+        assert_eq!(
+            action_rows(&other),
+            vec![
+                ContextAction::CheckoutBranch {
+                    repo_id: "repo-1".to_string(),
+                    branch: "feature".to_string(),
+                },
+                ContextAction::MergeBranch {
+                    repo_id: "repo-1".to_string(),
+                    branch: "feature".to_string(),
+                },
+                ContextAction::CompareWithCurrent {
+                    repo_id: "repo-1".to_string(),
+                    branch: "feature".to_string(),
+                },
+                ContextAction::NewBranchFrom {
+                    repo_id: "repo-1".to_string(),
+                    base: "feature".to_string(),
+                },
+                ContextAction::DeleteBranch {
+                    repo_id: "repo-1".to_string(),
+                    name: "feature".to_string(),
+                },
+            ]
+        );
+
+        let current = branch_menu(true, false);
+        assert_eq!(
+            action_rows(&current),
+            vec![
+                ContextAction::NewBranchFrom {
+                    repo_id: "repo-1".to_string(),
+                    base: "feature".to_string(),
+                },
+                ContextAction::RenameCurrentBranch {
+                    repo_id: "repo-1".to_string(),
+                    from: "feature".to_string(),
+                },
+            ]
+        );
+
+        let default = branch_menu(false, true);
+        assert_eq!(
+            action_rows(&default),
+            vec![
+                ContextAction::CheckoutBranch {
+                    repo_id: "repo-1".to_string(),
+                    branch: "feature".to_string(),
+                },
+                ContextAction::MergeBranch {
+                    repo_id: "repo-1".to_string(),
+                    branch: "feature".to_string(),
+                },
+                ContextAction::CompareWithCurrent {
+                    repo_id: "repo-1".to_string(),
+                    branch: "feature".to_string(),
+                },
+                ContextAction::NewBranchFrom {
+                    repo_id: "repo-1".to_string(),
+                    base: "feature".to_string(),
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn commit_menu_appends_amend_for_the_tip() {
+        let tip = commit_menu(true);
+        assert_eq!(
+            styled_labels(&tip),
+            vec![
+                ("Revert commit", false),
+                ("Reset branch here", true),
+                ("Amend commit", false),
+            ]
+        );
+        assert_eq!(
+            action_rows(&tip),
+            vec![
+                ContextAction::RevertCommit {
+                    repo_id: "repo-1".to_string(),
+                    sha: "abc1234".to_string(),
+                },
+                ContextAction::ResetBranchHere {
+                    repo_id: "repo-1".to_string(),
+                    sha: "abc1234".to_string(),
+                },
+                ContextAction::AmendCommit {
+                    repo_id: "repo-1".to_string(),
+                    subject: "Tighten the menu".to_string(),
+                    body: "The original description.".to_string(),
+                },
+            ]
+        );
+
+        let older = commit_menu(false);
+        assert_eq!(
+            action_rows(&older),
+            vec![
+                ContextAction::RevertCommit {
+                    repo_id: "repo-1".to_string(),
+                    sha: "abc1234".to_string(),
+                },
+                ContextAction::ResetBranchHere {
+                    repo_id: "repo-1".to_string(),
+                    sha: "abc1234".to_string(),
+                },
+            ]
+        );
     }
 }
