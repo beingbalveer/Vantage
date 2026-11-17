@@ -69,10 +69,11 @@ Vantage watches each repository and re-reads only the working trees that changed
 
 **Settings** opens from the Vantage menu, `Cmd+,`, or the **Settings** entry in the sidebar footer. It keeps only preferences that affect the current dashboard:
 
-- **General** — default view, repository sort, window memory.
+- **General** — default view, repository sort, window memory, and the editor command used by
+  **Open in Editor** (empty uses `VISUAL`, `EDITOR` or a common editor).
 - **Appearance** — System / Light / Dark, with System following macOS live.
 - **Git** — auto-fetch interval, fetch on launch, default branch for empty repos.
-- **Data** — state-file location, reveal in Finder, reset preferences.
+- **Data** — state-file location, reveal in the file manager, reset preferences.
 - **About** — version, build, Git, system and architecture diagnostics, plus copyable diagnostics and links.
 
 Sidebar state is remembered automatically. Preferences are stored separately from the legacy v1 settings, which remain untouched.

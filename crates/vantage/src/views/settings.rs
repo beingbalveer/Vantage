@@ -164,7 +164,7 @@ impl VantageApp {
         cx: &mut Context<Self>,
     ) -> Vec<gpui::AnyElement> {
         match section {
-            SettingsSection::General => self.render_general_settings(cx),
+            SettingsSection::General => self.render_general_settings(window, cx),
             SettingsSection::Appearance => self.render_appearance_settings(window, cx),
             SettingsSection::Git => self.render_git_settings(window, cx),
             SettingsSection::Data => self.render_data_settings(cx),
@@ -172,7 +172,11 @@ impl VantageApp {
         }
     }
 
-    fn render_general_settings(&mut self, cx: &mut Context<Self>) -> Vec<gpui::AnyElement> {
+    fn render_general_settings(
+        &mut self,
+        window: &Window,
+        cx: &mut Context<Self>,
+    ) -> Vec<gpui::AnyElement> {
         let theme = self.theme;
         let current_view = self.settings.default_view;
         let mut view_choices = div().flex().gap(px(6.0));
@@ -228,6 +232,14 @@ impl VantageApp {
                     })),
             );
 
+        let editor = self.text_field(
+            FieldId::SettingsEditor,
+            "Automatic (VISUAL / EDITOR / code)",
+            FieldVariant::Form,
+            window,
+            cx,
+        );
+
         vec![
             setting_row(
                 &theme,
@@ -248,6 +260,25 @@ impl VantageApp {
                 "Window memory",
                 "Restore the last normal window size and position.",
                 window_control,
+            )
+            .into_any_element(),
+            setting_row(
+                &theme,
+                "Editor",
+                "Command for Open in Editor. Leave empty to use VISUAL, EDITOR or a common \
+                 editor; arguments such as `code --wait` are supported.",
+                div()
+                    .flex()
+                    .items_center()
+                    .gap(px(8.0))
+                    .child(div().w(px(300.0)).child(editor))
+                    .child(
+                        secondary_button(&theme, "Save", None)
+                            .id("settings-save-editor")
+                            .on_click(
+                                cx.listener(|this, _e, _w, cx| this.commit_settings_editor(cx)),
+                            ),
+                    ),
             )
             .into_any_element(),
             setting_row(

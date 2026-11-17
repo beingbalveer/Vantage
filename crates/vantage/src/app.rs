@@ -279,6 +279,7 @@ pub enum FieldId {
     ModalPath,
     ModalCustomGroup,
     SettingsBranch,
+    SettingsEditor,
     CommitMessage,
     CommitBody,
     BranchName,
@@ -380,6 +381,8 @@ pub struct VantageApp {
     // Settings modal
     pub settings_branch_field: FieldState,
     settings_branch_focus: FocusHandle,
+    pub settings_editor_field: FieldState,
+    settings_editor_focus: FocusHandle,
 
     pub backend: Option<std::sync::Arc<Backend>>,
     pub assignments: std::collections::BTreeMap<String, String>,
@@ -559,6 +562,8 @@ impl VantageApp {
 
             settings_branch_field: FieldState::new(),
             settings_branch_focus: cx.focus_handle(),
+            settings_editor_field: FieldState::new(),
+            settings_editor_focus: cx.focus_handle(),
 
             backend,
             assignments,
@@ -1251,6 +1256,8 @@ impl VantageApp {
         self.settings_reset_confirm = false;
         self.settings_branch_field
             .set(self.settings.default_branch.clone());
+        self.settings_editor_field
+            .set(self.settings.editor_command.clone());
         self.diagnostics = Some(Diagnostics::collect(&self.state_path()));
         self.refresh_state_backups();
         cx.notify();
@@ -1368,11 +1375,24 @@ impl VantageApp {
         }
     }
 
+    pub fn commit_settings_editor(&mut self, cx: &mut Context<Self>) {
+        let command = self.settings_editor_field.value.trim().to_string();
+        if let Err(error) = vantage_core::detect::validate_editor_command(&command) {
+            self.show_toast(format!("Could not save the editor: {error}"), cx);
+            return;
+        }
+        self.settings.editor_command = command;
+        self.save_settings(cx);
+        self.show_toast("Editor saved", cx);
+    }
+
     pub fn reset_settings(&mut self, appearance: WindowAppearance, cx: &mut Context<Self>) {
         self.settings = UiSettings::default();
         self.sidebar_collapsed = false;
         self.settings_branch_field
             .set(self.settings.default_branch.clone());
+        self.settings_editor_field
+            .set(self.settings.editor_command.clone());
         self.settings_reset_confirm = false;
         self.apply_theme(appearance);
         if self.save_settings(cx) {
@@ -1426,36 +1446,17 @@ impl VantageApp {
             self.show_toast("The data folder is unavailable", cx);
             return;
         }
-        #[cfg(target_os = "macos")]
-        let result = std::process::Command::new("open").arg(&path).spawn();
-        #[cfg(target_os = "windows")]
-        let result = std::process::Command::new("explorer").arg(&path).spawn();
-        #[cfg(all(unix, not(target_os = "macos")))]
-        let result = std::process::Command::new("xdg-open").arg(&path).spawn();
-
-        if let Err(error) = result {
-            self.show_toast(format!("Could not open the data folder: {error}"), cx);
+        match spawn_external(vantage_core::detect::reveal_in_file_manager(&path)) {
+            Ok(()) => cx.notify(),
+            Err(error) => self.show_toast(format!("Could not open the data folder: {error}"), cx),
         }
     }
 
     /// Reveal one state backup in the platform file manager.
     pub fn reveal_state_backup(&mut self, path: PathBuf, cx: &mut Context<Self>) {
-        #[cfg(target_os = "macos")]
-        let result = std::process::Command::new("open")
-            .arg("-R")
-            .arg(&path)
-            .spawn();
-        #[cfg(target_os = "windows")]
-        let result = std::process::Command::new("explorer")
-            .arg(format!("/select,{}", path.display()))
-            .spawn();
-        #[cfg(all(unix, not(target_os = "macos")))]
-        let result = std::process::Command::new("xdg-open")
-            .arg(path.parent().unwrap_or(path.as_path()))
-            .spawn();
-
-        if let Err(error) = result {
-            self.show_toast(format!("Could not reveal the backup: {error}"), cx);
+        match spawn_external(vantage_core::detect::reveal_in_file_manager(&path)) {
+            Ok(()) => cx.notify(),
+            Err(error) => self.show_toast(format!("Could not reveal the backup: {error}"), cx),
         }
     }
 
@@ -2799,58 +2800,46 @@ impl VantageApp {
         .detach();
     }
 
-    /// Show the repository in Finder.
+    /// Show the repository in the platform's file manager.
     pub fn reveal_repo(&mut self, repo_id: &str, cx: &mut Context<Self>) {
         self.context_menu = None;
         let Some(repo) = self.repos.iter().find(|repo| repo.id == repo_id).cloned() else {
             return;
         };
         let path = expand_home(&repo.local_path);
-        match std::process::Command::new("open")
-            .arg("-R")
-            .arg(&path)
-            .spawn()
-        {
-            Ok(_) => cx.notify(),
+        match spawn_external(vantage_core::detect::reveal_in_file_manager(&path)) {
+            Ok(()) => cx.notify(),
             Err(error) => self.show_toast(format!("Could not reveal the folder: {error}"), cx),
         }
     }
 
-    /// Open the repository in Terminal.
+    /// Open the repository in the platform's terminal.
     pub fn open_repo_terminal(&mut self, repo_id: &str, cx: &mut Context<Self>) {
         self.context_menu = None;
         let Some(repo) = self.repos.iter().find(|repo| repo.id == repo_id).cloned() else {
             return;
         };
         let path = expand_home(&repo.local_path);
-        match std::process::Command::new("open")
-            .args(["-a", "Terminal"])
-            .arg(&path)
-            .spawn()
-        {
-            Ok(_) => cx.notify(),
-            Err(error) => self.show_toast(format!("Could not open Terminal: {error}"), cx),
+        match spawn_external(vantage_core::detect::open_terminal_at(&path)) {
+            Ok(()) => cx.notify(),
+            Err(error) => self.show_toast(format!("Could not open a terminal: {error}"), cx),
         }
     }
 
-    /// Open the repository in the editor the environment names.
+    /// Open the repository in the editor the user configured, or the one the
+    /// environment names.
     pub fn open_repo_editor(&mut self, repo_id: &str, cx: &mut Context<Self>) {
         self.context_menu = None;
         let Some(repo) = self.repos.iter().find(|repo| repo.id == repo_id).cloned() else {
             return;
         };
         let path = expand_home(&repo.local_path);
-        let editor = std::env::var("VISUAL")
-            .or_else(|_| std::env::var("EDITOR"))
-            .ok()
-            .filter(|value| !value.trim().is_empty());
-        let spawned = match editor {
-            Some(editor) => std::process::Command::new(editor).arg(&path).spawn(),
-            // `code` is on PATH for most VS Code users; otherwise open the folder.
-            None => std::process::Command::new("code").arg(&path).spawn(),
-        };
-        match spawned.or_else(|_| std::process::Command::new("open").arg(&path).spawn()) {
-            Ok(_) => cx.notify(),
+        let preference = self.settings.editor_command.clone();
+        match spawn_external(vantage_core::detect::open_editor_at(
+            &path,
+            Some(&preference),
+        )) {
+            Ok(()) => cx.notify(),
             Err(error) => self.show_toast(format!("Could not open the editor: {error}"), cx),
         }
     }
@@ -4139,7 +4128,7 @@ impl VantageApp {
             FocusTarget::Field(id) => match id {
                 FieldId::NewGroup => self.is_adding_group,
                 FieldId::ModalPath | FieldId::ModalCustomGroup => self.is_add_modal_open,
-                FieldId::SettingsBranch => self.is_settings_open,
+                FieldId::SettingsBranch | FieldId::SettingsEditor => self.is_settings_open,
                 FieldId::CommitMessage | FieldId::CommitBody => self.commit_bar_visible(),
                 FieldId::BranchName => matches!(
                     self.branch_prompt.as_ref().map(|prompt| &prompt.kind),
@@ -4267,6 +4256,7 @@ impl VantageApp {
             FieldId::SettingsBranch => &mut self.settings_branch_field,
             FieldId::CommitMessage => &mut self.composers.active_mut().message,
             FieldId::CommitBody => &mut self.composers.active_mut().body,
+            FieldId::SettingsEditor => &mut self.settings_editor_field,
             FieldId::BranchName => &mut self.branch_field,
             FieldId::CloneUrl => &mut self.clone_url,
             FieldId::CloneParent => &mut self.clone_parent,
@@ -4283,6 +4273,7 @@ impl VantageApp {
             FieldId::SettingsBranch => &self.settings_branch_field,
             FieldId::CommitMessage => &self.composers.active().message,
             FieldId::CommitBody => &self.composers.active().body,
+            FieldId::SettingsEditor => &self.settings_editor_field,
             FieldId::BranchName => &self.branch_field,
             FieldId::CloneUrl => &self.clone_url,
             FieldId::CloneParent => &self.clone_parent,
@@ -4297,6 +4288,7 @@ impl VantageApp {
             FieldId::ModalPath => self.modal_path_focus.clone(),
             FieldId::ModalCustomGroup => self.modal_custom_group_focus.clone(),
             FieldId::SettingsBranch => self.settings_branch_focus.clone(),
+            FieldId::SettingsEditor => self.settings_editor_focus.clone(),
             FieldId::CommitMessage => self.commit_focus.clone(),
             FieldId::CommitBody => self.commit_body_focus.clone(),
             FieldId::BranchName => self.branch_focus.clone(),
@@ -4390,6 +4382,7 @@ impl VantageApp {
                 }
             }
             FieldId::SettingsBranch => self.commit_settings_branch(cx),
+            FieldId::SettingsEditor => self.commit_settings_editor(cx),
             FieldId::CommitMessage => self.commit_selected(cx),
             FieldId::BranchName => self.submit_branch_prompt(cx),
             FieldId::CommitBody => self.commit_selected(cx),
@@ -4660,7 +4653,7 @@ impl Render for VantageApp {
                         }
                         items.push(("View on GitHub", false, 0));
                         items.push(("Remove from list", true, 0));
-                        items.push(("Reveal in Finder", false, 0));
+                        items.push(("Reveal in File Manager", false, 0));
                         items.push(("Open in Terminal", false, 0));
                         items.push(("Open in editor", false, 0));
                     }
@@ -4827,7 +4820,7 @@ impl Render for VantageApp {
                                     let id = repo_id.clone();
                                     this.ask_forget_repo(&id, cx);
                                 }
-                                (ContextMenu::Repo { repo_id, .. }, "Reveal in Finder") => {
+                                (ContextMenu::Repo { repo_id, .. }, "Reveal in File Manager") => {
                                     let id = repo_id.clone();
                                     this.reveal_repo(&id, cx);
                                 }
@@ -5453,6 +5446,18 @@ fn undo_offer(record: Option<&LastCommit>, repo: &Repository) -> Option<UndoOffe
         just_now: false,
         unpushed: repo.ahead_count as u32,
     })
+}
+
+/// Run a platform launch command and flatten both detection and spawn errors
+/// into a message the UI can show.
+fn spawn_external(
+    command: Result<vantage_core::detect::LaunchCommand, vantage_core::detect::LaunchError>,
+) -> Result<(), String> {
+    command
+        .map_err(|error| error.to_string())?
+        .spawn()
+        .map(|_| ())
+        .map_err(|error| error.to_string())
 }
 
 /// `~` expansion for repo paths that come back from the UI model.
