@@ -11,7 +11,7 @@ use gpui::{
     KeyDownEvent, MouseButton, PathPromptOptions, Window, WindowAppearance,
 };
 
-use crate::backend::Backend;
+use crate::backend::{Backend, BranchDeleteOutcome};
 use crate::model::{NavSection, RepoSyncState, Repository};
 use crate::settings::{
     DefaultView, Diagnostics, SettingsSection, SortOrder, ThemeChoice, UiSettings,
@@ -1800,6 +1800,10 @@ impl VantageApp {
     /// `git push` the branch this repository has checked out. The backend
     /// publishes the branch when it tracks nothing yet.
     pub fn push_repo(&mut self, repo: &Repository, cx: &mut Context<Self>) {
+        if let Some(reason) = repo.push_blocked_reason() {
+            self.show_toast(reason, cx);
+            return;
+        }
         let name = repo.name.clone();
         let branch = repo.current_branch.clone();
         let publishing = !repo.has_upstream;
@@ -2886,9 +2890,9 @@ impl VantageApp {
     ) {
         self.context_menu = None;
         match &kind {
-            BranchPromptKind::Create { .. } | BranchPromptKind::Delete { .. } => {
-                self.branch_field.clear()
-            }
+            BranchPromptKind::Create { .. }
+            | BranchPromptKind::Delete { .. }
+            | BranchPromptKind::ForceDelete { .. } => self.branch_field.clear(),
             BranchPromptKind::Rename { from } => self.branch_field.set(from.clone()),
         }
         self.branch_prompt = Some(BranchPrompt {
@@ -2929,6 +2933,15 @@ impl VantageApp {
         };
         let typed = self.branch_field.value.trim().to_string();
 
+        if let BranchPromptKind::Delete { name } = &prompt.kind {
+            self.run_branch_delete(&repo, name.clone(), false, cx);
+            return;
+        }
+        if let BranchPromptKind::ForceDelete { name } = &prompt.kind {
+            self.run_branch_delete(&repo, name.clone(), true, cx);
+            return;
+        }
+
         let (ok, fail, op): (String, String, BranchAction) = match &prompt.kind {
             BranchPromptKind::Create { base } => {
                 if typed.is_empty() {
@@ -2964,25 +2977,74 @@ impl VantageApp {
                     }),
                 )
             }
-            BranchPromptKind::Delete { name } => {
-                let name = name.clone();
-                let check = prompt.kind.clone();
-                (
-                    format!("Deleted {name}"),
-                    format!("Could not delete {name}"),
-                    Box::new(move |backend, id| {
-                        validate_branch_prompt(&check, &backend.local_branches(id)?)
-                            .map_err(anyhow::Error::msg)?;
-                        backend.delete_branch(id, &name, false)
-                    }),
-                )
-            }
+            BranchPromptKind::Delete { .. } | BranchPromptKind::ForceDelete { .. } => return,
         };
 
         self.branch_prompt = None;
         self.branch_field.clear();
         self.restore_focus = true;
         self.run_repo_op(&repo, cx, RepoOp::Branch, RepoOpReport::new(ok, fail), op);
+    }
+
+    /// Delete a branch, trying the normal `-d` first. When git refuses because
+    /// the branch has unmerged work the dialog stays open as an explicit
+    /// force-delete confirmation; nothing is force-deleted without that click.
+    fn run_branch_delete(
+        &mut self,
+        repo: &Repository,
+        name: String,
+        force: bool,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(backend) = self.backend.clone() else {
+            return;
+        };
+        if self
+            .busy_repos
+            .insert(repo.id.clone(), RepoOp::Branch)
+            .is_some()
+        {
+            return;
+        }
+        cx.notify();
+
+        let id = repo.id.clone();
+        let label = name.clone();
+        cx.spawn(async move |this, cx| {
+            let task_id = id.clone();
+            let result = cx
+                .background_executor()
+                .spawn(async move { backend.delete_branch(&task_id, &name, force) })
+                .await;
+            this.update(cx, |app, cx| {
+                app.busy_repos.remove(&id);
+                match result {
+                    Ok(BranchDeleteOutcome::Deleted) => {
+                        app.branch_prompt = None;
+                        app.branch_field.clear();
+                        app.show_toast(format!("Deleted {label}"), cx);
+                    }
+                    Ok(BranchDeleteOutcome::NotMerged) => {
+                        app.branch_prompt = Some(BranchPrompt {
+                            repo_id: id.clone(),
+                            kind: BranchPromptKind::ForceDelete {
+                                name: label.clone(),
+                            },
+                        });
+                        app.branch_field.clear();
+                    }
+                    Err(error) => {
+                        app.branch_prompt = None;
+                        app.branch_field.clear();
+                        app.show_toast(format!("Could not delete {label}: {error}"), cx);
+                    }
+                }
+                app.start_scan(cx);
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
     }
 
     /// The stash list, with restore and drop per entry.
@@ -3437,6 +3499,9 @@ impl VantageApp {
             }
             BranchPromptKind::Rename { from } => (format!("Rename {from}"), "Rename", false),
             BranchPromptKind::Delete { name } => (format!("Delete {name}?"), "Delete", true),
+            BranchPromptKind::ForceDelete { name } => {
+                (format!("Force delete {name}?"), "Force delete", true)
+            }
         };
         let repo_label = self
             .repos
@@ -3455,7 +3520,17 @@ impl VantageApp {
         match &prompt.kind {
             BranchPromptKind::Delete { name } => {
                 body = body.child(div().xs().fg(theme.text_body).child(format!(
-                    "{name} will be removed. Git refuses when the branch has unmerged work."
+                    "{name} is removed only when every commit is merged into the current \
+                     branch or its upstream. If Git refuses because it has unmerged work, \
+                     you can confirm a force delete next."
+                )))
+            }
+            BranchPromptKind::ForceDelete { name } => {
+                body = body.child(div().xs().fg(theme.text_body).child(format!(
+                    "{name} has commits that are not merged into the current branch or its \
+                     upstream, so Git refused the normal delete. Force-deleting removes the \
+                     branch pointer, and commits reachable only from it may be lost. This \
+                     cannot be undone."
                 )))
             }
             _ => {
@@ -5036,6 +5111,9 @@ pub enum BranchPromptKind {
     Rename { from: String },
     /// Delete a branch after a confirm.
     Delete { name: String },
+    /// Retry the delete with `-D` after git refused `-d` because the branch
+    /// has unmerged commits. Only reached through the second confirmation.
+    ForceDelete { name: String },
 }
 
 /// Refuse a prompt whose branch has changed state since the menu opened.
@@ -5067,15 +5145,17 @@ fn validate_branch_prompt(
             )),
             Some(_) => Ok(()),
         },
-        BranchPromptKind::Delete { name } => match branches.iter().find(|b| b.name == *name) {
-            None => Err(format!(
-                "Branch '{name}' no longer exists, so nothing was deleted."
-            )),
-            Some(branch) if branch.is_head => Err(format!(
-                "'{name}' is now the checked-out branch; switch to another branch first."
-            )),
-            Some(_) => Ok(()),
-        },
+        BranchPromptKind::Delete { name } | BranchPromptKind::ForceDelete { name } => {
+            match branches.iter().find(|b| b.name == *name) {
+                None => Err(format!(
+                    "Branch '{name}' no longer exists, so nothing was deleted."
+                )),
+                Some(branch) if branch.is_head => Err(format!(
+                    "'{name}' is now the checked-out branch; switch to another branch first."
+                )),
+                Some(_) => Ok(()),
+            }
+        }
     }
 }
 
@@ -5330,6 +5410,7 @@ mod tests {
             ahead_count: 0,
             behind_count: 0,
             has_upstream: true,
+            is_detached: false,
             last_activity_label: "just now".to_string(),
             last_activity_minutes: 0,
             uncommitted_files: files,
@@ -5805,7 +5886,10 @@ mod tests {
                     !app.busy_repos.contains_key("repo-2"),
                     "the selection at submit time must not receive the operation"
                 );
-                assert!(app.branch_prompt.is_none());
+                assert!(
+                    app.branch_prompt.is_some(),
+                    "the delete prompt stays open until git answers or asks for force confirmation"
+                );
             });
         });
     }

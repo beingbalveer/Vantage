@@ -581,6 +581,7 @@ mod tests {
             ahead_count: 3,
             behind_count: 2,
             has_upstream: true,
+            is_detached: false,
             last_activity_label: "2h ago".to_string(),
             last_activity_minutes: 120,
             uncommitted_files: vec![ChangedFile {

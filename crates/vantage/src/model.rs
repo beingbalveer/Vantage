@@ -134,6 +134,9 @@ pub struct Repository {
     /// The checked-out branch tracks a remote branch, so `Push` needs no
     /// `--set-upstream` and `Pull` has something to pull from.
     pub has_upstream: bool,
+    /// HEAD is not on a branch (`git checkout <sha>`), so there is no branch
+    /// name to push or publish.
+    pub is_detached: bool,
     pub last_activity_label: String,
     pub last_activity_minutes: i64,
     pub uncommitted_files: Vec<ChangedFile>,
@@ -151,6 +154,16 @@ impl Repository {
     /// to push to, so it gets no badges.
     pub fn commit_is_local_only(&self, index: usize) -> bool {
         self.has_remote && (index as i32) < self.ahead_count
+    }
+
+    /// Why `Push`/`Publish` cannot run, beyond the busy and remote checks.
+    ///
+    /// A detached HEAD has no branch to send, and `git push -u origin HEAD`
+    /// would create or target a remote branch literally named `HEAD` instead
+    /// of publishing the user's work.
+    pub fn push_blocked_reason(&self) -> Option<&'static str> {
+        self.is_detached
+            .then_some("HEAD is detached. Check out a branch before pushing.")
     }
 
     /// `RepoSyncState` drives the Working Tree cell (see StatusText.tsx).
@@ -191,6 +204,7 @@ mod tests {
             ahead_count: ahead,
             behind_count: 0,
             has_upstream: true,
+            is_detached: false,
             last_activity_label: "just now".to_string(),
             last_activity_minutes: 0,
             uncommitted_files: Vec::new(),
@@ -221,5 +235,21 @@ mod tests {
         let repo = repo(3, false);
         assert!(!repo.commit_is_local_only(0));
         assert!(!repo.commit_is_local_only(2));
+    }
+
+    #[test]
+    fn a_detached_head_blocks_push_with_an_actionable_reason() {
+        let mut repo = repo(1, true);
+        repo.is_detached = true;
+        assert_eq!(
+            repo.push_blocked_reason(),
+            Some("HEAD is detached. Check out a branch before pushing.")
+        );
+    }
+
+    #[test]
+    fn an_attached_branch_has_no_push_blocker() {
+        let repo = repo(1, true);
+        assert_eq!(repo.push_blocked_reason(), None);
     }
 }
