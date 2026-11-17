@@ -2377,11 +2377,13 @@ impl VantageApp {
         let Some(repo) = self.repos.iter().find(|repo| repo.id == repo_id).cloned() else {
             return;
         };
+        if let Some(refusal) = reset_refusal(&repo) {
+            self.show_toast(refusal, cx);
+            return;
+        }
         self.confirm = Some(ConfirmPrompt {
             title: format!("Reset {} to {sha}?", repo.current_branch),
-            body: "The branch tip moves back to that commit. Your files are not touched, so the \
-                   difference appears as uncommitted changes. A backup ref is kept first."
-                .to_string(),
+            body: reset_confirmation_body(sha),
             label: "Reset",
             action: ConfirmAction::ResetToCommit {
                 repo_id: repo_id.to_string(),
@@ -4852,6 +4854,32 @@ fn commit_needs_selected_paths(amending: bool) -> bool {
     !amending
 }
 
+/// The contract shown before a reset: the branch and the tracked working tree
+/// move to the selected commit, which is a hard reset.
+fn reset_confirmation_body(sha: &str) -> String {
+    format!(
+        "The branch tip and tracked files move to {sha}. A clean working tree is required: \
+         uncommitted and untracked changes are refused, never discarded. A backup ref of the \
+         current tip is kept first."
+    )
+}
+
+/// Why a reset cannot start, from the files the last scan reported. A clean
+/// tree has no refusal; the reset itself re-checks under the repository lock.
+fn reset_refusal(repo: &Repository) -> Option<String> {
+    let count = repo.uncommitted_files.len();
+    if count == 0 {
+        return None;
+    }
+    let noun = if count == 1 { "change" } else { "changes" };
+    let first = &repo.uncommitted_files[0].path;
+    Some(format!(
+        "Cannot reset {}: {count} uncommitted {noun} in the working tree (first: {first}). \
+         Commit or discard them first.",
+        repo.current_branch
+    ))
+}
+
 /// The commit an Undo would reset, given the row's state and this session's
 /// last commit.
 ///
@@ -5205,6 +5233,29 @@ mod tests {
     }
 
     #[test]
+    fn reset_confirmation_states_the_hard_reset_contract() {
+        assert_eq!(
+            reset_confirmation_body("c0ffee1"),
+            "The branch tip and tracked files move to c0ffee1. A clean working tree is required: \
+             uncommitted and untracked changes are refused, never discarded. A backup ref of the \
+             current tip is kept first."
+        );
+    }
+
+    #[test]
+    fn a_dirty_tree_is_refused_before_the_reset_confirmation() {
+        let repo = repo_with(vec![file("src/a.rs", false), file("notes.md", false)]);
+        assert_eq!(
+            reset_refusal(&repo),
+            Some(
+                "Cannot reset main: 2 uncommitted changes in the working tree (first: src/a.rs). \
+                 Commit or discard them first."
+                    .to_string()
+            )
+        );
+    }
+
+    #[test]
     fn amend_mode_never_survives_a_repository_switch() {
         let mut composers = ComposerStore::default();
         composers.switch_to("alpha");
@@ -5438,5 +5489,10 @@ mod tests {
                 );
             });
         });
+    }
+
+    #[test]
+    fn a_clean_tree_can_reach_the_reset_confirmation() {
+        assert_eq!(reset_refusal(&repo_with(Vec::new())), None);
     }
 }
