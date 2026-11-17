@@ -1,8 +1,10 @@
 use crate::error::AppError;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
+use tokio::io::AsyncReadExt;
 use tokio::process::Command;
 use tokio::sync::{Mutex, Semaphore};
 
@@ -10,6 +12,14 @@ pub struct GitOutput {
     pub stdout: Vec<u8>,
     pub stderr: String,
     pub status: std::process::ExitStatus,
+}
+
+/// Output of [`GitRunner::run_read_limited`].
+pub struct LimitedGitOutput {
+    pub output: GitOutput,
+    /// True when stdout was cut at the caller's byte cap. The child is killed,
+    /// so `output.status` is a failure even though the prefix is still useful.
+    pub truncated: bool,
 }
 
 impl GitOutput {
@@ -25,6 +35,9 @@ impl GitOutput {
 pub struct GitRunner {
     semaphore: Arc<Semaphore>,
     repo_locks: Arc<Mutex<HashMap<PathBuf, Arc<Mutex<()>>>>>,
+    /// Git processes spawned successfully. Used by the performance tests to
+    /// prove what an overview scan does and does not pay for.
+    commands: Arc<AtomicU64>,
 }
 
 impl Default for GitRunner {
@@ -38,7 +51,13 @@ impl GitRunner {
         Self {
             semaphore: Arc::new(Semaphore::new(8)),
             repo_locks: Arc::new(Mutex::new(HashMap::new())),
+            commands: Arc::new(AtomicU64::new(0)),
         }
+    }
+
+    /// Number of Git processes this runner has successfully spawned.
+    pub fn commands_run(&self) -> u64 {
+        self.commands.load(Ordering::Relaxed)
     }
 
     pub async fn get_repo_lock(&self, repo_path: &Path) -> Arc<Mutex<()>> {
@@ -113,6 +132,7 @@ impl GitRunner {
                 }
             }
         };
+        self.commands.fetch_add(1, Ordering::Relaxed);
 
         let stdout_pipe = child.stdout.take();
         let stderr_pipe = child.stderr.take();
@@ -122,13 +142,11 @@ impl GitRunner {
             let mut stderr_buf = Vec::new();
             let read_out = async {
                 if let Some(mut s) = stdout_pipe {
-                    use tokio::io::AsyncReadExt;
                     let _ = s.read_to_end(&mut stdout_buf).await;
                 }
             };
             let read_err = async {
                 if let Some(mut s) = stderr_pipe {
-                    use tokio::io::AsyncReadExt;
                     let _ = s.read_to_end(&mut stderr_buf).await;
                 }
             };
@@ -225,6 +243,7 @@ impl GitRunner {
                 }
             }
         };
+        self.commands.fetch_add(1, Ordering::Relaxed);
 
         let stdout_pipe = child.stdout.take();
         let stderr_pipe = child.stderr.take();
@@ -235,7 +254,6 @@ impl GitRunner {
 
             let read_out = async {
                 if let Some(mut s) = stdout_pipe {
-                    use tokio::io::AsyncReadExt;
                     let _ = s.read_to_end(&mut stdout_buf).await;
                 }
             };
@@ -244,7 +262,6 @@ impl GitRunner {
             // split on either character rather than lines().
             let read_err = async {
                 if let Some(mut s) = stderr_pipe {
-                    use tokio::io::AsyncReadExt;
                     let mut buf = [0u8; 4096];
                     let mut pending: Vec<u8> = Vec::new();
                     loop {
@@ -305,6 +322,162 @@ impl GitRunner {
         self.run(Some(repo_path), args, 20, false).await
     }
 
+    /// Run a read command, keeping at most `max_stdout_bytes` of its output.
+    ///
+    /// Used for patches that are displayed a few lines at a time: a generated
+    /// or vendored file can produce a diff far larger than the view will ever
+    /// show. Once the cap is reached the child is killed and `truncated` is
+    /// set, so callers can label the partial result instead of buffering it.
+    pub async fn run_read_limited(
+        &self,
+        repo_path: &Path,
+        args: &[&str],
+        max_stdout_bytes: usize,
+    ) -> Result<LimitedGitOutput, AppError> {
+        self.run_limited_env(repo_path, args, max_stdout_bytes, &[])
+            .await
+    }
+
+    /// [`run_read_limited`](Self::run_read_limited) with literal pathspecs, so
+    /// a file name containing `*` or `[` is read as that exact path.
+    pub async fn run_read_literal_limited(
+        &self,
+        repo_path: &Path,
+        args: &[&str],
+        max_stdout_bytes: usize,
+    ) -> Result<LimitedGitOutput, AppError> {
+        self.run_limited_env(
+            repo_path,
+            args,
+            max_stdout_bytes,
+            &[("GIT_LITERAL_PATHSPECS", "1")],
+        )
+        .await
+    }
+
+    async fn run_limited_env(
+        &self,
+        repo_path: &Path,
+        args: &[&str],
+        max_stdout_bytes: usize,
+        extra_envs: &[(&str, &str)],
+    ) -> Result<LimitedGitOutput, AppError> {
+        const STDERR_CAP: usize = 64 * 1024;
+
+        let _permit = self
+            .semaphore
+            .acquire()
+            .await
+            .map_err(|e| AppError::other(format!("Semaphore error: {}", e)))?;
+
+        let mut cmd = Command::new("git");
+        cmd.kill_on_drop(true);
+        cmd.stdin(std::process::Stdio::null());
+        cmd.stdout(std::process::Stdio::piped());
+        cmd.stderr(std::process::Stdio::piped());
+        cmd.env("LC_ALL", "C")
+            .env("GIT_TERMINAL_PROMPT", "0")
+            .env("GIT_PAGER", "cat")
+            .env("GIT_OPTIONAL_LOCKS", "0");
+        for (key, value) in extra_envs {
+            cmd.env(key, value);
+        }
+        cmd.arg("-c").arg("core.quotepath=off");
+        cmd.arg("-c").arg("color.ui=never");
+        cmd.arg("-C").arg(repo_path);
+        cmd.args(args);
+
+        let mut child = match cmd.spawn() {
+            Ok(child) => child,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                return Err(AppError::git_missing());
+            }
+            Err(error) => return Err(AppError::io(error)),
+        };
+        self.commands.fetch_add(1, Ordering::Relaxed);
+
+        let mut stdout_pipe = child.stdout.take();
+        let mut stderr_pipe = child.stderr.take();
+        let wait = async {
+            let mut stdout = Vec::with_capacity(max_stdout_bytes.min(64 * 1024));
+            let mut stderr = Vec::new();
+            let mut truncated = false;
+            let mut out_buf = [0u8; 8192];
+            let mut err_buf = [0u8; 8192];
+            let mut out_open = stdout_pipe.is_some();
+            let mut err_open = stderr_pipe.is_some();
+
+            while out_open || err_open {
+                tokio::select! {
+                    read = async {
+                        stdout_pipe
+                            .as_mut()
+                            .expect("stdout is open")
+                            .read(&mut out_buf)
+                            .await
+                    }, if out_open => {
+                        match read {
+                            Ok(0) => out_open = false,
+                            Ok(read) => {
+                                let room = max_stdout_bytes.saturating_sub(stdout.len());
+                                if read > room {
+                                    stdout.extend_from_slice(&out_buf[..room]);
+                                    truncated = true;
+                                    out_open = false;
+                                    // The rest cannot be kept; stop git instead
+                                    // of draining a patch nobody will show.
+                                    let _ = child.start_kill();
+                                } else {
+                                    stdout.extend_from_slice(&out_buf[..read]);
+                                }
+                            }
+                            Err(_) => out_open = false,
+                        }
+                    }
+                    read = async {
+                        stderr_pipe
+                            .as_mut()
+                            .expect("stderr is open")
+                            .read(&mut err_buf)
+                            .await
+                    }, if err_open => {
+                        match read {
+                            Ok(0) => err_open = false,
+                            Ok(read) => {
+                                let room = STDERR_CAP.saturating_sub(stderr.len());
+                                stderr.extend_from_slice(&err_buf[..read.min(room)]);
+                            }
+                            Err(_) => err_open = false,
+                        }
+                    }
+                }
+            }
+
+            let status = child.wait().await.map_err(AppError::io)?;
+            Ok::<_, AppError>((status, stdout, stderr, truncated))
+        };
+
+        let (status, stdout, stderr, truncated) =
+            match tokio::time::timeout(Duration::from_secs(20), wait).await {
+                Ok(result) => result?,
+                Err(_) => {
+                    return Err(AppError::timeout(format!(
+                        "Git command timed out after 20s: git {}",
+                        args.join(" ")
+                    )));
+                }
+            };
+
+        Ok(LimitedGitOutput {
+            output: GitOutput {
+                stdout,
+                stderr: String::from_utf8_lossy(&stderr).to_string(),
+                status,
+            },
+            truncated,
+        })
+    }
+
     pub async fn run_write(
         &self,
         repo_path: &Path,
@@ -343,5 +516,37 @@ impl GitRunner {
             &[("GIT_LITERAL_PATHSPECS", "1")],
         )
         .await
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn limited_read_keeps_short_output_intact() {
+        let runner = GitRunner::new();
+        let temp = std::env::temp_dir();
+        let out = runner
+            .run_read_limited(&temp, &["--version"], 4096)
+            .await
+            .expect("git --version");
+
+        assert!(!out.truncated);
+        assert!(out.output.success());
+        assert!(out.output.stdout_string().contains("git version"));
+    }
+
+    #[tokio::test]
+    async fn limited_read_stops_at_the_byte_cap() {
+        let runner = GitRunner::new();
+        let temp = std::env::temp_dir();
+        let out = runner
+            .run_read_limited(&temp, &["--version"], 4)
+            .await
+            .expect("git --version");
+
+        assert!(out.truncated, "a 4-byte cap cannot fit git's version");
+        assert!(out.output.stdout.len() <= 4);
     }
 }

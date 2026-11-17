@@ -14,8 +14,9 @@ use crate::model::{CommitIdentity, PreviewKind, PreviewLine};
 
 use vantage_core::git::runner::GitOutput;
 use vantage_core::git::stash;
-use vantage_core::git::{diff, log, refs, status};
-use vantage_core::{AppError, GitRunner};
+use vantage_core::git::status::StatusRecord;
+use vantage_core::git::{diff, log, refs};
+use vantage_core::{repos, AppError, GitRunner};
 
 use crate::model::{BranchInfo, ChangedFile, CommitEntry, FileChangeStatus};
 
@@ -26,7 +27,66 @@ const COMMIT_LIMIT: u32 = 15;
 /// Generous enough to show whole hunks with their context, bounded so a
 /// thousand-line rewrite cannot be put into the row model.
 const PREVIEW_LINES: usize = 200;
+/// Largest patch read for one file's preview. A scan never reads patches at
+/// all; this only bounds the on-demand read when a file row is expanded.
+const MAX_PATCH_BYTES: usize = 512 * 1024;
 const UNKNOWN_AUTHOR: &str = "unknown";
+
+/// Everything the inspector needs but an overview row does not.
+///
+/// The dashboard scans every repository; these reads (branch list, history,
+/// stashes, identity, remote) are paid only for the selected repository.
+#[derive(Clone, Debug)]
+pub struct RepoDetails {
+    pub has_remote: bool,
+    pub stash_count: usize,
+    pub author: Option<CommitIdentity>,
+    pub branches: Vec<BranchInfo>,
+    pub recent_commits: Vec<CommitEntry>,
+    /// Commits on HEAD that no remote has; drives the local-only marker.
+    pub local_only_commits: HashSet<String>,
+}
+
+/// Load the selected repository's inspector data in one background job.
+pub fn repo_details(
+    rt: &tokio::runtime::Runtime,
+    runner: &GitRunner,
+    path: &Path,
+    current_branch: &str,
+    has_head: bool,
+) -> Result<RepoDetails, String> {
+    let default_branch = rt.block_on(repos::default_branch(runner, path));
+    let branches = branches(rt, runner, path, current_branch, &default_branch)?;
+    // An unborn branch has no history to read; `git log` would fail here.
+    let recent_commits = if has_head {
+        // "detached" is a display label; `git log` must be asked for HEAD.
+        let commit_target = if current_branch == "detached" {
+            "HEAD"
+        } else {
+            current_branch
+        };
+        commits(rt, runner, path, commit_target)?
+    } else {
+        Vec::new()
+    };
+    let stash_count = stash_count(rt, runner, path);
+    let author = commit_identity(path)?;
+    let has_remote = has_remote(path)?;
+    let local_only_commits = if has_remote {
+        local_only_commits(rt, runner, path, None, has_remote)
+    } else {
+        HashSet::new()
+    };
+
+    Ok(RepoDetails {
+        has_remote,
+        stash_count,
+        author,
+        branches,
+        recent_commits,
+        local_only_commits,
+    })
+}
 
 // ---------------- Branches ----------------
 
@@ -37,12 +97,11 @@ pub fn branches(
     path: &Path,
     current: &str,
     default: &str,
-) -> Vec<BranchInfo> {
-    let listed = match rt.block_on(refs::list_branches(runner, path)) {
-        Ok(list) => list,
-        Err(_) => return Vec::new(),
-    };
-    let tips = rt.block_on(branch_tips(runner, path));
+) -> Result<Vec<BranchInfo>, String> {
+    let listed = rt
+        .block_on(refs::list_branches(runner, path))
+        .map_err(|error| error.message)?;
+    let tips = rt.block_on(branch_tips(runner, path))?;
     let now = now_seconds();
 
     let mut seen: HashSet<String> = HashSet::new();
@@ -81,7 +140,7 @@ pub fn branches(
             .cmp(&a.0.is_current)
             .then_with(|| b.1.cmp(&a.1))
     });
-    snapshots.into_iter().map(|(info, _)| info).collect()
+    Ok(snapshots.into_iter().map(|(info, _)| info).collect())
 }
 
 struct BranchTip {
@@ -94,15 +153,18 @@ const BRANCH_TIP_FORMAT: &str = "%(refname:short)\x1f%(committerdate:unix)";
 /// Ahead/behind and tip-commit metadata for every local branch in one call.
 /// `state::BranchInfo` (what `refs::list_branches` returns) only carries the
 /// ref name and its committer date, so the remaining fields come from here.
-async fn branch_tips(runner: &GitRunner, repo_path: &Path) -> HashMap<String, BranchTip> {
+async fn branch_tips(
+    runner: &GitRunner,
+    repo_path: &Path,
+) -> Result<HashMap<String, BranchTip>, String> {
     let format_arg = format!("--format={BRANCH_TIP_FORMAT}");
-    let out = match runner
+    let out = runner
         .run_read(repo_path, &["for-each-ref", &format_arg, "refs/heads"])
         .await
-    {
-        Ok(out) if out.success() => out,
-        _ => return HashMap::new(),
-    };
+        .map_err(|error| error.message)?;
+    if !out.success() {
+        return Err(out.stderr);
+    }
 
     let mut tips = HashMap::new();
     for line in out.stdout_string().lines() {
@@ -121,7 +183,7 @@ async fn branch_tips(runner: &GitRunner, repo_path: &Path) -> HashMap<String, Br
             },
         );
     }
-    tips
+    Ok(tips)
 }
 
 // ---------------- Commits ----------------
@@ -132,30 +194,30 @@ pub fn commits(
     runner: &GitRunner,
     path: &Path,
     branch: &str,
-) -> Vec<CommitEntry> {
+) -> Result<Vec<CommitEntry>, String> {
     let target = if branch.trim().is_empty() {
         "HEAD"
     } else {
         branch.trim()
     };
-    let page = match rt.block_on(log::get_log_page(
-        runner,
-        path,
-        Some(target),
-        0,
-        COMMIT_LIMIT,
-        None,
-        None,
-    )) {
-        Ok(page) => page,
-        Err(_) => return Vec::new(),
-    };
+    let page = rt
+        .block_on(log::get_log_page(
+            runner,
+            path,
+            Some(target),
+            0,
+            COMMIT_LIMIT,
+            None,
+            None,
+        ))
+        .map_err(|error| error.message)?;
     let now = now_seconds();
 
-    page.into_iter()
+    Ok(page
+        .into_iter()
         .take(COMMIT_LIMIT as usize)
         .map(|commit| commit_entry(commit, now))
-        .collect()
+        .collect())
 }
 
 /// Map the engine's commit summary to the row/composer model, keeping the body
@@ -223,75 +285,50 @@ fn short_sha(sha: &str, short: &str) -> String {
 
 // ---------------- Working tree ----------------
 
-struct StatusEntry {
-    path: String,
-    status: FileChangeStatus,
-    /// True when the path has index (staged) changes.
-    staged: bool,
-}
-
 /// Unstaged, staged, untracked and unmerged paths of the working tree.
+///
+/// `records` come from the same `git status` call that produced the row's
+/// branch and counts, so the scan does not query the working tree a second
+/// time. Patch previews are deliberately absent: a scan only needs counts, and
+/// [`file_preview`] reads one file's diff when the user expands it.
 pub fn changed_files(
     rt: &tokio::runtime::Runtime,
     runner: &GitRunner,
     path: &Path,
+    records: &[StatusRecord],
 ) -> Vec<ChangedFile> {
-    let (entries, conflicts) = rt.block_on(status_snapshot(runner, path));
-    if entries.is_empty() && conflicts.is_empty() {
+    if records.is_empty() {
         return Vec::new();
     }
-    let totals = rt.block_on(numstat_totals(runner, path));
-    let (unstaged_previews, staged_previews) = rt.block_on(diff_preview_maps(runner, path));
+    // An untracked-only tree has no `git diff` to numstat; skip both calls.
+    let totals = if records.iter().all(|record| record.index == '?') {
+        HashMap::new()
+    } else {
+        rt.block_on(numstat_totals(runner, path))
+    };
+    changed_files_from_records(records, &totals)
+}
 
+/// Map parsed status records onto the row model, adding numstat totals.
+fn changed_files_from_records(
+    records: &[StatusRecord],
+    totals: &HashMap<String, (u32, u32)>,
+) -> Vec<ChangedFile> {
     let mut seen: HashSet<String> = HashSet::new();
     let mut files: Vec<ChangedFile> = Vec::new();
-    for entry in entries {
-        if !seen.insert(entry.path.clone()) {
+    for record in records {
+        if !seen.insert(record.path.clone()) {
             continue;
         }
-        let state = if conflicts.contains(&entry.path) {
-            FileChangeStatus::Conflicted
-        } else {
-            entry.status
-        };
-        let (additions, deletions) = totals.get(&entry.path).copied().unwrap_or((0, 0));
-        let (diff_preview, preview_truncated) = if matches!(state, FileChangeStatus::Untracked) {
-            // Untracked paths have no patch in `git diff`: show the file.
-            untracked_preview(path, &entry.path)
-        } else {
-            let previews = if entry.staged {
-                &staged_previews
-            } else {
-                &unstaged_previews
-            };
-            let lines = previews.get(&entry.path).cloned().unwrap_or_default();
-            let truncated = lines.len() == PREVIEW_LINES;
-            (lines, truncated)
-        };
+        let (status, staged) = changed_file_state(record);
+        let (additions, deletions) = totals.get(&record.path).copied().unwrap_or((0, 0));
         files.push(ChangedFile {
-            path: entry.path,
-            status: state,
+            path: record.path.clone(),
+            status,
             additions,
             deletions,
-            staged: entry.staged,
-            diff_preview,
-            preview_truncated,
-        });
-    }
-
-    // A conflicted path always belongs in the list, even if the porcelain parse
-    // surfaced no ordinary record for it.
-    for conflicted in conflicts {
-        if !seen.insert(conflicted.clone()) {
-            continue;
-        }
-        let (additions, deletions) = totals.get(&conflicted).copied().unwrap_or((0, 0));
-        files.push(ChangedFile {
-            path: conflicted,
-            status: FileChangeStatus::Conflicted,
-            additions,
-            deletions,
-            staged: false,
+            staged,
+            orig_path: record.orig_path.clone(),
             diff_preview: Vec::new(),
             preview_truncated: false,
         });
@@ -301,105 +338,18 @@ pub fn changed_files(
     files
 }
 
-async fn status_snapshot(
-    runner: &GitRunner,
-    repo_path: &Path,
-) -> (Vec<StatusEntry>, HashSet<String>) {
-    let out = match runner
-        .run_read(
-            repo_path,
-            &["status", "--porcelain=v2", "-z", "--untracked-files=all"],
-        )
-        .await
-    {
-        Ok(out) if out.success() => out,
-        _ => return (Vec::new(), HashSet::new()),
+/// `(status badge, staged)` for one porcelain record.
+fn changed_file_state(record: &StatusRecord) -> (FileChangeStatus, bool) {
+    if record.unmerged {
+        return (FileChangeStatus::Conflicted, false);
+    }
+    let staged = record.index != '.' && record.index != '?';
+    let code = if staged {
+        record.index
+    } else {
+        record.worktree
     };
-
-    let conflicts: HashSet<String> = status::parse_porcelain_v2(&out.stdout)
-        .conflicted_paths
-        .into_iter()
-        .collect();
-    (parse_status_entries(&out.stdout), conflicts)
-}
-
-/// Per-path records of `git status --porcelain=v2 -z`.
-///
-/// `status::parse_porcelain_v2` only reports counts and conflicts, so the
-/// records are split here using the same NUL-separated layout:
-/// `1 <XY> <sub> <mH> <mI> <mW> <hH> <hI> <path>`,
-/// `2 <XY> ... <X><score> <path>\0<origPath>`,
-/// `u <XY> <sub> <m1> <m2> <m3> <mW> <h1> <h2> <h3> <path>`, `? <path>`.
-fn parse_status_entries(output: &[u8]) -> Vec<StatusEntry> {
-    let mut entries = Vec::new();
-    let parts: Vec<&[u8]> = output.split(|&byte| byte == 0).collect();
-    let mut i = 0;
-
-    while i < parts.len() {
-        let record = parts[i];
-        i += 1;
-        let Some(kind) = record.first() else {
-            continue;
-        };
-
-        match kind {
-            // Header and ignored records carry no file to list.
-            b'#' | b'!' => {}
-            b'?' => {
-                if let Some(path) = record.get(2..).filter(|path| !path.is_empty()) {
-                    entries.push(StatusEntry {
-                        path: String::from_utf8_lossy(path).to_string(),
-                        status: FileChangeStatus::Untracked,
-                        staged: false,
-                    });
-                }
-            }
-            b'1' => {
-                let line = String::from_utf8_lossy(record);
-                let fields: Vec<&str> = line.splitn(9, ' ').collect();
-                if fields.len() == 9 {
-                    entries.push(entry_from_xy(fields[1], fields[8]));
-                }
-            }
-            b'2' => {
-                let line = String::from_utf8_lossy(record);
-                let fields: Vec<&str> = line.splitn(10, ' ').collect();
-                if fields.len() == 10 {
-                    entries.push(entry_from_xy(fields[1], fields[9]));
-                }
-                // The original path of a rename/copy is its own record.
-                i += 1;
-            }
-            b'u' => {
-                let line = String::from_utf8_lossy(record);
-                let fields: Vec<&str> = line.splitn(11, ' ').collect();
-                if fields.len() == 11 {
-                    entries.push(StatusEntry {
-                        path: fields[10].to_string(),
-                        status: FileChangeStatus::Conflicted,
-                        staged: false,
-                    });
-                }
-            }
-            _ => {}
-        }
-    }
-
-    entries
-}
-
-/// `XY` is index status followed by worktree status; `.` means "unchanged".
-fn entry_from_xy(xy: &str, path: &str) -> StatusEntry {
-    let mut codes = xy.chars();
-    let index = codes.next().unwrap_or('.');
-    let worktree = codes.next().unwrap_or('.');
-    let staged = index != '.' && index != '?';
-    let code = if staged { index } else { worktree };
-    StatusEntry {
-        path: path.to_string(),
-        status: status_from_code(code),
-        staged,
-    }
+    (status_from_code(code), staged)
 }
 
 fn status_from_code(code: char) -> FileChangeStatus {
@@ -432,38 +382,6 @@ async fn numstat_totals(runner: &GitRunner, repo_path: &Path) -> HashMap<String,
         }
     }
     totals
-}
-
-/// Unstaged and staged previews for every path, each map from one `git diff`
-/// run: `(worktree, index)`. Fetching them per file would cost one process per
-/// changed path.
-async fn diff_preview_maps(
-    runner: &GitRunner,
-    repo_path: &Path,
-) -> (
-    HashMap<String, Vec<PreviewLine>>,
-    HashMap<String, Vec<PreviewLine>>,
-) {
-    (
-        diff_preview_map(runner, repo_path, false).await,
-        diff_preview_map(runner, repo_path, true).await,
-    )
-}
-
-async fn diff_preview_map(
-    runner: &GitRunner,
-    repo_path: &Path,
-    staged: bool,
-) -> HashMap<String, Vec<PreviewLine>> {
-    let mut args = vec!["diff", "--no-color", "--no-ext-diff"];
-    if staged {
-        args.push("--cached");
-    }
-
-    match runner.run_read(repo_path, &args).await {
-        Ok(out) if out.success() => parse_diff_previews(&out.stdout_string()),
-        _ => HashMap::new(),
-    }
 }
 
 /// One preview per file in a `git diff` patch, keyed by the path after the
@@ -706,6 +624,52 @@ fn untracked_preview(repo_path: &Path, relative: &str) -> (Vec<PreviewLine>, boo
     (preview, truncated)
 }
 
+/// Patch lines for one changed file, read when the user expands its row.
+///
+/// A scan only needs counts, so it never reads a repository's full diff. This
+/// asks git for just the selected path (plus its rename source, when there is
+/// one) and stops at [`MAX_PATCH_BYTES`], so a huge generated file cannot put
+/// an unbounded patch in memory. Untracked files have no diff and are read
+/// from disk instead.
+pub fn file_preview(
+    rt: &tokio::runtime::Runtime,
+    runner: &GitRunner,
+    repo_path: &Path,
+    relative: &str,
+    staged: bool,
+    status: FileChangeStatus,
+    orig_path: Option<&str>,
+) -> anyhow::Result<(Vec<PreviewLine>, bool)> {
+    if matches!(status, FileChangeStatus::Untracked) {
+        return Ok(untracked_preview(repo_path, relative));
+    }
+
+    let mut args = vec!["diff", "--no-color", "--no-ext-diff", "-M"];
+    if staged {
+        args.push("--cached");
+    }
+    args.push("--");
+    args.push(relative);
+    if let Some(orig_path) = orig_path {
+        args.push(orig_path);
+    }
+
+    let limited = rt
+        .block_on(runner.run_read_literal_limited(repo_path, &args, MAX_PATCH_BYTES))
+        .map_err(|error| anyhow::anyhow!(error.message))?;
+    if !limited.output.success() && !limited.truncated {
+        let stderr = limited.output.stderr.trim();
+        return Err(anyhow::anyhow!(if stderr.is_empty() {
+            format!("git could not produce a patch for {relative}")
+        } else {
+            stderr.to_string()
+        }));
+    }
+
+    let (lines, line_truncated) = preview_lines(&limited.output.stdout_string());
+    Ok((lines, line_truncated || limited.truncated))
+}
+
 // ---------------- Compare + ignored ----------------
 
 /// A read that ran but exited unsuccessfully, with Git's own explanation.
@@ -889,7 +853,7 @@ pub fn commit_files(
 /// dashboard needs it for the commit bar of the selected repository. `git config
 /// --get-regexp` already resolves precedence, so a repository-local `user.name`
 /// beats the global one.
-pub fn commit_identity(path: &Path) -> Option<CommitIdentity> {
+pub fn commit_identity(path: &Path) -> Result<Option<CommitIdentity>, String> {
     let output = std::process::Command::new("git")
         .arg("-C")
         .arg(path)
@@ -897,9 +861,9 @@ pub fn commit_identity(path: &Path) -> Option<CommitIdentity> {
         .env("LC_ALL", "C")
         .env("GIT_TERMINAL_PROMPT", "0")
         .output()
-        .ok()?;
+        .map_err(|error| format!("read the Git identity: {error}"))?;
     if !output.status.success() {
-        return None;
+        return Ok(None);
     }
 
     let mut name = None;
@@ -919,9 +883,9 @@ pub fn commit_identity(path: &Path) -> Option<CommitIdentity> {
         }
     }
 
-    Some(CommitIdentity {
-        name: name?,
-        email: email?,
+    Ok(match (name, email) {
+        (Some(name), Some(email)) => Some(CommitIdentity { name, email }),
+        _ => None,
     })
 }
 
@@ -933,11 +897,11 @@ pub fn commit_identity(path: &Path) -> Option<CommitIdentity> {
 /// and nothing else — so this is the only thing the UI needs from the remote.
 /// Like the other cheap config reads here it asks git directly, so worktrees and
 /// `include`d configs resolve correctly.
-pub fn has_remote(path: &Path) -> bool {
-    origin_url(path).is_some()
+pub fn has_remote(path: &Path) -> Result<bool, String> {
+    Ok(origin_url(path)?.is_some())
 }
 
-fn origin_url(repo_path: &Path) -> Option<String> {
+fn origin_url(repo_path: &Path) -> Result<Option<String>, String> {
     let output = std::process::Command::new("git")
         .arg("-C")
         .arg(repo_path)
@@ -947,13 +911,13 @@ fn origin_url(repo_path: &Path) -> Option<String> {
         .stdin(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())
         .output()
-        .ok()?;
+        .map_err(|error| format!("read the remote: {error}"))?;
 
     if !output.status.success() {
-        return None;
+        return Ok(None);
     }
     let url = String::from_utf8_lossy(&output.stdout).trim().to_string();
-    (!url.is_empty()).then_some(url)
+    Ok((!url.is_empty()).then_some(url))
 }
 
 // ---------------- Relative time ----------------
@@ -1053,7 +1017,8 @@ mod tests {
 u UU N... 100644 100644 100644 100644 aaaaaaa bbbbbbb ccccccc conflicted.rs\0\
 ? untracked file.rs\0";
 
-        let entries = parse_status_entries(output);
+        let parsed = vantage_core::git::status::parse_porcelain_v2(output);
+        let entries = changed_files_from_records(&parsed.records, &HashMap::new());
         let find = |path: &str| {
             entries
                 .iter()
@@ -1072,6 +1037,7 @@ u UU N... 100644 100644 100644 100644 aaaaaaa bbbbbbb ccccccc conflicted.rs\0\
         assert_eq!(find("added.rs").status, FileChangeStatus::Added);
         assert_eq!(find("deleted.rs").status, FileChangeStatus::Deleted);
         assert_eq!(find("renamed.rs").status, FileChangeStatus::Modified);
+        assert_eq!(find("renamed.rs").orig_path.as_deref(), Some("old.rs"));
         assert_eq!(find("conflicted.rs").status, FileChangeStatus::Conflicted);
         let untracked = find("untracked file.rs");
         assert_eq!(untracked.status, FileChangeStatus::Untracked);
@@ -1080,6 +1046,10 @@ u UU N... 100644 100644 100644 100644 aaaaaaa bbbbbbb ccccccc conflicted.rs\0\
         assert!(
             entries.iter().all(|entry| entry.path != "old.rs"),
             "a rename's original path must not become its own row"
+        );
+        assert!(
+            entries.iter().all(|entry| entry.diff_preview.is_empty()),
+            "a scan must not read patch previews"
         );
     }
 
@@ -1163,6 +1133,92 @@ u UU N... 100644 100644 100644 100644 aaaaaaa bbbbbbb ccccccc conflicted.rs\0\
         std::fs::remove_dir_all(&dir).ok();
     }
 
+    fn git_available() -> bool {
+        std::process::Command::new("git")
+            .arg("--version")
+            .output()
+            .map(|out| out.status.success())
+            .unwrap_or(false)
+    }
+
+    fn git(dir: &Path, args: &[&str]) -> String {
+        let out = std::process::Command::new("git")
+            .arg("-C")
+            .arg(dir)
+            .args(args)
+            .output()
+            .expect("run git");
+        assert!(
+            out.status.success(),
+            "git {args:?} failed: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        String::from_utf8_lossy(&out.stdout).trim().to_string()
+    }
+
+    #[test]
+    fn a_scan_keeps_counts_and_reads_the_patch_only_on_demand() {
+        if !git_available() {
+            eprintln!("skipping: git is not installed");
+            return;
+        }
+        let dir = std::env::temp_dir().join(format!(
+            "vantage_preview_{}_{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::remove_dir_all(&dir).ok();
+        std::fs::create_dir_all(&dir).unwrap();
+        git(&dir, &["init", "-q", "-b", "main"]);
+        git(&dir, &["config", "user.email", "qa@example.com"]);
+        git(&dir, &["config", "user.name", "QA"]);
+        std::fs::write(dir.join("app.rs"), "fn one() {}\n").unwrap();
+        git(&dir, &["add", "."]);
+        git(&dir, &["commit", "-q", "-m", "initial"]);
+        std::fs::write(dir.join("app.rs"), "fn one() {}\nfn two() {}\n").unwrap();
+
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let runner = GitRunner::new();
+        let snapshot = rt.block_on(vantage_core::git::status::query_repo_status_snapshot(
+            &runner,
+            "repo-fixture",
+            &dir,
+            None,
+            None,
+        ));
+        let files = changed_files(&rt, &runner, &dir, &snapshot.records);
+        assert_eq!(files.len(), 1);
+        assert_eq!(files[0].path, "app.rs");
+        assert_eq!(files[0].additions, 1);
+        assert!(
+            files[0].diff_preview.is_empty(),
+            "the overview scan must not read the patch"
+        );
+
+        let (lines, truncated) = file_preview(
+            &rt,
+            &runner,
+            &dir,
+            &files[0].path,
+            files[0].staged,
+            files[0].status,
+            files[0].orig_path.as_deref(),
+        )
+        .expect("read the file's patch when expanded");
+        assert!(!truncated);
+        assert!(
+            lines
+                .iter()
+                .any(|line| line.kind == PreviewKind::Added && line.text == "fn two() {}"),
+            "the expanded row shows the change it counted: {lines:?}"
+        );
+
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
     #[test]
     fn diff_previews_split_blocks_by_path_and_include_deletions() {
         let patch = [
@@ -1222,18 +1278,6 @@ u UU N... 100644 100644 100644 100644 aaaaaaa bbbbbbb ccccccc conflicted.rs\0\
         assert!(second
             .iter()
             .any(|line| line.kind == PreviewKind::Context && line.text == "keep"));
-    }
-
-    fn git_available() -> bool {
-        std::process::Command::new("git")
-            .arg("--version")
-            .output()
-            .map(|out| out.status.success())
-            .unwrap_or(false)
-    }
-
-    fn git(dir: &Path, args: &[&str]) -> String {
-        git_at(dir, args, None)
     }
 
     fn git_at(dir: &Path, args: &[&str], date: Option<&str>) -> String {
@@ -1369,7 +1413,7 @@ u UU N... 100644 100644 100644 100644 aaaaaaa bbbbbbb ccccccc conflicted.rs\0\
 
         // The log itself is non-contiguous: the upstream commit sits between
         // the merge and the older local commits.
-        let commits = commits(&rt, &runner, &local, "main");
+        let commits = commits(&rt, &runner, &local, "main").unwrap();
         let position = |sha: &str| {
             commits
                 .iter()

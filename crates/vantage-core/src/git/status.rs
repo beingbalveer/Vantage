@@ -2,15 +2,38 @@ use crate::git::runner::GitRunner;
 use crate::state::{MarkerState, OperationKind, RepoStatus};
 use std::path::Path;
 
+/// One path from `git status --porcelain=v2 -z`.
+///
+/// The status query already parses every record to count changes and conflicts;
+/// keeping the paths lets callers build a file list without running a second
+/// `git status` for the same working tree.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StatusRecord {
+    pub path: String,
+    /// Index status letter (`X` in `XY`), `.` when unchanged.
+    pub index: char,
+    /// Worktree status letter (`Y` in `XY`), `.` when unchanged.
+    pub worktree: char,
+    /// True for an unmerged (`u`) record.
+    pub unmerged: bool,
+    /// Path before the change for rename/copy (`2`) records.
+    pub orig_path: Option<String>,
+}
+
 #[derive(Debug, Default, Clone)]
 pub struct ParsedStatusV2 {
     pub branch: Option<String>,
+    /// Commit at HEAD, including when a branch is checked out. `None` for an
+    /// unborn branch.
+    pub head_sha: Option<String>,
     pub detached_sha: Option<String>,
     pub upstream: Option<String>,
     pub ahead: u32,
     pub behind: u32,
     pub dirty_count: u32,
     pub conflicted_paths: Vec<String>,
+    /// One record per changed path, in git's output order.
+    pub records: Vec<StatusRecord>,
 }
 
 /// Extract the paths from `git status --porcelain=v2 -z` unmerged (`u`) records.
@@ -115,6 +138,7 @@ pub fn parse_porcelain_v2(output: &[u8]) -> ParsedStatusV2 {
         } else if let Some(stripped) = line.strip_prefix("# branch.oid ") {
             let oid = stripped.trim();
             if oid != "(initial)" {
+                result.head_sha = Some(oid.to_string());
                 result.detached_sha = Some(oid.to_string());
             }
         } else if let Some(stripped) = line.strip_prefix("# branch.upstream ") {
@@ -135,18 +159,57 @@ pub fn parse_porcelain_v2(output: &[u8]) -> ParsedStatusV2 {
             }
             result.ahead = ahead;
             result.behind = behind;
-        } else if line.starts_with("1 ") || line.starts_with("? ") {
+        } else if line.starts_with("1 ") {
             result.dirty_count += 1;
+            if let Some(record) = ordinary_status_record(&line) {
+                result.records.push(record);
+            }
+        } else if line.starts_with("? ") {
+            result.dirty_count += 1;
+            if let Some(path) = line.strip_prefix("? ").filter(|path| !path.is_empty()) {
+                result.records.push(StatusRecord {
+                    path: path.to_string(),
+                    index: '?',
+                    worktree: '?',
+                    unmerged: false,
+                    orig_path: None,
+                });
+            }
         } else if line.starts_with("u ") {
             result.dirty_count += 1;
             if let Some(path) = line.splitn(11, ' ').nth(10) {
                 if !path.is_empty() {
                     result.conflicted_paths.push(path.to_string());
+                    let (index, worktree) = status_xy(&line);
+                    result.records.push(StatusRecord {
+                        path: path.to_string(),
+                        index,
+                        worktree,
+                        unmerged: true,
+                        orig_path: None,
+                    });
                 }
             }
         } else if line.starts_with("2 ") {
             result.dirty_count += 1;
-            // Rename entries in -z format have an extra field for origPath
+            // In -z format a rename/copy record is followed by its original
+            // path as a separate NUL-terminated part.
+            let orig_path = parts
+                .get(i + 1)
+                .map(|part| String::from_utf8_lossy(part).to_string())
+                .filter(|path| !path.is_empty());
+            if let Some(path) = line.splitn(10, ' ').nth(9) {
+                if !path.is_empty() {
+                    let (index, worktree) = status_xy(&line);
+                    result.records.push(StatusRecord {
+                        path: path.to_string(),
+                        index,
+                        worktree,
+                        unmerged: false,
+                        orig_path,
+                    });
+                }
+            }
             i += 1;
         }
 
@@ -161,6 +224,40 @@ pub fn parse_porcelain_v2(output: &[u8]) -> ParsedStatusV2 {
     result
 }
 
+/// `XY` of an ordinary, rename or unmerged record.
+fn status_xy(line: &str) -> (char, char) {
+    let mut chars = line.split(' ').nth(1).unwrap_or("..").chars();
+    (chars.next().unwrap_or('.'), chars.next().unwrap_or('.'))
+}
+
+/// The per-path record of an ordinary (`1`) status entry.
+fn ordinary_status_record(line: &str) -> Option<StatusRecord> {
+    let path = line.splitn(9, ' ').nth(8)?;
+    if path.is_empty() {
+        return None;
+    }
+    let (index, worktree) = status_xy(line);
+    Some(StatusRecord {
+        path: path.to_string(),
+        index,
+        worktree,
+        unmerged: false,
+        orig_path: None,
+    })
+}
+
+/// A status query plus the paths it parsed.
+///
+/// The records describe the checked-out working tree, so a query for another
+/// branch returns none: those paths belong to a tree this call did not read.
+#[derive(Debug, Clone)]
+pub struct RepoStatusSnapshot {
+    pub status: RepoStatus,
+    pub records: Vec<StatusRecord>,
+    /// Commit at HEAD, used to cache per-repository detail loads.
+    pub head_sha: Option<String>,
+}
+
 pub async fn query_repo_status(
     runner: &GitRunner,
     repo_id: &str,
@@ -168,25 +265,45 @@ pub async fn query_repo_status(
     target_branch: Option<&str>,
     marker_sha: Option<&str>,
 ) -> RepoStatus {
+    query_repo_status_snapshot(runner, repo_id, repo_path, target_branch, marker_sha)
+        .await
+        .status
+}
+
+/// Status for one checked-out working tree, with only what an overview row
+/// reads: branch, upstream, ahead/behind, changes and last activity.
+///
+/// Unlike [`query_repo_status_snapshot`] this skips the in-progress-operation
+/// probe and `FETCH_HEAD` timestamp, neither of which appears on the row.
+pub async fn query_repo_overview(
+    runner: &GitRunner,
+    repo_id: &str,
+    repo_path: &Path,
+) -> RepoStatusSnapshot {
+    query_repo_status_snapshot_inner(runner, repo_id, repo_path, None, None, false).await
+}
+
+pub async fn query_repo_status_snapshot(
+    runner: &GitRunner,
+    repo_id: &str,
+    repo_path: &Path,
+    target_branch: Option<&str>,
+    marker_sha: Option<&str>,
+) -> RepoStatusSnapshot {
+    query_repo_status_snapshot_inner(runner, repo_id, repo_path, target_branch, marker_sha, true)
+        .await
+}
+
+async fn query_repo_status_snapshot_inner(
+    runner: &GitRunner,
+    repo_id: &str,
+    repo_path: &Path,
+    target_branch: Option<&str>,
+    marker_sha: Option<&str>,
+    include_operation: bool,
+) -> RepoStatusSnapshot {
     if !repo_path.exists() {
-        return RepoStatus {
-            repo_id: repo_id.to_string(),
-            branch: target_branch.map(|s| s.to_string()),
-            detached_sha: None,
-            upstream: None,
-            ahead: 0,
-            behind: 0,
-            dirty_count: 0,
-            operation: None,
-            conflicted_count: 0,
-            conflicted_paths: Vec::new(),
-            new_commit_count: 0,
-            marker_state: MarkerState::None,
-            last_activity_at: None,
-            last_fetched_at: None,
-            is_checked_out: target_branch.is_none(),
-            error: Some("Repository path does not exist".to_string()),
-        };
+        return status_snapshot_error(repo_id, target_branch, "Repository path does not exist");
     }
 
     let status_res = runner
@@ -202,50 +319,14 @@ pub async fn query_repo_status(
         )
         .await;
 
-    let parsed = match status_res {
+    let mut parsed = match status_res {
         Ok(out) => {
             if !out.success() {
-                return RepoStatus {
-                    repo_id: repo_id.to_string(),
-                    branch: target_branch.map(|s| s.to_string()),
-                    detached_sha: None,
-                    upstream: None,
-                    ahead: 0,
-                    behind: 0,
-                    dirty_count: 0,
-                    operation: None,
-                    conflicted_count: 0,
-                    conflicted_paths: Vec::new(),
-                    new_commit_count: 0,
-                    marker_state: MarkerState::None,
-                    last_activity_at: None,
-                    last_fetched_at: None,
-                    is_checked_out: target_branch.is_none(),
-                    error: Some(out.stderr),
-                };
+                return status_snapshot_error(repo_id, target_branch, out.stderr);
             }
             parse_porcelain_v2(&out.stdout)
         }
-        Err(e) => {
-            return RepoStatus {
-                repo_id: repo_id.to_string(),
-                branch: target_branch.map(|s| s.to_string()),
-                detached_sha: None,
-                upstream: None,
-                ahead: 0,
-                behind: 0,
-                dirty_count: 0,
-                operation: None,
-                conflicted_count: 0,
-                conflicted_paths: Vec::new(),
-                new_commit_count: 0,
-                marker_state: MarkerState::None,
-                last_activity_at: None,
-                last_fetched_at: None,
-                is_checked_out: target_branch.is_none(),
-                error: Some(e.message),
-            };
-        }
+        Err(e) => return status_snapshot_error(repo_id, target_branch, e.message),
     };
 
     let target_ref = target_branch.unwrap_or("HEAD");
@@ -297,11 +378,19 @@ pub async fn query_repo_status(
 
     // Determine last_activity_at
     let last_activity_at = get_last_activity(runner, repo_path, target_branch).await;
-    let last_fetched_at = get_last_fetch_at(runner, repo_path).await;
+    let last_fetched_at = if include_operation {
+        get_last_fetch_at(runner, repo_path).await
+    } else {
+        None
+    };
 
-    let git_dir = crate::git::ops::get_real_git_dir(runner, repo_path)
-        .await
-        .ok();
+    let git_dir = if include_operation {
+        crate::git::ops::get_real_git_dir(runner, repo_path)
+            .await
+            .ok()
+    } else {
+        None
+    };
     let operation = git_dir.as_deref().and_then(detect_operation);
 
     let is_checked_out = match target_branch {
@@ -350,35 +439,77 @@ pub async fn query_repo_status(
         }
     }
 
-    RepoStatus {
-        repo_id: repo_id.to_string(),
-        branch: target_branch.map(|s| s.to_string()).or(parsed.branch),
-        detached_sha: if target_branch.is_none() {
-            parsed.detached_sha
-        } else {
-            None
+    let records = if is_checked_out {
+        std::mem::take(&mut parsed.records)
+    } else {
+        Vec::new()
+    };
+    let head_sha = parsed.head_sha.take();
+
+    RepoStatusSnapshot {
+        status: RepoStatus {
+            repo_id: repo_id.to_string(),
+            branch: target_branch.map(|s| s.to_string()).or(parsed.branch),
+            detached_sha: if target_branch.is_none() {
+                parsed.detached_sha
+            } else {
+                None
+            },
+            upstream: if is_checked_out {
+                parsed.upstream
+            } else {
+                None
+            },
+            ahead,
+            behind: if is_checked_out { parsed.behind } else { 0 },
+            dirty_count: if is_checked_out {
+                parsed.dirty_count
+            } else {
+                0
+            },
+            operation,
+            conflicted_count,
+            conflicted_paths,
+            new_commit_count,
+            marker_state,
+            last_activity_at,
+            last_fetched_at,
+            is_checked_out,
+            error: None,
         },
-        upstream: if is_checked_out {
-            parsed.upstream
-        } else {
-            None
+        records,
+        head_sha,
+    }
+}
+
+/// Error result with no working-tree records: a broken query cannot say what
+/// changed, and callers must not infer a clean tree from it.
+fn status_snapshot_error(
+    repo_id: &str,
+    target_branch: Option<&str>,
+    error: impl Into<String>,
+) -> RepoStatusSnapshot {
+    RepoStatusSnapshot {
+        status: RepoStatus {
+            repo_id: repo_id.to_string(),
+            branch: target_branch.map(|s| s.to_string()),
+            detached_sha: None,
+            upstream: None,
+            ahead: 0,
+            behind: 0,
+            dirty_count: 0,
+            operation: None,
+            conflicted_count: 0,
+            conflicted_paths: Vec::new(),
+            new_commit_count: 0,
+            marker_state: MarkerState::None,
+            last_activity_at: None,
+            last_fetched_at: None,
+            is_checked_out: target_branch.is_none(),
+            error: Some(error.into()),
         },
-        ahead,
-        behind: if is_checked_out { parsed.behind } else { 0 },
-        dirty_count: if is_checked_out {
-            parsed.dirty_count
-        } else {
-            0
-        },
-        operation,
-        conflicted_count,
-        conflicted_paths,
-        new_commit_count,
-        marker_state,
-        last_activity_at,
-        last_fetched_at,
-        is_checked_out,
-        error: None,
+        records: Vec::new(),
+        head_sha: None,
     }
 }
 
@@ -437,6 +568,7 @@ mod tests {
         let input = b"# branch.oid 0123456789abcdef\0# branch.head main\0# branch.upstream origin/main\0# branch.ab +2 -1\0";
         let parsed = parse_porcelain_v2(input);
         assert_eq!(parsed.branch, Some("main".to_string()));
+        assert_eq!(parsed.head_sha, Some("0123456789abcdef".to_string()));
         assert_eq!(parsed.detached_sha, None);
         assert_eq!(parsed.upstream, Some("origin/main".to_string()));
         assert_eq!(parsed.ahead, 2);
@@ -449,6 +581,7 @@ mod tests {
         let input = b"# branch.oid 7f3a2c1000000000\0# branch.head (detached)\0# branch.ab +0 -0\0";
         let parsed = parse_porcelain_v2(input);
         assert_eq!(parsed.branch, None);
+        assert_eq!(parsed.head_sha, Some("7f3a2c1000000000".to_string()));
         assert_eq!(parsed.detached_sha, Some("7f3a2c1000000000".to_string()));
         assert_eq!(parsed.upstream, None);
         assert_eq!(parsed.ahead, 0);
@@ -461,6 +594,33 @@ mod tests {
         let parsed = parse_porcelain_v2(input);
         assert_eq!(parsed.branch, Some("feat".to_string()));
         assert_eq!(parsed.dirty_count, 3);
+        assert_eq!(
+            parsed.records,
+            vec![
+                StatusRecord {
+                    path: "src/main.rs".to_string(),
+                    index: '.',
+                    worktree: 'M',
+                    unmerged: false,
+                    orig_path: None,
+                },
+                StatusRecord {
+                    path: "new.rs".to_string(),
+                    index: 'R',
+                    worktree: '.',
+                    unmerged: false,
+                    orig_path: Some("old.rs".to_string()),
+                },
+                StatusRecord {
+                    path: "untracked.txt".to_string(),
+                    index: '?',
+                    worktree: '?',
+                    unmerged: false,
+                    orig_path: None,
+                },
+            ],
+            "the same parse that counts changes also yields the per-path records"
+        );
     }
 
     #[test]
@@ -504,6 +664,9 @@ mod tests {
                 "dir with space/other file.txt".to_string()
             ]
         );
+        assert_eq!(parsed.records.len(), 2);
+        assert!(parsed.records.iter().all(|record| record.unmerged));
+        assert_eq!(parsed.records[1].path, "dir with space/other file.txt");
     }
 
     #[test]

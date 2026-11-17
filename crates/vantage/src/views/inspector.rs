@@ -2,7 +2,7 @@
 
 use gpui::{deferred, div, prelude::*, px, Context, Div, IntoElement, Styled, Window};
 
-use crate::app::{InspectorTab, RepoOp, VantageApp};
+use crate::app::{DetailsState, InspectorTab, RepoOp, VantageApp};
 use crate::theme::Theme;
 use crate::ui::{
     accent_button, accent_button_with, checkbox, disabled_button, label_tooltip, secondary_button,
@@ -451,6 +451,12 @@ impl VantageApp {
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
         let theme = self.theme;
+        let details_state = self.details_state(&repo.id);
+        let details_label = |name: &str, count: usize| match details_state {
+            DetailsState::Loading => format!("{name} (…)"),
+            DetailsState::Error => format!("{name} (!)"),
+            DetailsState::Ready => format!("{name} ({count})"),
+        };
         let tabs = [
             (
                 InspectorTab::Changes,
@@ -458,11 +464,11 @@ impl VantageApp {
             ),
             (
                 InspectorTab::Commits,
-                format!("Commits ({})", repo.recent_commits.len()),
+                details_label("Commits", repo.recent_commits.len()),
             ),
             (
                 InspectorTab::Branches,
-                format!("Branches ({})", repo.branches.len()),
+                details_label("Branches", repo.branches.len()),
             ),
         ];
 
@@ -679,6 +685,8 @@ impl VantageApp {
             let is_expanded = expanded == Some(file.path.as_str());
             let repo_id = repo.id.clone();
             let file_path = file.path.clone();
+            let preview_repo_id = repo.id.clone();
+            let preview_file = file.clone();
 
             let mut row = div()
                 .flex()
@@ -765,13 +773,17 @@ impl VantageApp {
                                         .cursor_pointer()
                                         .hover(|s| s.underline())
                                         .on_click(cx.listener(move |this, _e, _w, cx| {
-                                            this.expanded_file = if this.expanded_file.as_deref()
-                                                == Some(path.as_str())
-                                            {
-                                                None
-                                            } else {
-                                                Some(path.clone())
-                                            };
+                                            let opening = this.expanded_file.as_deref()
+                                                != Some(path.as_str());
+                                            this.expanded_file =
+                                                if opening { Some(path.clone()) } else { None };
+                                            if opening {
+                                                this.request_file_preview(
+                                                    preview_repo_id.clone(),
+                                                    &preview_file,
+                                                    cx,
+                                                );
+                                            }
                                             cx.notify();
                                         }));
                                     if !directory.is_empty() {
@@ -860,18 +872,57 @@ impl VantageApp {
                     .overflow_x_scroll()
                     .mono_xs();
 
-                if file.diff_preview.is_empty() {
-                    diff = diff.child(div().px(px(12.0)).py(px(2.0)).fg(theme.text_meta).child(
-                        match file.status {
-                            crate::model::FileChangeStatus::Untracked => {
-                                "New file — nothing to diff against yet."
-                            }
-                            crate::model::FileChangeStatus::Conflicted => {
-                                "Conflicted file — resolve it in your editor to see a diff."
-                            }
-                            _ => "No textual changes.",
-                        },
-                    ));
+                let empty_message =
+                    |theme: &crate::theme::Theme| {
+                        div().px(px(12.0)).py(px(2.0)).fg(theme.text_meta).child(
+                            match file.status {
+                                crate::model::FileChangeStatus::Untracked => {
+                                    "New file — nothing to diff against yet."
+                                }
+                                crate::model::FileChangeStatus::Conflicted => {
+                                    "Conflicted file — resolve it in your editor to see a diff."
+                                }
+                                _ => "No textual changes.",
+                            },
+                        )
+                    };
+
+                if let Some(preview) = self.file_preview(&repo.id, file) {
+                    if preview.error.is_some() {
+                        diff = diff.child(
+                            div()
+                                .px(px(12.0))
+                                .py(px(2.0))
+                                .fg(theme.text_dim)
+                                .child("Preview unavailable."),
+                        );
+                    } else if preview.lines.is_empty() {
+                        diff = diff.child(empty_message(&theme));
+                    } else {
+                        for line in &preview.lines {
+                            diff = diff.child(preview_row(&theme, line));
+                        }
+                        if preview.truncated {
+                            diff = diff.child(
+                                div()
+                                    .px(px(10.0))
+                                    .py(px(4.0))
+                                    .xs()
+                                    .fg(theme.label_muted)
+                                    .child("Preview stops here — open the file for the rest."),
+                            );
+                        }
+                    }
+                } else if self.file_preview_pending(&repo.id, &file.path) {
+                    diff = diff.child(
+                        div()
+                            .px(px(12.0))
+                            .py(px(2.0))
+                            .fg(theme.text_dim)
+                            .child("Loading preview…"),
+                    );
+                } else if file.diff_preview.is_empty() {
+                    diff = diff.child(empty_message(&theme));
                 } else {
                     for line in &file.diff_preview {
                         diff = diff.child(preview_row(&theme, line));
@@ -965,36 +1016,76 @@ impl VantageApp {
         };
 
         // Left of the message field: the account this commit will be
-        // attributed to. Hovering the tile names that account.
-        let identity: gpui::AnyElement = match &repo.author {
-            Some(author) => {
-                let name = author.name.clone();
-                let email = author.email.clone();
-                crate::ui::avatar(
-                    &theme,
-                    &author.name,
-                    &author.email,
-                    self.avatar_for(&author.email),
-                    crate::ui::AVATAR_SM,
-                )
-                .id("commit-author-avatar")
-                .tooltip(move |_window, cx| {
-                    cx.new(|_| crate::ui::IdentityTooltip::new(theme, name.clone(), email.clone()))
-                        .into()
-                })
-                .into_any_element()
-            }
-            None => div()
+        // attributed to. Hovering the tile names that account. Until the
+        // lazy identity read lands, show a spinner rather than a misleading
+        // "identity missing" warning.
+        let identity: gpui::AnyElement = if self.details_state(&repo.id) == DetailsState::Loading {
+            div()
                 .flex()
                 .items_center()
                 .justify_center()
                 .w(px(crate::ui::AVATAR_SM))
                 .h(px(crate::ui::AVATAR_SM))
-                .rounded(px(crate::ui::AVATAR_SM / 2.0))
                 .flex_shrink_0()
-                .bg(crate::theme::alpha(theme.status_amber, 0.15))
-                .child(icon("alert-triangle", IconSize::Xs, theme.status_amber))
-                .into_any_element(),
+                .child(spinner(
+                    format!("commit-identity-{}", repo.id),
+                    "refresh-cw",
+                    IconSize::Xs,
+                    theme.icon_idle,
+                ))
+                .into_any_element()
+        } else {
+            match &repo.author {
+                Some(author) => {
+                    let name = author.name.clone();
+                    let email = author.email.clone();
+                    crate::ui::avatar(
+                        &theme,
+                        &author.name,
+                        &author.email,
+                        self.avatar_for(&author.email),
+                        crate::ui::AVATAR_SM,
+                    )
+                    .id("commit-author-avatar")
+                    .tooltip(move |_window, cx| {
+                        cx.new(|_| {
+                            crate::ui::IdentityTooltip::new(theme, name.clone(), email.clone())
+                        })
+                        .into()
+                    })
+                    .into_any_element()
+                }
+                None => {
+                    let warning = div()
+                        .id("commit-identity-missing")
+                        .flex()
+                        .items_center()
+                        .justify_center()
+                        .w(px(crate::ui::AVATAR_SM))
+                        .h(px(crate::ui::AVATAR_SM))
+                        .rounded(px(crate::ui::AVATAR_SM / 2.0))
+                        .flex_shrink_0()
+                        .bg(crate::theme::alpha(theme.status_amber, 0.15))
+                        .child(icon("alert-triangle", IconSize::Xs, theme.status_amber));
+                    match self.details_error(&repo.id) {
+                        Some(error) => {
+                            let error = error.to_string();
+                            warning
+                                .tooltip(move |_window, cx| {
+                                    cx.new(|_| {
+                                        crate::ui::TextTooltip::new(
+                                            theme,
+                                            format!("Could not load repository details: {error}"),
+                                        )
+                                    })
+                                    .into()
+                                })
+                                .into_any_element()
+                        }
+                        None => warning.into_any_element(),
+                    }
+                }
+            }
         };
 
         div()
@@ -1375,12 +1466,60 @@ impl VantageApp {
             )
     }
 
+    fn render_details_notice(
+        &self,
+        title: impl Into<String>,
+        error: Option<&str>,
+        cx: &mut Context<Self>,
+    ) -> Div {
+        let theme = self.theme;
+        let mut notice = div()
+            .flex()
+            .flex_col()
+            .items_center()
+            .justify_center()
+            .gap(px(6.0))
+            .py(px(48.0))
+            .child(
+                div()
+                    .sm()
+                    .medium()
+                    .text_center()
+                    .fg(theme.text_body)
+                    .child(title.into()),
+            );
+        if let Some(error) = error {
+            notice = notice
+                .child(
+                    div()
+                        .max_w(px(360.0))
+                        .text_center()
+                        .xs()
+                        .fg(theme.label_muted)
+                        .child(error.to_string()),
+                )
+                .child(
+                    div()
+                        .id("retry-details")
+                        .mt(px(4.0))
+                        .cursor_pointer()
+                        .xs()
+                        .medium()
+                        .fg(theme.accent_text)
+                        .hover(move |style| style.underline())
+                        .child("Retry")
+                        .on_click(cx.listener(|this, _e, _w, cx| this.retry_details(cx))),
+                );
+        }
+        notice
+    }
+
     fn render_commits_tab(
         &self,
         repo: &crate::model::Repository,
         window: &Window,
         cx: &mut Context<Self>,
-    ) -> impl IntoElement {
+    ) -> gpui::AnyElement {
         let theme = self.theme;
 
         // One commit opened: it takes the tab, and the diff takes the height.
@@ -1389,7 +1528,30 @@ impl VantageApp {
             .as_ref()
             .filter(|view| view.repo_id == repo.id)
         {
-            return self.render_commit_detail(view, cx);
+            return self.render_commit_detail(view, cx).into_any_element();
+        }
+
+        match self.details_state(&repo.id) {
+            DetailsState::Loading => {
+                return self
+                    .render_details_notice("Loading commits…", None, cx)
+                    .into_any_element();
+            }
+            DetailsState::Error => {
+                return self
+                    .render_details_notice(
+                        "Could not load commits",
+                        self.details_error(&repo.id),
+                        cx,
+                    )
+                    .into_any_element();
+            }
+            DetailsState::Ready if repo.recent_commits.is_empty() => {
+                return self
+                    .render_details_notice("No commits yet.", None, cx)
+                    .into_any_element();
+            }
+            DetailsState::Ready => {}
         }
 
         let panel_width = self.dashboard_layout(window).inspector_width;
@@ -1611,7 +1773,7 @@ impl VantageApp {
             }
         }
 
-        list
+        list.into_any_element()
     }
 
     /// Toolbar under the identity block: the three git actions for this
@@ -1621,7 +1783,30 @@ impl VantageApp {
         &self,
         repo: &crate::model::Repository,
         cx: &mut Context<Self>,
-    ) -> impl IntoElement {
+    ) -> gpui::AnyElement {
+        match self.details_state(&repo.id) {
+            DetailsState::Loading => {
+                return self
+                    .render_details_notice("Loading branches…", None, cx)
+                    .into_any_element();
+            }
+            DetailsState::Error => {
+                return self
+                    .render_details_notice(
+                        "Could not load branches",
+                        self.details_error(&repo.id),
+                        cx,
+                    )
+                    .into_any_element();
+            }
+            DetailsState::Ready if repo.branches.is_empty() => {
+                return self
+                    .render_details_notice("No local branches yet.", None, cx)
+                    .into_any_element();
+            }
+            DetailsState::Ready => {}
+        }
+
         let theme = self.theme;
         let mut list = div()
             .flex()
@@ -1715,7 +1900,7 @@ impl VantageApp {
             );
         }
 
-        list
+        list.into_any_element()
     }
 
     /// The git actions for the repository, sized for the header band.
@@ -1907,7 +2092,7 @@ impl VantageApp {
 }
 
 /// Extensions git renders as "Binary files differ"; we show the picture itself.
-fn is_image_path(path: &str) -> bool {
+pub(crate) fn is_image_path(path: &str) -> bool {
     matches!(
         path.rsplit_once('.').map(|(_, ext)| ext.to_ascii_lowercase()),
         Some(ext) if matches!(ext.as_str(), "png" | "jpg" | "jpeg" | "gif" | "webp" | "bmp")
@@ -2034,6 +2219,7 @@ mod tests {
                 name: "vantage".to_string(),
                 workspace: "Ungrouped".to_string(),
                 local_path: long_path,
+                head_sha: None,
                 has_remote: true,
                 stash_count: 0,
                 current_branch: format!("feature/{}", "long-branch-".repeat(10)),

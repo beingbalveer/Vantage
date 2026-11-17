@@ -9,8 +9,9 @@ use std::path::Path;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use tokio::runtime::Runtime;
+use vantage_core::git::status::StatusRecord;
 use vantage_core::state::{RepoEntry, RepoStatus};
-use vantage_core::{repos, GitRunner};
+use vantage_core::GitRunner;
 
 use crate::model::{RepoSyncState, Repository};
 
@@ -18,6 +19,9 @@ use super::details;
 
 /// Shown instead of a branch name when HEAD is detached.
 const DETACHED: &str = "detached";
+/// Fallback for a status with no branch name; porcelain reports the branch for
+/// an unborn HEAD, so this is only a last resort.
+const FALLBACK_BRANCH: &str = "main";
 /// Shown when the repository has no commit to date the row with.
 const NO_COMMITS: &str = "no commits";
 const SECONDS_PER_MINUTE: i64 = 60;
@@ -27,41 +31,37 @@ const MINUTES_PER_WEEK: i64 = MINUTES_PER_DAY * 7;
 const MINUTES_PER_MONTH: i64 = MINUTES_PER_DAY * 30;
 const MINUTES_PER_YEAR: i64 = MINUTES_PER_DAY * 365;
 
+/// Map the fields an overview row shows.
+///
 /// `group` is the workspace the user assigned the repo to, or `"Ungrouped"`.
+/// `records` are the paths from the same status query as `status`. Branch
+/// lists, history, stashes, identity and remote state belong to
+/// [`super::details::repo_details`] and stay empty until the inspector asks for
+/// them, so scanning a workspace never pays for every row's details.
 pub fn map_repo(
     rt: &Runtime,
     runner: &GitRunner,
     entry: &RepoEntry,
     status: &RepoStatus,
+    records: &[StatusRecord],
+    head_sha: Option<&str>,
     group: String,
 ) -> Repository {
     let path = Path::new(&entry.path);
-    let default_branch = rt.block_on(repos::default_branch(runner, path));
-    let current_branch = current_branch(status, &default_branch);
+    let current_branch = current_branch(status);
     let (last_activity_label, last_activity_minutes) = last_activity(status);
-
-    let uncommitted_files = details::changed_files(rt, runner, path);
-    let branches = details::branches(rt, runner, path, &current_branch, &default_branch);
-    // "detached" is only a display label; `git log` must be asked for HEAD.
-    let commit_branch = if current_branch == DETACHED {
-        "HEAD"
-    } else {
-        current_branch.as_str()
-    };
-    let recent_commits = details::commits(rt, runner, path, commit_branch);
-    let has_remote = details::has_remote(path);
-    let local_only_commits =
-        details::local_only_commits(rt, runner, path, status.upstream.as_deref(), has_remote);
+    let uncommitted_files = details::changed_files(rt, runner, path, records);
 
     Repository {
         id: entry.id.clone(),
         name: entry.name.clone(),
         workspace: group,
         local_path: crate::path::contract(path),
-        has_remote,
-        stash_count: details::stash_count(rt, runner, path),
+        head_sha: head_sha.map(str::to_string),
+        has_remote: false,
+        stash_count: 0,
         current_branch,
-        author: details::commit_identity(path),
+        author: None,
         sync_state: sync_state(status),
         ahead_count: status.ahead as i32,
         behind_count: status.behind as i32,
@@ -70,9 +70,9 @@ pub fn map_repo(
         last_activity_label,
         last_activity_minutes,
         uncommitted_files,
-        branches,
-        recent_commits,
-        local_only_commits,
+        branches: Vec::new(),
+        recent_commits: Vec::new(),
+        local_only_commits: std::collections::HashSet::new(),
     }
 }
 
@@ -94,12 +94,13 @@ fn sync_state(status: &RepoStatus) -> RepoSyncState {
 }
 
 /// The branch the working tree is on. A detached HEAD reports `"detached"`; an
-/// unborn HEAD (fresh `git init`) reports the branch the first commit will use.
-fn current_branch(status: &RepoStatus, default_branch: &str) -> String {
+/// unborn HEAD (fresh `git init`) reports the branch the first commit will use,
+/// which porcelain includes in its branch header.
+fn current_branch(status: &RepoStatus) -> String {
     match status.branch.as_deref() {
         Some(branch) => branch.to_string(),
         None if status.detached_sha.is_some() => DETACHED.to_string(),
-        None => default_branch.to_string(),
+        None => FALLBACK_BRANCH.to_string(),
     }
 }
 
@@ -248,7 +249,8 @@ fn days_from_civil(year: i64, month: u32, day: u32) -> Option<i64> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use vantage_core::git::status::query_repo_status;
+    use crate::backend::details::repo_details;
+    use vantage_core::git::status::query_repo_overview;
     use vantage_core::state::MarkerState;
 
     fn status() -> RepoStatus {
@@ -300,23 +302,24 @@ mod tests {
     }
 
     #[test]
-    fn current_branch_falls_back_to_detached_then_default() {
-        assert_eq!(current_branch(&status(), "main"), "main");
+    fn current_branch_falls_back_to_detached_then_a_plain_name() {
+        assert_eq!(current_branch(&status()), "main");
 
         let detached = RepoStatus {
             branch: None,
             detached_sha: Some("abc123".to_string()),
             ..status()
         };
-        assert_eq!(current_branch(&detached, "main"), DETACHED);
+        assert_eq!(current_branch(&detached), DETACHED);
 
-        // Unborn HEAD: `git init` has neither a branch nor a commit.
+        // `git status --branch` names the branch even on an unborn HEAD; this
+        // fallback only covers a malformed/older status.
         let unborn = RepoStatus {
             branch: None,
             detached_sha: None,
             ..status()
         };
-        assert_eq!(current_branch(&unborn, "trunk"), "trunk");
+        assert_eq!(current_branch(&unborn), FALLBACK_BRANCH);
     }
 
     #[test]
@@ -405,22 +408,25 @@ mod tests {
         );
     }
 
-    /// End-to-end against a real work tree: the core engine reports the state
-    /// and `map_repo` turns it into the row the dashboard renders.
+    /// The overview row carries status data only; details are a separate read.
+    /// A clean work tree with an upstream costs exactly two Git processes:
+    /// `status` and the last-activity `log`.
     #[test]
-    fn map_repo_reads_a_real_work_tree() {
+    fn overview_scan_reads_only_row_data() {
         if !git_available() {
             eprintln!("skipping: git is not installed");
             return;
         }
         let dir = std::env::temp_dir().join(format!("vantage_repo_map_{}", std::process::id()));
+        let remote =
+            std::env::temp_dir().join(format!("vantage_repo_map_origin_{}", std::process::id()));
         std::fs::remove_dir_all(&dir).ok();
+        std::fs::remove_dir_all(&remote).ok();
         std::fs::create_dir_all(&dir).unwrap();
+        std::fs::create_dir_all(&remote).unwrap();
         git(&dir, &["init", "-q", "-b", "main"]);
         git(&dir, &["config", "user.email", "qa@example.com"]);
         git(&dir, &["config", "user.name", "QA"]);
-        // Pin the default-branch probe to the branch we created, whatever the
-        // machine's global `init.defaultBranch` says.
         git(&dir, &["config", "init.defaultBranch", "main"]);
         std::fs::write(dir.join("lib.ts"), "export const one = 1;\n").unwrap();
         git(&dir, &["add", "."]);
@@ -439,9 +445,30 @@ mod tests {
             notes: Vec::new(),
         };
 
-        let status = rt.block_on(query_repo_status(&runner, &entry.id, &dir, None, None));
-        assert!(status.error.is_none(), "{:?}", status.error);
-        let clean = map_repo(&rt, &runner, &entry, &status, "Ungrouped".to_string());
+        // No upstream yet: `status` + `log` + the `git remote` probe used for
+        // the unpushed-commit fallback. Still no branch list, history, stash,
+        // identity or remote-detail reads.
+        let before = runner.commands_run();
+        let snapshot = rt.block_on(query_repo_overview(&runner, &entry.id, &dir));
+        assert!(
+            snapshot.status.error.is_none(),
+            "{:?}",
+            snapshot.status.error
+        );
+        let clean = map_repo(
+            &rt,
+            &runner,
+            &entry,
+            &snapshot.status,
+            &snapshot.records,
+            snapshot.head_sha.as_deref(),
+            "Ungrouped".to_string(),
+        );
+        assert_eq!(
+            runner.commands_run() - before,
+            3,
+            "overview paid for more than status, activity and the remote probe"
+        );
         assert_eq!(clean.id, "repo-fixture");
         assert_eq!(clean.name, "fixture");
         assert_eq!(clean.workspace, "Ungrouped");
@@ -451,14 +478,6 @@ mod tests {
         assert_eq!(clean.behind_count, 0);
         assert_eq!(clean.last_activity_minutes, 0);
         assert_ne!(clean.last_activity_label, NO_COMMITS);
-        assert!(clean
-            .branches
-            .iter()
-            .any(|b| b.is_current && b.name == "main"));
-        assert!(clean
-            .recent_commits
-            .iter()
-            .any(|commit| commit.message.contains("initial commit")));
         assert!(clean.uncommitted_files.is_empty());
         assert!(
             !clean.has_remote,
@@ -471,101 +490,162 @@ mod tests {
             "a repository with no remote has nothing to push"
         );
         assert!(!clean.local_path.is_empty());
+        assert!(clean.head_sha.is_some());
         assert!(
-            clean
-                .branches
-                .iter()
-                .any(|branch| !branch.last_commit_time.is_empty()),
-            "branch rows show when the branch last moved"
+            clean.branches.is_empty()
+                && clean.recent_commits.is_empty()
+                && clean.author.is_none()
+                && clean.stash_count == 0
+                && !clean.has_remote,
+            "the overview must not read inspector details"
         );
+
+        // Selecting the row is what pays for branches, history, stashes,
+        // identity and remote capability.
+        let before = runner.commands_run();
+        let details = repo_details(
+            &rt,
+            &runner,
+            &dir,
+            &clean.current_branch,
+            clean.head_sha.is_some(),
+        )
+        .unwrap();
+        assert!(
+            runner.commands_run() - before >= 5,
+            "detail load should read the branch list, history and stashes"
+        );
+        assert!(!details.has_remote, "this fixture has no origin yet");
         assert_eq!(
-            clean.author,
+            details.author,
             Some(crate::model::CommitIdentity {
                 name: "QA".to_string(),
                 email: "qa@example.com".to_string(),
             }),
             "the bar names the identity the fixture configured"
         );
+        assert!(details
+            .branches
+            .iter()
+            .any(|b| b.is_current && b.name == "main"));
+        assert!(details
+            .branches
+            .iter()
+            .any(|branch| !branch.last_commit_time.is_empty()));
+        assert!(details
+            .recent_commits
+            .iter()
+            .any(|commit| commit.message.contains("initial commit")));
+        assert_eq!(details.stash_count, 0);
 
-        // An uncommitted edit flips the row to Modified and lists the file.
+        // An uncommitted edit still flips the overview row and lists the file.
         std::fs::write(dir.join("lib.ts"), "export const one = 2;\n").unwrap();
-        let status = rt.block_on(query_repo_status(&runner, &entry.id, &dir, None, None));
-        let dirty = map_repo(&rt, &runner, &entry, &status, "AI Tools".to_string());
+        let snapshot = rt.block_on(query_repo_overview(&runner, &entry.id, &dir));
+        let dirty = map_repo(
+            &rt,
+            &runner,
+            &entry,
+            &snapshot.status,
+            &snapshot.records,
+            snapshot.head_sha.as_deref(),
+            "AI Tools".to_string(),
+        );
         assert_eq!(dirty.sync_state, RepoSyncState::Modified);
         assert_eq!(dirty.workspace, "AI Tools");
         assert_eq!(dirty.uncommitted_files.len(), 1);
         assert_eq!(dirty.uncommitted_files[0].path, "lib.ts");
+        assert!(dirty.branches.is_empty() && dirty.recent_commits.is_empty());
 
-        // Adding an origin turns the remote capability on while the branch
-        // still tracks nothing, which is what makes `Push` publish it.
-        let remote =
-            std::env::temp_dir().join(format!("vantage_repo_map_origin_{}", std::process::id()));
-        std::fs::remove_dir_all(&remote).ok();
-        std::fs::create_dir_all(&remote).unwrap();
+        // Adding an origin without pushing leaves the branch untracked; the
+        // detail load is what knows fetch/pull/push can be offered.
         git(&remote, &["init", "-q", "--bare"]);
         git(&dir, &["remote", "add", "origin", remote.to_str().unwrap()]);
         git(&dir, &["commit", "-q", "-am", "second commit"]);
-
-        let status = rt.block_on(query_repo_status(&runner, &entry.id, &dir, None, None));
-        let with_remote = map_repo(&rt, &runner, &entry, &status, "Ungrouped".to_string());
-        assert!(with_remote.has_remote);
+        let snapshot = rt.block_on(query_repo_overview(&runner, &entry.id, &dir));
+        let with_remote = map_repo(
+            &rt,
+            &runner,
+            &entry,
+            &snapshot.status,
+            &snapshot.records,
+            snapshot.head_sha.as_deref(),
+            "Ungrouped".to_string(),
+        );
+        assert!(!with_remote.has_remote, "overview stays cheap");
         assert!(
             !with_remote.has_upstream,
             "a branch that was never pushed tracks nothing"
         );
+        let details = repo_details(
+            &rt,
+            &runner,
+            &dir,
+            &with_remote.current_branch,
+            with_remote.head_sha.is_some(),
+        )
+        .unwrap();
+        assert!(details.has_remote);
         assert_eq!(
-            with_remote.local_only_commits.len(),
+            details.local_only_commits.len(),
             2,
             "with no upstream, commits absent from every remote are local"
         );
-        assert_eq!(
-            with_remote.local_only_prefix_len(),
-            with_remote.recent_commits.len(),
-            "both visible commits are local"
-        );
 
         git(&dir, &["push", "-q", "-u", "origin", "main"]);
-        let status = rt.block_on(query_repo_status(&runner, &entry.id, &dir, None, None));
-        let published = map_repo(&rt, &runner, &entry, &status, "Ungrouped".to_string());
-        assert!(published.has_remote);
-        assert!(published.has_upstream, "push -u sets the upstream");
-        assert!(
-            published.local_only_commits.is_empty(),
-            "everything is on the upstream after a push"
+        let before = runner.commands_run();
+        let snapshot = rt.block_on(query_repo_overview(&runner, &entry.id, &dir));
+        let published = map_repo(
+            &rt,
+            &runner,
+            &entry,
+            &snapshot.status,
+            &snapshot.records,
+            snapshot.head_sha.as_deref(),
+            "Ungrouped".to_string(),
         );
-        assert_eq!(published.local_only_prefix_len(), 0);
+        assert_eq!(
+            runner.commands_run() - before,
+            2,
+            "a clean repo with an upstream costs one status and one activity log"
+        );
+        assert!(published.has_upstream, "push -u sets the upstream");
+        assert_eq!(published.ahead_count, 0);
 
         // A new local commit is the only one in the range, even though older
         // rows are on the remote.
         std::fs::write(dir.join("lib.ts"), "export const one = 3;\n").unwrap();
         git(&dir, &["commit", "-q", "-am", "third commit"]);
-        let status = rt.block_on(query_repo_status(&runner, &entry.id, &dir, None, None));
-        let ahead = map_repo(&rt, &runner, &entry, &status, "Ungrouped".to_string());
-        let tip = ahead.recent_commits.first().expect("the new tip is listed");
+        let details = repo_details(
+            &rt,
+            &runner,
+            &dir,
+            &published.current_branch,
+            published.head_sha.is_some(),
+        )
+        .unwrap();
+        let tip = details
+            .recent_commits
+            .first()
+            .expect("the new tip is listed");
         assert_eq!(
-            ahead.local_only_commits,
+            details.local_only_commits,
             [tip.full_sha.clone()].into_iter().collect(),
             "only the commit the upstream does not have is local"
-        );
-        assert!(
-            ahead.commit_is_local_only(tip),
-            "the newest row carries the marker"
-        );
-        assert_eq!(ahead.local_only_prefix_len(), 1);
-        assert!(
-            ahead
-                .recent_commits
-                .iter()
-                .skip(1)
-                .all(|commit| !ahead.commit_is_local_only(commit)),
-            "older, pushed commits stay unmarked"
         );
 
         // A detached HEAD has no branch to publish, so the row must carry the
         // guard the Push button and backend both read.
         git(&dir, &["checkout", "-q", "--detach", "HEAD"]);
-        let status = rt.block_on(query_repo_status(&runner, &entry.id, &dir, None, None));
-        let detached = map_repo(&rt, &runner, &entry, &status, "Ungrouped".to_string());
+        let snapshot = rt.block_on(query_repo_overview(&runner, &entry.id, &dir));
+        let detached = map_repo(
+            &rt,
+            &runner,
+            &entry,
+            &snapshot.status,
+            &snapshot.records,
+            snapshot.head_sha.as_deref(),
+            "Ungrouped".to_string(),
+        );
         assert!(detached.is_detached);
         assert_eq!(detached.current_branch, DETACHED);
         assert_eq!(
@@ -574,6 +654,65 @@ mod tests {
         );
 
         std::fs::remove_dir_all(&remote).ok();
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn an_unborn_repository_loads_details_without_history_errors() {
+        if !git_available() {
+            eprintln!("skipping: git is not installed");
+            return;
+        }
+        let dir = std::env::temp_dir().join(format!("vantage_repo_unborn_{}", std::process::id()));
+        std::fs::remove_dir_all(&dir).ok();
+        std::fs::create_dir_all(&dir).unwrap();
+        git(&dir, &["init", "-q", "-b", "trunk"]);
+        git(&dir, &["config", "user.email", "qa@example.com"]);
+        git(&dir, &["config", "user.name", "QA"]);
+
+        let rt = Runtime::new().unwrap();
+        let runner = GitRunner::new();
+        let entry = RepoEntry {
+            id: "repo-unborn".to_string(),
+            path: dir.to_string_lossy().to_string(),
+            name: "unborn".to_string(),
+            branch: None,
+            pinned: false,
+            order: 1,
+            marker: None,
+            notes: Vec::new(),
+        };
+        let snapshot = rt.block_on(query_repo_overview(&runner, &entry.id, &dir));
+        let row = map_repo(
+            &rt,
+            &runner,
+            &entry,
+            &snapshot.status,
+            &snapshot.records,
+            snapshot.head_sha.as_deref(),
+            "Ungrouped".to_string(),
+        );
+        assert_eq!(row.current_branch, "trunk");
+        assert!(row.head_sha.is_none());
+
+        let details = repo_details(
+            &rt,
+            &runner,
+            &dir,
+            &row.current_branch,
+            row.head_sha.is_some(),
+        )
+        .expect("an unborn repository still has details");
+        assert!(details.recent_commits.is_empty());
+        assert!(details.branches.is_empty());
+        assert_eq!(
+            details.author,
+            Some(crate::model::CommitIdentity {
+                name: "QA".to_string(),
+                email: "qa@example.com".to_string(),
+            })
+        );
+
         std::fs::remove_dir_all(&dir).ok();
     }
 }
