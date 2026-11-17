@@ -8,8 +8,8 @@ This is the completion index for the 38 tickets in
 via the merge commits below. The remaining 17 branches are left for feature/quality review.
 All ticket worktrees are removed.
 **Integration verification:** `cargo fmt`, `cargo clippy --workspace --all-targets -- -D warnings`
-and `cargo test --workspace` pass on the integrated branch; the final test count is **204 passing
-tests** (26 `vantage` UI tests plus 178 `vantage-core` tests). The macOS package job has not been
+and `cargo test --workspace` pass on the integrated branch; the final test count is **334 passing
+tests** (130 `vantage` tests plus 204 `vantage-core` tests). The macOS package job has not been
 run against the integrated tree.
 
 Two branches (`P0-01`, `P0-04`, `P1-02`) were created before the build-profile commit and are
