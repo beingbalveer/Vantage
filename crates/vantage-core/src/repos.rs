@@ -221,6 +221,28 @@ pub async fn add(
     Ok(entry)
 }
 
+/// Add every path that still resolves to a work tree.
+///
+/// One bad path does not sink the batch: each path is added independently and
+/// failures come back with the path that caused them, so a UI can add the rest
+/// and say which ones it skipped. Duplicate detection is the same as [`add`],
+/// so a path already in `existing` is a failure rather than a second entry.
+pub async fn add_all(
+    runner: &GitRunner,
+    existing: &mut PersistedState,
+    paths: &[PathBuf],
+) -> (Vec<RepoEntry>, Vec<(PathBuf, AppError)>) {
+    let mut added = Vec::with_capacity(paths.len());
+    let mut failures = Vec::new();
+    for path in paths {
+        match add(runner, existing, path).await {
+            Ok(entry) => added.push(entry),
+            Err(error) => failures.push((path.clone(), error)),
+        }
+    }
+    (added, failures)
+}
+
 /// Drop the entry with `id`. Returns whether an entry was removed.
 pub fn remove(existing: &mut PersistedState, id: &str) -> bool {
     let before = existing.repos.len();
@@ -319,6 +341,161 @@ pub fn scan_folder(folder: &Path) -> Vec<PathBuf> {
 
     found.sort();
     found
+}
+
+/// Repositories directly under `folder` that are new to the workspace.
+///
+/// The paths are canonical, sorted, and free of duplicates, so two scan hits
+/// that resolve to one work tree (or a hit that is already in `existing`)
+/// appear once at most. The raw scan count is kept separately: a UI can then
+/// tell "this folder has no repositories" from "every repository in it is
+/// already added".
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct FolderScan {
+    /// How many repositories [`scan_folder`] found, before filtering.
+    pub scanned: usize,
+    /// Canonical paths of repositories not yet in the workspace.
+    pub repositories: Vec<PathBuf>,
+}
+
+/// Scan `folder` for repositories and filter out what the workspace knows.
+///
+/// `existing` can hold paths that were written before canonicalization was
+/// enforced; they are canonicalized here too, so a repository is matched by
+/// its real location rather than its spelling.
+pub fn scan_new_repositories(folder: &Path, existing: &PersistedState) -> FolderScan {
+    let found = scan_folder(folder);
+    let scanned = found.len();
+    let known: std::collections::HashSet<PathBuf> = existing
+        .repos
+        .iter()
+        .map(|repo| {
+            let path = Path::new(&repo.path);
+            dunce::canonicalize(path).unwrap_or_else(|_| path.to_path_buf())
+        })
+        .collect();
+
+    let mut seen = std::collections::HashSet::new();
+    let mut repositories = Vec::new();
+    for path in found {
+        let canon = dunce::canonicalize(&path).unwrap_or(path);
+        if known.contains(&canon) || !seen.insert(canon.clone()) {
+            continue;
+        }
+        repositories.push(canon);
+    }
+
+    FolderScan {
+        scanned,
+        repositories,
+    }
+}
+
+// ---------------- Stack detection ----------------
+
+/// Extension groups used for the primary-language count, in tie-break order:
+/// application languages come before documentation formats so a repo full of
+/// READMEs still reports the language it is written in.
+const LANGUAGES: [(&str, &[&str]); 8] = [
+    ("TypeScript", &["ts", "tsx"]),
+    ("JavaScript", &["js", "jsx"]),
+    ("Python", &["py"]),
+    ("Rust", &["rs"]),
+    ("Go", &["go"]),
+    ("Swift", &["swift"]),
+    ("Markdown", &["md"]),
+    ("JSON", &["json"]),
+];
+
+const SKIP_DIRS: [&str; 9] = [
+    "node_modules",
+    ".git",
+    "dist",
+    "build",
+    "target",
+    "out",
+    ".next",
+    "vendor",
+    "coverage",
+];
+
+/// The stack label shown for a repository: the JS/TS framework when
+/// `package.json` declares one, otherwise the most common source extension,
+/// otherwise `"Other"`.
+pub fn stack_of(path: &Path) -> String {
+    if let Some(framework) = js_framework(path) {
+        return framework.to_string();
+    }
+
+    let mut counts = [0usize; LANGUAGES.len()];
+    collect_extensions(path, 0, &mut counts);
+
+    let mut best: Option<&'static str> = None;
+    let mut best_count = 0;
+    for (slot, (label, _)) in LANGUAGES.iter().enumerate() {
+        if counts[slot] > best_count {
+            best = Some(label);
+            best_count = counts[slot];
+        }
+    }
+    best.unwrap_or("Other").to_string()
+}
+
+/// `Next.js` / `React` when declared in any dependency section of
+/// `package.json`. Parsed as JSON rather than substring-matched so a "next" in
+/// a script name is not mistaken for the framework.
+fn js_framework(root: &Path) -> Option<&'static str> {
+    let bytes = fs::read(root.join("package.json")).ok()?;
+    let manifest: serde_json::Value = serde_json::from_slice(&bytes).ok()?;
+    let declares = |name: &str| {
+        ["dependencies", "devDependencies", "peerDependencies"]
+            .iter()
+            .any(|section| {
+                manifest
+                    .get(*section)
+                    .and_then(|deps| deps.get(name))
+                    .is_some()
+            })
+    };
+    if declares("next") {
+        Some("Next.js")
+    } else if declares("react") {
+        Some("React")
+    } else {
+        None
+    }
+}
+
+/// Count source extensions up to two directory levels below `root`.
+fn collect_extensions(dir: &Path, depth: usize, counts: &mut [usize; LANGUAGES.len()]) {
+    let Ok(entries) = fs::read_dir(dir) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        let name = path
+            .file_name()
+            .map(|name| name.to_string_lossy().to_lowercase())
+            .unwrap_or_default();
+        if path.is_dir() {
+            if depth < 2 && !name.starts_with('.') && !SKIP_DIRS.contains(&name.as_str()) {
+                collect_extensions(&path, depth + 1, counts);
+            }
+            continue;
+        }
+        let Some(extension) = path
+            .extension()
+            .map(|extension| extension.to_string_lossy().to_lowercase())
+        else {
+            continue;
+        };
+        for (slot, (_, extensions)) in LANGUAGES.iter().enumerate() {
+            if extensions.contains(&extension.as_str()) {
+                counts[slot] += 1;
+                break;
+            }
+        }
+    }
 }
 
 // ---------------- Default branch ----------------
@@ -633,6 +810,97 @@ mod tests {
 
         // A missing folder scans to nothing instead of panicking.
         assert!(scan_folder(&root.join("missing")).is_empty());
+
+        fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn scan_new_repositories_filters_known_work_trees_and_keeps_the_raw_count() {
+        let root = temp_dir("scan_filter");
+        let workspace = root.join("workspace");
+        fs::create_dir_all(workspace.join("alpha").join(".git")).unwrap();
+        fs::create_dir_all(workspace.join("beta").join(".git")).unwrap();
+        fs::create_dir_all(workspace.join("plain")).unwrap();
+        fs::create_dir_all(workspace.join(".hidden").join(".git")).unwrap();
+        fs::create_dir_all(workspace.join("node_modules").join(".git")).unwrap();
+
+        let beta = dunce::canonicalize(workspace.join("beta")).unwrap();
+        let alpha = dunce::canonicalize(workspace.join("alpha")).unwrap();
+        let mut state = state_with(vec![entry("known", 1, false)]);
+        state.repos[0].path = alpha.to_string_lossy().to_string();
+
+        let scan = scan_new_repositories(&workspace, &state);
+        assert_eq!(scan.scanned, 2, "hidden and node_modules repos are skipped");
+        assert_eq!(scan.repositories, vec![beta]);
+
+        // The folder itself is a candidate when it is a work tree.
+        let self_scan = scan_new_repositories(&alpha, &state);
+        assert_eq!(self_scan.scanned, 1);
+        assert!(self_scan.repositories.is_empty());
+
+        fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn scan_new_repositories_reports_all_known_but_no_matches_separately() {
+        let root = temp_dir("scan_known");
+        let workspace = root.join("workspace");
+        fs::create_dir_all(workspace.join("alpha").join(".git")).unwrap();
+
+        let alpha = dunce::canonicalize(workspace.join("alpha")).unwrap();
+        let mut state = state_with(vec![entry("known", 1, false)]);
+        state.repos[0].path = alpha.to_string_lossy().to_string();
+
+        let all_known = scan_new_repositories(&workspace, &state);
+        assert_eq!(all_known.scanned, 1);
+        assert!(all_known.repositories.is_empty());
+
+        fs::create_dir_all(root.join("empty")).unwrap();
+        let empty = scan_new_repositories(&root.join("empty"), &state);
+        assert_eq!(empty.scanned, 0);
+        assert!(empty.repositories.is_empty());
+
+        fs::remove_dir_all(&root).ok();
+    }
+
+    #[tokio::test]
+    async fn add_all_adds_valid_paths_and_reports_the_rest() {
+        if !git_available() {
+            eprintln!("skipping: git is not installed");
+            return;
+        }
+        let root = temp_dir("add_all");
+        let one = root.join("one");
+        let two = root.join("two");
+        let plain = root.join("plain");
+        for repo in [&one, &two] {
+            fs::create_dir_all(repo).unwrap();
+            git_init(repo);
+        }
+        fs::create_dir_all(&plain).unwrap();
+
+        let runner = GitRunner::new();
+        let mut state = PersistedState::default();
+        add(&runner, &mut state, &one).await.unwrap();
+
+        let paths = vec![
+            one.clone(),
+            two.clone(),
+            plain.clone(),
+            root.join("missing"),
+        ];
+        let (added, failures) = add_all(&runner, &mut state, &paths).await;
+
+        assert_eq!(added.len(), 1, "only the new work tree is added");
+        assert_eq!(added[0].name, "two");
+        assert_eq!(added[0].order, 2);
+        assert_eq!(failures.len(), 3, "duplicate, non-repo and missing path");
+        assert_eq!(failures[0].1.code, "DuplicateRepo");
+        assert_eq!(failures[1].1.code, "NotARepo");
+        assert_eq!(failures[2].1.code, "PathMissing");
+
+        let paths: Vec<&str> = state.repos.iter().map(|repo| repo.name.as_str()).collect();
+        assert_eq!(paths, ["one", "two"], "no duplicate entry was persisted");
 
         fs::remove_dir_all(&root).ok();
     }
