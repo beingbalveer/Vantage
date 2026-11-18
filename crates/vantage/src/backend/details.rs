@@ -1510,6 +1510,9 @@ u UU N... 100644 100644 100644 100644 aaaaaaa bbbbbbb ccccccc conflicted.rs\0\
 
         std::fs::create_dir_all(&origin).unwrap();
         git(&origin, &["init", "-q", "--bare"]);
+        // CI has no global init.defaultBranch, so pin the bare remote's HEAD
+        // instead of inheriting `master` and failing the later `push main`.
+        git(&origin, &["symbolic-ref", "HEAD", "refs/heads/main"]);
 
         init_repo(&local);
         let base = commit(&local, "base.ts", "base\n", "base", "2024-01-01T00:00:00Z");
