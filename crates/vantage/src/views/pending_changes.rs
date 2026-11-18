@@ -192,7 +192,7 @@ impl VantageApp {
                         .gap(px(16.0))
                         .w_full()
                         .px(px(20.0))
-                        .py(px(10.0))
+                        .py(px(12.0))
                         .xs()
                         .when(index > 0, |d| d.border_t_1().border_color(theme.row_border))
                         .hover(move |s| s.bg(theme.row_hover_bg))

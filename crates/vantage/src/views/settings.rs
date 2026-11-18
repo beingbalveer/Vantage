@@ -325,7 +325,7 @@ impl VantageApp {
         let interface_sizes = font_size_choices(
             &theme,
             self.settings.interface_font_size,
-            &[12.0, 13.0, 14.0, 15.0, 16.0],
+            &[12.0, 13.0, 14.0, 15.0, 16.0, 18.0],
             "settings-font-interface",
             cx,
             VantageApp::set_interface_font_size,

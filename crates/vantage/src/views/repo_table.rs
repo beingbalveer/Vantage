@@ -315,7 +315,7 @@ impl VantageApp {
                             .flex_1()
                             .min_w(px(0.0))
                             .sm()
-                            .font_weight(crate::theme::W_REGULAR)
+                            .medium()
                             .fg(theme.text_app)
                             .truncate()
                             .child(row.name.clone()),

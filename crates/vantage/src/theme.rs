@@ -55,17 +55,17 @@ pub const TEXT_SM: f32 = 14.0;
 pub const TEXT_BASE: f32 = 16.0;
 pub const TEXT_LG: f32 = 18.0;
 
-pub const LH_XS: Pixels = px(16.0);
-pub const LH_SM: Pixels = px(20.0);
-pub const LH_BASE: Pixels = px(24.0);
-pub const LH_LG: Pixels = px(28.0);
+pub const LH_XS: Pixels = px(18.0);
+pub const LH_SM: Pixels = px(22.0);
+pub const LH_BASE: Pixels = px(26.0);
+pub const LH_LG: Pixels = px(30.0);
 
 /// Default size of regular interface text (the `sm` scale).
-pub const DEFAULT_INTERFACE_TEXT_SIZE: f32 = TEXT_SM;
+pub const DEFAULT_INTERFACE_TEXT_SIZE: f32 = 16.0;
 /// Default size of text in the commit history list.
-pub const DEFAULT_COMMIT_TEXT_SIZE: f32 = TEXT_XS;
+pub const DEFAULT_COMMIT_TEXT_SIZE: f32 = 14.0;
 /// Default size of monospace code and diff text.
-pub const DEFAULT_CODE_TEXT_SIZE: f32 = TEXT_XS;
+pub const DEFAULT_CODE_TEXT_SIZE: f32 = 13.0;
 
 /// Which block of text a size belongs to.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -125,9 +125,9 @@ fn milli(value: f32) -> u32 {
     (value * 1000.0).round() as u32
 }
 
-static INTERFACE_TEXT_MILLI: AtomicU32 = AtomicU32::new(14_000);
-static COMMIT_TEXT_MILLI: AtomicU32 = AtomicU32::new(12_000);
-static CODE_TEXT_MILLI: AtomicU32 = AtomicU32::new(12_000);
+static INTERFACE_TEXT_MILLI: AtomicU32 = AtomicU32::new(16_000);
+static COMMIT_TEXT_MILLI: AtomicU32 = AtomicU32::new(14_000);
+static CODE_TEXT_MILLI: AtomicU32 = AtomicU32::new(13_000);
 
 /// Install the user's typography choices for this process.
 pub fn set_font_sizes(sizes: FontSizes) {
@@ -159,7 +159,6 @@ pub fn scaled_px(base: f32, area: TextArea) -> Pixels {
 /// this band, so changing it also means changing `traffic_light_position`.
 pub const HEADER_HEIGHT: Pixels = px(42.0);
 
-pub const W_REGULAR: FontWeight = FontWeight(400.0);
 pub const W_MEDIUM: FontWeight = FontWeight(500.0);
 pub const W_SEMIBOLD: FontWeight = FontWeight(600.0);
 
@@ -184,7 +183,7 @@ pub struct Theme {
     pub nav_hover_bg: Rgba,    // hover:bg-slate-50   / dark:hover:bg-slate-800/50
     pub nav_hover_text: Rgba,  // hover:text-slate-900 / dark:hover:text-slate-100
     pub icon_idle: Rgba,       // text-slate-400      / dark:text-slate-500
-    pub label_muted: Rgba,     // text-slate-500      / dark:text-slate-400
+    pub label_muted: Rgba,     // text-slate-600      / dark:text-slate-300
     pub subtle_bg: Rgba,       // bg-slate-50         / dark:bg-slate-800/70
 
     // Accent
@@ -268,7 +267,7 @@ impl Theme {
             nav_hover_bg: rgb(SLATE_50),
             nav_hover_text: rgb(SLATE_900),
             icon_idle: rgb(SLATE_400),
-            label_muted: rgb(SLATE_500),
+            label_muted: rgb(SLATE_600),
             subtle_bg: rgb(SLATE_50),
 
             accent: rgb(BLUE_600),
@@ -340,7 +339,7 @@ impl Theme {
             nav_hover_bg: alpha(rgb(SLATE_800), 0.5),
             nav_hover_text: rgb(SLATE_100),
             icon_idle: rgb(SLATE_500),
-            label_muted: rgb(SLATE_400),
+            label_muted: rgb(SLATE_300),
             subtle_bg: alpha(rgb(SLATE_800), 0.7),
 
             accent: rgb(BLUE_400),
@@ -531,20 +530,20 @@ mod typography_tests {
     #[test]
     fn areas_scale_independently_and_preserve_line_ratios() {
         let sizes = FontSizes {
-            interface: 16.0,
-            commit: 12.0,
-            code: 18.0,
+            interface: 18.0,
+            commit: 16.0,
+            code: 16.0,
         };
 
-        assert!((sizes.size(TEXT_SM, TextArea::Interface) - 16.0).abs() < 0.01);
-        assert!((sizes.size(TEXT_XS, TextArea::Interface) - 13.714).abs() < 0.01);
-        assert!((sizes.size(TEXT_XS, TextArea::Commit) - 12.0).abs() < 0.01);
-        assert!((sizes.size(TEXT_XS, TextArea::Code) - 18.0).abs() < 0.01);
+        assert!((sizes.size(TEXT_SM, TextArea::Interface) - 15.75).abs() < 0.01);
+        assert!((sizes.size(TEXT_XS, TextArea::Interface) - 13.5).abs() < 0.01);
+        assert!((sizes.size(TEXT_XS, TextArea::Commit) - 13.714).abs() < 0.01);
+        assert!((sizes.size(TEXT_XS, TextArea::Code) - 14.769).abs() < 0.01);
 
         let interface_line = sizes.line(LH_SM, TextArea::Interface);
-        assert!((f32::from(interface_line) - 22.857).abs() < 0.01);
-        assert!((f32::from(sizes.line(LH_XS, TextArea::Commit)) - 16.0).abs() < 0.01);
-        assert!((f32::from(sizes.line(LH_XS, TextArea::Code)) - 24.0).abs() < 0.01);
+        assert!((f32::from(interface_line) - 24.75).abs() < 0.01);
+        assert!((f32::from(sizes.line(LH_XS, TextArea::Commit)) - 20.571).abs() < 0.01);
+        assert!((f32::from(sizes.line(LH_XS, TextArea::Code)) - 22.154).abs() < 0.01);
     }
 
     #[test]
@@ -553,6 +552,6 @@ mod typography_tests {
         assert!((sizes.size(TEXT_XS, TextArea::Interface) - TEXT_XS).abs() < 0.01);
         assert!((sizes.size(TEXT_SM, TextArea::Interface) - TEXT_SM).abs() < 0.01);
         assert!((sizes.size(TEXT_XS, TextArea::Code) - TEXT_XS).abs() < 0.01);
-        assert!((f32::from(sizes.line(LH_XS, TextArea::Commit)) - 16.0).abs() < 0.01);
+        assert!((f32::from(sizes.line(LH_XS, TextArea::Commit)) - 18.0).abs() < 0.01);
     }
 }

@@ -11,7 +11,7 @@ use vantage_core::state::{validate_branch_name, Theme as LegacyTheme, WindowBoun
 
 use crate::model::NavSection;
 
-const SETTINGS_VERSION: u32 = 1;
+const SETTINGS_VERSION: u32 = 2;
 const EXTRA_KEY: &str = "vantage";
 const LEGACY_EXTRA_KEY: &str = "branchdeck";
 
@@ -268,6 +268,14 @@ impl UiSettings {
     /// Clamp persisted values so a hand-edited state file cannot produce a
     /// giant window or an unsupported interval.
     pub fn sanitized(mut self) -> Self {
+        // Version 2 raised the default type scale for readability. Existing
+        // version-1 files carry the old defaults, so lift them once; a later
+        // user choice is preserved because it is already version 2.
+        if self.version < 2 {
+            self.interface_font_size = crate::theme::DEFAULT_INTERFACE_TEXT_SIZE;
+            self.commit_font_size = crate::theme::DEFAULT_COMMIT_TEXT_SIZE;
+            self.code_font_size = crate::theme::DEFAULT_CODE_TEXT_SIZE;
+        }
         self.version = SETTINGS_VERSION;
         if !matches!(self.auto_fetch_minutes, 0 | 1 | 5 | 15 | 30 | 60) {
             self.auto_fetch_minutes = 0;
@@ -301,7 +309,7 @@ impl UiSettings {
         self.sidebar_width = self.sidebar_width.clamp(200.0, 360.0);
         self.interface_font_size = sane_font_size(
             self.interface_font_size,
-            &[12.0, 13.0, 14.0, 15.0, 16.0],
+            &[12.0, 13.0, 14.0, 15.0, 16.0, 18.0],
             crate::theme::DEFAULT_INTERFACE_TEXT_SIZE,
         );
         self.commit_font_size = sane_font_size(
@@ -382,6 +390,39 @@ mod tests {
             settings.code_font_size,
             crate::theme::DEFAULT_CODE_TEXT_SIZE
         );
+    }
+
+    #[test]
+    fn version_one_settings_move_to_the_readable_defaults_once() {
+        let settings = UiSettings {
+            version: 1,
+            interface_font_size: 14.0,
+            commit_font_size: 12.0,
+            code_font_size: 12.0,
+            ..UiSettings::default()
+        }
+        .sanitized();
+        assert_eq!(settings.version, 2);
+        assert_eq!(
+            settings.interface_font_size,
+            crate::theme::DEFAULT_INTERFACE_TEXT_SIZE
+        );
+        assert_eq!(
+            settings.commit_font_size,
+            crate::theme::DEFAULT_COMMIT_TEXT_SIZE
+        );
+        assert_eq!(
+            settings.code_font_size,
+            crate::theme::DEFAULT_CODE_TEXT_SIZE
+        );
+
+        let kept = UiSettings {
+            version: 2,
+            interface_font_size: 13.0,
+            ..settings
+        }
+        .sanitized();
+        assert_eq!(kept.interface_font_size, 13.0);
     }
 
     #[test]
