@@ -1852,23 +1852,18 @@ impl VantageApp {
             .overflow_hidden();
 
         for (index, branch) in repo.branches.iter().enumerate() {
-            let right = div()
-                .flex()
-                .items_center()
-                .gap(px(12.0))
-                .flex_shrink_0()
-                .child(
-                    div()
-                        .xs()
-                        .fg(theme.text_meta)
-                        .whitespace_nowrap()
-                        .child(branch.last_commit_time.clone()),
-                );
-
             let menu_repo = repo.id.clone();
             let menu_name = branch.name.clone();
             let menu_is_current = branch.is_current;
             let menu_is_default = branch.is_default;
+            // Remote-tracking names are shown as `origin/name`; local branches
+            // keep their own name. Nothing is rendered under the row.
+            let display_name = branch
+                .name
+                .strip_prefix("remotes/")
+                .map(str::to_string)
+                .unwrap_or_else(|| branch.name.clone());
+            let tooltip = branch_tooltip(branch);
 
             list = list.child(
                 div()
@@ -1884,6 +1879,10 @@ impl VantageApp {
                     .w_full()
                     .bg(theme.panel)
                     .hover(move |s| s.bg(theme.row_hover_bg))
+                    .tooltip(move |_window, cx| {
+                        cx.new(|_| crate::ui::TextTooltip::new(theme, tooltip.clone()))
+                            .into()
+                    })
                     .on_mouse_down(
                         gpui::MouseButton::Right,
                         cx.listener(move |this, event: &gpui::MouseDownEvent, _w, cx| {
@@ -1903,46 +1902,22 @@ impl VantageApp {
                         div()
                             .flex()
                             .items_center()
-                            .justify_between()
-                            .gap(px(16.0))
+                            .gap(px(8.0))
+                            .min_w(px(0.0))
+                            .child(icon("git-branch", IconSize::Sm, theme.icon_idle))
                             .child(
                                 div()
-                                    .flex()
-                                    .items_center()
-                                    .gap(px(8.0))
-                                    .min_w(px(0.0))
-                                    .child(icon("git-branch", IconSize::Sm, theme.icon_idle))
-                                    .child(
-                                        div()
-                                            .mono_xs()
-                                            .medium()
-                                            .fg(theme.text_app)
-                                            .truncate()
-                                            .child(branch.name.clone()),
-                                    )
-                                    .when(branch.is_current, |d| {
-                                        d.child(
-                                            div()
-                                                .xs()
-                                                .medium()
-                                                .fg(theme.accent_text)
-                                                .whitespace_nowrap()
-                                                .child("\u{00b7} Current"),
-                                        )
+                                    .mono_xs()
+                                    .medium()
+                                    .fg(if branch.is_current {
+                                        theme.accent_text
+                                    } else {
+                                        theme.text_app
                                     })
-                                    .when(branch.is_default, |d| {
-                                        d.child(
-                                            div()
-                                                .xs()
-                                                .fg(theme.text_meta)
-                                                .whitespace_nowrap()
-                                                .child("\u{00b7} Default"),
-                                        )
-                                    }),
-                            )
-                            .child(right),
-                    )
-                    .child(branch_tracking(&theme, branch)),
+                                    .truncate()
+                                    .child(display_name),
+                            ),
+                    ),
             );
         }
 
@@ -2219,68 +2194,30 @@ fn preview_row(theme: &Theme, line: &crate::model::PreviewLine) -> Div {
         .child(div().flex_1().fg(color).child(line.text.clone()))
 }
 
-/// A branch's upstream and divergence, rendered as quiet metadata.
-///
-/// Counts are shown only when both pieces exist. A branch with no upstream
-/// says so; an upstream ref that disappeared says `upstream gone` instead of
-/// pretending it is level.
-fn branch_tracking(theme: &Theme, branch: &crate::model::BranchInfo) -> Div {
-    let mut row = div()
-        .flex()
-        .items_center()
-        .flex_wrap()
-        .gap(px(8.0))
-        .min_w(px(0.0));
-
-    let Some(upstream) = &branch.upstream else {
-        return row.child(div().xs().fg(theme.text_dim).child("No upstream"));
-    };
-
-    row = row.child(
-        div()
-            .mono_xs()
-            .fg(theme.label_muted)
-            .truncate()
-            .child(upstream.clone()),
-    );
-    match (branch.ahead, branch.behind) {
-        (Some(0), Some(0)) => row.child(div().xs().fg(theme.label_muted).child("up to date")),
-        (Some(ahead), Some(behind)) => {
-            let mut counts = div().flex().items_center().gap(px(8.0)).flex_shrink_0();
-            if ahead > 0 {
-                counts = counts.child(branch_count("arrow-up", "ahead", ahead, theme.status_blue));
-            }
-            if behind > 0 {
-                counts = counts.child(branch_count(
-                    "arrow-down",
-                    "behind",
-                    behind,
-                    theme.status_red,
-                ));
-            }
-            row.child(counts)
-        }
-        _ => row.child(div().xs().fg(theme.status_amber).child("upstream gone")),
+/// Extra branch information for the hover card. The row itself stays a single
+/// branch name, while upstream, divergence and activity remain discoverable.
+fn branch_tooltip(branch: &crate::model::BranchInfo) -> String {
+    let mut lines = Vec::new();
+    if let Some(upstream) = &branch.upstream {
+        let state = match (branch.ahead, branch.behind) {
+            (Some(0), Some(0)) => "up to date".to_string(),
+            (Some(ahead), Some(behind)) => format!("{ahead} ahead, {behind} behind"),
+            _ => "upstream gone".to_string(),
+        };
+        lines.push(format!("{upstream} · {state}"));
+    } else {
+        lines.push("No upstream".to_string());
     }
-}
-
-fn branch_count(icon_name: &'static str, word: &'static str, count: u32, color: gpui::Rgba) -> Div {
-    div()
-        .flex()
-        .items_center()
-        .gap(px(3.0))
-        .flex_shrink_0()
-        .child(icon(icon_name, IconSize::Xxs, color))
-        .child(
-            div()
-                .text_size(crate::theme::scaled_px(
-                    11.0,
-                    crate::theme::TextArea::Interface,
-                ))
-                .medium()
-                .fg(color)
-                .child(format!("{count} {word}")),
-        )
+    if branch.is_current {
+        lines.push("Current branch".to_string());
+    }
+    if branch.is_default {
+        lines.push("Default branch".to_string());
+    }
+    if !branch.last_commit_time.is_empty() {
+        lines.push(format!("Last commit {}", branch.last_commit_time));
+    }
+    lines.join("\n")
 }
 
 #[cfg(test)]
