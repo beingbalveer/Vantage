@@ -172,6 +172,15 @@ pub fn status_badges(
 }
 
 fn badge(theme: &Theme, kind: StatusKind, density: BadgeDensity) -> Div {
+    // A clean repository is the normal case. Keep the confirmation, but let
+    // exceptions carry the colour and words.
+    if kind == StatusKind::Clean {
+        return div().flex().items_center().flex_shrink_0().child(icon(
+            "circle-check-big",
+            IconSize::Xxs,
+            theme.label_muted,
+        ));
+    }
     let color = kind.color(theme);
     let label = match density {
         BadgeDensity::Full => kind.label(),

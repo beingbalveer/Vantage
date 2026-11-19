@@ -55,7 +55,11 @@ pub trait Txt: Styled + Sized {
     fn mono_xs(self) -> Self {
         self.scaled_fam(FONT_MONO, TEXT_XS, LH_XS, TextArea::Code)
     }
-    /// Commit-history text on the interface font.
+    /// Commit subject, one step above the row metadata.
+    fn commit_subject(self) -> Self {
+        self.scaled_fam(FONT_SANS, TEXT_SM, LH_SM, TextArea::Commit)
+    }
+    /// Commit-history metadata on the interface font.
     fn commit_xs(self) -> Self {
         self.scaled_fam(FONT_SANS, TEXT_XS, LH_XS, TextArea::Commit)
     }

@@ -187,6 +187,7 @@ impl VantageApp {
 
         // The branch gives way first; the path keeps a minimum column so it
         // stays identifiable even beside a long branch name.
+        let branch_tip = repo.current_branch.clone();
         let branch = div()
             .flex()
             .items_center()
@@ -196,6 +197,7 @@ impl VantageApp {
             .child(icon("git-branch", IconSize::Xxs, theme.text_dim))
             .child(
                 div()
+                    .id("inspector-branch")
                     .min_w(px(0.0))
                     .text_size(crate::theme::scaled_px(
                         10.0,
@@ -205,10 +207,15 @@ impl VantageApp {
                     .font_family(crate::theme::FONT_MONO)
                     .fg(theme.label_muted)
                     .truncate()
+                    .tooltip(move |_window, cx| {
+                        cx.new(|_| crate::ui::TextTooltip::new(theme, branch_tip.clone()))
+                            .into()
+                    })
                     .child(repo.current_branch.clone()),
             );
 
         let path_for_click = path.clone();
+        let path_for_tip = path.clone();
         let path_link = div()
             .debug_selector(|| "copy-path".to_string())
             .id("copy-path")
@@ -229,6 +236,10 @@ impl VantageApp {
             .on_click(cx.listener(move |this, _e, _w, cx| {
                 this.copy_local_path(path_for_click.clone(), cx);
             }))
+            .tooltip(move |_window, cx| {
+                cx.new(|_| crate::ui::TextTooltip::new(theme, path_for_tip.clone()))
+                    .into()
+            })
             .child(div().flex_1().min_w(px(0.0)).truncate().child(path.clone()))
             .child(icon(
                 if copied { "check" } else { "copy" },
@@ -1663,7 +1674,7 @@ impl VantageApp {
                                         div()
                                             .flex_1()
                                             .min_w(px(0.0))
-                                            .commit_xs()
+                                            .commit_subject()
                                             .medium()
                                             .fg(theme.text_app)
                                             .whitespace_nowrap()
@@ -1699,6 +1710,10 @@ impl VantageApp {
                                                 div()
                                                     .commit_mono_xs()
                                                     .flex_shrink_0()
+                                                    .px(px(5.0))
+                                                    .py(px(1.0))
+                                                    .rounded(px(4.0))
+                                                    .bg(theme.subtle_bg)
                                                     .fg(theme.label_muted)
                                                     .child(short_sha.clone()),
                                             ),

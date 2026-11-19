@@ -171,7 +171,7 @@ impl VantageApp {
 
             if !self.collapsed_groups.contains(&section.key) {
                 for row in &section.rows {
-                    card = card.child(self.render_row(theme, row, compact, cx));
+                    card = card.child(self.render_row(theme, row, compact, layout.list_width, cx));
                 }
             }
 
@@ -247,9 +247,21 @@ impl VantageApp {
         theme: Theme,
         row: &TableRow,
         compact: bool,
+        list_width: f32,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
         let selected = self.selected_repo_id.as_deref() == Some(row.id.as_str());
+        // GPUI clips nested text without a suffix on its first layout pass, so
+        // fit the branch name up front. Reserve the icon, timestamp, gaps and
+        // row padding; the full name is still available in the tooltip.
+        let branch_text = crate::text::ellipsize(
+            cx,
+            &row.branch,
+            crate::theme::FONT_MONO,
+            gpui::FontWeight(400.0),
+            crate::theme::scale_size(crate::theme::TEXT_XS, crate::theme::TextArea::Code),
+            px((list_width - 160.0).max(90.0)),
+        );
         let repo_id = row.id.clone();
         let density = if compact {
             BadgeDensity::Compact
@@ -270,6 +282,7 @@ impl VantageApp {
                 move || format!("repo-row-{id}")
             })
             .group("repo-row")
+            .relative()
             .flex()
             .flex_col()
             .w_full()
@@ -281,9 +294,20 @@ impl VantageApp {
             .border_t_1()
             .border_color(theme.row_border)
             .bg(if selected {
-                theme.accent_soft
+                theme.nav_active_bg
             } else {
                 theme.panel
+            })
+            .when(selected, |d| {
+                d.child(
+                    div()
+                        .absolute()
+                        .left(px(0.0))
+                        .top(px(0.0))
+                        .bottom(px(0.0))
+                        .w(px(3.0))
+                        .bg(theme.accent),
+                )
             })
             .when(!selected, move |d| {
                 d.hover(move |s| s.bg(theme.row_hover_bg))
@@ -339,15 +363,21 @@ impl VantageApp {
                     .w_full()
                     .min_w(px(0.0))
                     .child(icon("git-branch", IconSize::Xxs, theme.text_dim))
-                    .child(
+                    .child({
+                        let tip = row.branch.clone();
                         div()
+                            .id(gpui::SharedString::from(format!("repo-branch-{}", row.id)))
                             .flex_1()
                             .min_w(px(0.0))
                             .mono_xs()
                             .fg(theme.text_meta)
                             .truncate()
-                            .child(row.branch.clone()),
-                    )
+                            .tooltip(move |_window, cx| {
+                                cx.new(|_| crate::ui::TextTooltip::new(theme, tip.clone()))
+                                    .into()
+                            })
+                            .child(branch_text)
+                    })
                     .child(
                         div()
                             .flex_shrink_0()
@@ -478,6 +508,7 @@ impl VantageApp {
 
         for (filter, count, id_label, label, short_label, color) in items {
             let selected = active == Some(filter);
+            let muted = count == 0;
             let label = if compact { short_label } else { label };
             let mut item = div()
                 .debug_selector({
@@ -498,7 +529,11 @@ impl VantageApp {
             // The colour dot is the first thing to go when the row is tight;
             // the count keeps the colour so the categories stay distinct.
             if !compact {
-                item = item.child(div().w(px(6.0)).h(px(6.0)).rounded(px(3.0)).bg(color));
+                item = item.child(div().w(px(6.0)).h(px(6.0)).rounded(px(3.0)).bg(if muted {
+                    theme.row_border
+                } else {
+                    color
+                }));
             }
             item = item
                 .child(
@@ -507,6 +542,8 @@ impl VantageApp {
                         .medium()
                         .fg(if selected {
                             theme.text_app
+                        } else if muted {
+                            theme.label_muted
                         } else if compact {
                             color
                         } else {
